@@ -19,6 +19,7 @@ plugin):
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 from pedalboard import (
@@ -36,6 +37,15 @@ from .analyze import AnalysisResult
 from .analysis import EQBand
 from .wizard import MixPreferences
 from .dsp_utils import duck_gain_curve, apply_gain_curve, db_to_gain
+
+# Called with a short human-readable description of each mixing step as it
+# happens — the CLI prints these directly; a future GUI can wrap the same
+# callback to drive step-by-step animations instead of retrofitting narration.
+StepCallback = Callable[[str], None]
+
+
+def _noop(_msg: str) -> None:
+    pass
 
 VOCAL_HINTS = ("vocal", "vox", "voice", "lead")
 BASS_HINTS = ("bass", "sub")
@@ -104,18 +114,29 @@ def _process_stem(audio: np.ndarray, sr: int, role: str, analysis: AnalysisResul
     return board(audio.T, sr).T
 
 
-def render_mix(stems: Stems, analysis: AnalysisResult, prefs: MixPreferences) -> np.ndarray:
+def render_mix(
+    stems: Stems,
+    analysis: AnalysisResult,
+    prefs: MixPreferences,
+    on_step: StepCallback = _noop,
+) -> np.ndarray:
     sr = stems.sample_rate
     n = stems.num_samples()
 
     roles = {name: classify_role(name) for name in stems.names()}
-    processed = {
-        name: _process_stem(audio, sr, roles[name], analysis, prefs)
-        for name, audio in stems.tracks.items()
-    }
+    on_step(
+        "Ruoli riconosciuti: "
+        + ", ".join(f"{name} -> {role}" for name, role in roles.items())
+    )
+
+    processed = {}
+    for name, audio in stems.tracks.items():
+        on_step(f"Elaborazione stem '{name}' (ruolo: {roles[name]})...")
+        processed[name] = _process_stem(audio, sr, roles[name], analysis, prefs)
 
     vocal_names = [n for n, r in roles.items() if r == "vocal"]
     if vocal_names:
+        on_step("Applico sidechain ducking: strumentale/batteria si abbassano quando canta la voce")
         vocal_key = sum(processed[n] for n in vocal_names)
         duck_amount_db = 2.5 + prefs.aggressiveness * 0.8  # more aggressive -> more ducking
         gain_curve = duck_gain_curve(vocal_key, sr, amount_db=duck_amount_db)
@@ -125,6 +146,8 @@ def render_mix(stems: Stems, analysis: AnalysisResult, prefs: MixPreferences) ->
 
     # Gain-stage vocal prominence: +/- up to 5dB relative to everything else
     vocal_gain_db = prefs.vocal_prominence * 5.0
+    if vocal_names:
+        on_step(f"Regolazione presenza voce: {vocal_gain_db:+.1f}dB")
     for name in vocal_names:
         processed[name] = processed[name] * db_to_gain(vocal_gain_db)
 
@@ -132,16 +155,18 @@ def render_mix(stems: Stems, analysis: AnalysisResult, prefs: MixPreferences) ->
     for audio in processed.values():
         mix_bus += audio
 
-    # Bus EQ: genre-informed shape, tilted by the warmth preference
+    on_step(f"Applico EQ di bus per genere '{analysis.genre.name}' (tilt calore: {prefs.warmth:+.1f})")
     genre_bands = _scaled_bands(analysis.genre.bus_eq, prefs.warmth)
     bus_fx = [_eq_plugin(b) for b in genre_bands]
 
     # Bus glue compression, scaled by aggressiveness (1..5 -> ratio multiplier 0.7x..1.6x)
     ratio_scale = 0.7 + (prefs.aggressiveness - 1) * 0.225
+    glue_ratio = max(1.1, analysis.genre.ratio * ratio_scale)
+    on_step(f"Compressione glue sul bus: ratio {glue_ratio:.1f}:1 (aggressività {prefs.aggressiveness}/5)")
     bus_fx.append(
         Compressor(
             threshold_db=analysis.genre.threshold_db,
-            ratio=max(1.1, analysis.genre.ratio * ratio_scale),
+            ratio=glue_ratio,
             attack_ms=analysis.genre.attack_ms,
             release_ms=analysis.genre.release_ms,
         )
@@ -156,6 +181,8 @@ def render_mix(stems: Stems, analysis: AnalysisResult, prefs: MixPreferences) ->
     peak = np.max(np.abs(mixed)) + 1e-9
     ceiling = db_to_gain(-1.0)
     if peak > ceiling:
+        on_step("Picco oltre -1dBFS: applico gain di sicurezza")
         mixed = mixed * (ceiling / peak)
 
+    on_step("Mix completato.")
     return mixed

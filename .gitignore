@@ -19,6 +19,9 @@ AutoMixerVST/JUCE/
 # Python
 __pycache__/
 *.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
 
 # Generated stems / audio outputs
 AutoMixerVST/stems/*
