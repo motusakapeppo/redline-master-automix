@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<title>RedLine Engine</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="brand">
+  <span class="brand-mark"></span>
+  <span class="brand-name">RedLine Engine</span>
+</div>
+
+<div id="screen-input" class="screen active">
+  <h1>Carica il tuo progetto</h1>
+  <p class="hint">Seleziona la cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file già mixato.</p>
+  <button class="btn btn-primary" onclick="chooseInput()">Scegli cartella o file...</button>
+  <div id="input-path" class="path-display"></div>
+  <button id="btn-next" class="btn btn-accent" onclick="showScreen('screen-wizard')" disabled>Avanti</button>
+</div>
+
+<div id="screen-wizard" class="screen">
+  <h1>Come vuoi il mix?</h1>
+
+  <div class="field">
+    <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
+    <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
+           oninput="document.getElementById('aggressiveness-val').textContent = this.value">
+  </div>
+
+  <div class="field">
+    <label>Calore (freddo/brillante &larr;&rarr; caldo)</label>
+    <input type="range" id="warmth" min="-1" max="1" value="0" step="0.1">
+  </div>
+
+  <div class="field">
+    <label>Presenza voce (indietro &larr;&rarr; protagonista)</label>
+    <input type="range" id="vocal_prominence" min="-1" max="1" value="0" step="0.1">
+  </div>
+
+  <div class="field">
+    <label>Genere di riferimento (opzionale, lascia vuoto per usare quello rilevato)</label>
+    <input type="text" id="genre_override" placeholder="es. Hip-Hop, Pop / Rock...">
+  </div>
+
+  <div class="field field-row">
+    <label><input type="checkbox" id="do_mastering" checked> Esegui anche il mastering</label>
+    <select id="platform">
+      <option value="auto">Piattaforma: auto</option>
+      <option value="spotify">Spotify (-14 LUFS)</option>
+      <option value="apple">Apple Music (-16 LUFS)</option>
+      <option value="youtube">YouTube (-13 LUFS)</option>
+      <option value="club">Club/EDM (-9 LUFS)</option>
+    </select>
+  </div>
+
+  <button class="btn btn-accent" onclick="startRun()">Avvia mix + mastering</button>
+</div>
+
+<div id="screen-progress" class="screen">
+  <h1>Al lavoro...</h1>
+  <div id="spinner" class="spinner"><div class="spinner-ring"></div></div>
+  <div id="log" class="log"></div>
+  <div id="result" class="hidden"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
