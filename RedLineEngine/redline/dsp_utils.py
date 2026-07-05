@@ -55,3 +55,15 @@ def apply_gain_curve(signal: np.ndarray, gain_curve: np.ndarray) -> np.ndarray:
 
 def db_to_gain(db: float) -> float:
     return float(10.0 ** (db / 20.0))
+
+
+def pan_stereo(signal: np.ndarray, pan: float) -> np.ndarray:
+    """Constant-power pan. `pan` is -1 (hard left) .. +1 (hard right), 0 = center.
+    Used for vocal doubles/harmonies named e.g. '... dx.wav' / '... sx.wav',
+    which are meant to sit hard-panned rather than centered like the lead."""
+    mono = signal.mean(axis=1) if signal.ndim == 2 else signal
+    pan = float(np.clip(pan, -1.0, 1.0))
+    angle = (pan + 1.0) * (np.pi / 4.0)  # 0 -> hard left, pi/2 -> hard right
+    left_gain = np.cos(angle)
+    right_gain = np.sin(angle)
+    return np.stack([mono * left_gain, mono * right_gain], axis=1).astype(np.float32)

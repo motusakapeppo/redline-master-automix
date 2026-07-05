@@ -36,7 +36,8 @@ from .input_loader import Stems
 from .analyze import AnalysisResult
 from .analysis import EQBand
 from .wizard import MixPreferences
-from .dsp_utils import duck_gain_curve, apply_gain_curve, db_to_gain
+from .dsp_utils import duck_gain_curve, apply_gain_curve, db_to_gain, pan_stereo
+from .naming import parse_stem, StemDescriptor
 
 # Called with a short human-readable description of each mixing step as it
 # happens — the CLI prints these directly; a future GUI can wrap the same
@@ -47,22 +48,25 @@ StepCallback = Callable[[str], None]
 def _noop(_msg: str) -> None:
     pass
 
-# English + Italian naming hints — users name their own stems, so both must
-# be recognized (e.g. "voce.wav"/"vocals.wav", "basso.wav"/"bass.wav").
-VOCAL_HINTS = ("vocal", "vox", "voice", "lead", "voce", "canto", "cantante")
-BASS_HINTS = ("bass", "sub", "basso")
-DRUM_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullante")
+
+# A vocal "double"/harmony take sits hard-panned and slightly under the lead,
+# never as loud or as central — this is what the take actually is for.
+DOUBLE_GAIN_DB = -3.0
 
 
-def classify_role(stem_name: str) -> str:
-    lowered = stem_name.lower()
-    if any(h in lowered for h in VOCAL_HINTS):
-        return "vocal"
-    if any(h in lowered for h in BASS_HINTS):
-        return "bass"
-    if any(h in lowered for h in DRUM_HINTS):
-        return "drums"
-    return "other"  # instrumental bed, "other" demucs stem, guitars, etc.
+def _describe(d: StemDescriptor) -> str:
+    bits = [d.role]
+    if d.role == "vocal":
+        bits.append(d.layer)
+        if d.pan > 0:
+            bits.append("pan dx")
+        elif d.pan < 0:
+            bits.append("pan sx")
+    if d.section:
+        bits.append(d.section)
+    if d.register:
+        bits.append(d.register)
+    return "/".join(bits)
 
 
 def _eq_plugin(band: EQBand):
@@ -125,16 +129,23 @@ def render_mix(
     sr = stems.sample_rate
     n = stems.num_samples()
 
-    roles = {name: classify_role(name) for name in stems.names()}
+    descriptors = {name: parse_stem(name) for name in stems.names()}
+    roles = {name: d.role for name, d in descriptors.items()}
     on_step(
-        "Ruoli riconosciuti: "
-        + ", ".join(f"{name} -> {role}" for name, role in roles.items())
+        "Stem riconosciuti: "
+        + ", ".join(f"{name} -> {_describe(d)}" for name, d in descriptors.items())
     )
 
     processed = {}
     for name, audio in stems.tracks.items():
-        on_step(f"Elaborazione stem '{name}' (ruolo: {roles[name]})...")
-        processed[name] = _process_stem(audio, sr, roles[name], analysis, prefs)
+        d = descriptors[name]
+        on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
+        processed[name] = _process_stem(audio, sr, d.role, analysis, prefs)
+
+        if d.role == "vocal" and d.layer == "double":
+            # Doubles/harmonies: hard-panned per dx/sx and sat under the lead,
+            # not centered and not fighting it for level.
+            processed[name] = pan_stereo(processed[name], d.pan) * db_to_gain(DOUBLE_GAIN_DB)
 
     vocal_names = [n for n, r in roles.items() if r == "vocal"]
     if vocal_names:

@@ -1,0 +1,102 @@
+"""Parses stem role/layer/pan/section/register from how the user actually
+named their files and folders — no audio content analysis involved. This is
+deliberately convention-based rather than ML-based: real vocal production
+sessions (like a "Main"/"Double" take structure with dx/sx hard-panned
+harmonies) already encode this information in the file names, so the job is
+to read it, not guess it acoustically.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+# Role hints — checked against the full relative path (folder name included),
+# because in real projects the *folder* often says "vocals stems" while the
+# individual take names (e.g. "Main (Rap) - Special.wav") don't mention
+# "vocal" at all.
+VOCAL_ROLE_HINTS = ("vocal", "vox", "voice", "voce", "canto", "cantante")
+BASS_ROLE_HINTS = ("bass", "sub", "basso")
+DRUM_ROLE_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullante")
+
+# Take-layer hints, meaningful for vocal stems: a "double"/harmony sits under
+# and beside the lead, not centered and not as loud.
+DOUBLE_HINTS = ("double", "armonizz", "harmony", "backing", "cor")
+MAIN_HINTS = ("main", "lead")
+
+SECTION_HINTS = {
+    "chorus": ("rit", "ritornello", "chorus", "hook"),
+    "verse": ("str", "strofa", "verse"),
+    "bridge": ("bridge", "ponte"),
+}
+
+REGISTER_HINTS = {
+    "falsetto": ("falsetto", "flasetto"),  # tolerate the common typo
+    "low": ("low",),
+    "mid": ("mid",),
+    "special": ("special",),
+}
+
+_DX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])dx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+_SX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])sx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+
+
+def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(t in lowered for t in tokens)
+
+
+def _first_match(text: str, hint_groups: dict[str, tuple[str, ...]]) -> str | None:
+    for name, tokens in hint_groups.items():
+        if _contains_any(text, tokens):
+            return name
+    return None
+
+
+def _pan_from_name(text: str) -> float:
+    if _DX_PATTERN.search(text):
+        return 0.8
+    if _SX_PATTERN.search(text):
+        return -0.8
+    return 0.0
+
+
+@dataclass
+class StemDescriptor:
+    raw_name: str
+    role: str                    # vocal | bass | drums | other
+    layer: str = "primary"       # primary | double  (only meaningful when role == vocal)
+    pan: float = 0.0             # -1 (hard left/sx) .. +1 (hard right/dx)
+    section: str | None = None   # chorus | verse | bridge | None
+    register: str | None = None  # falsetto | low | mid | special | None
+
+
+def parse_stem(path_like: str) -> StemDescriptor:
+    text = path_like.replace("\\", "/")
+
+    if _contains_any(text, BASS_ROLE_HINTS):
+        role = "bass"
+    elif _contains_any(text, DRUM_ROLE_HINTS):
+        role = "drums"
+    elif _contains_any(text, VOCAL_ROLE_HINTS):
+        role = "vocal"
+    else:
+        role = "other"
+
+    layer = "double" if _contains_any(text, DOUBLE_HINTS) else "primary"
+    pan = _pan_from_name(text) if layer == "double" else 0.0
+
+    # Section/register (verse/chorus, falsetto/low/mid...) only mean anything
+    # for vocal takes. Gating on role also avoids false positives like "STR"
+    # inside "INSTRUMENTAL" being misread as a verse-section hint.
+    section = _first_match(text, SECTION_HINTS) if role == "vocal" else None
+    register = _first_match(text, REGISTER_HINTS) if role == "vocal" else None
+
+    return StemDescriptor(
+        raw_name=path_like,
+        role=role,
+        layer=layer,
+        pan=pan,
+        section=section,
+        register=register,
+    )

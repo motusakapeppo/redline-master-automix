@@ -68,15 +68,23 @@ def _align(named: dict[str, tuple[np.ndarray, int]]) -> Stems:
 
 
 def load_stems_dir(directory: str) -> Stems:
-    """Mode A: a folder containing an arbitrary number of named stem files
-    (e.g. drums.wav, bass.wav, vocals.wav, other.wav, guitar.wav, ...)."""
+    """Mode A: a folder containing an arbitrary number of named stem files,
+    optionally organized into subfolders (e.g. a top-level instrumental file
+    plus a "vocals stems" subfolder full of takes). Walks recursively and
+    keys each stem by its path relative to `directory` (folder names included,
+    extension stripped) — the folder name is often the clearest role signal
+    a user gives us (e.g. "vocals stems/Main - Str1.wav"), so it must survive
+    into the stem name that naming.parse_stem() later inspects."""
     named: dict[str, tuple[np.ndarray, int]] = {}
-    for fname in sorted(os.listdir(directory)):
-        ext = os.path.splitext(fname)[1].lower()
-        if ext not in AUDIO_EXTENSIONS:
-            continue
-        stem_name = os.path.splitext(fname)[0]
-        named[stem_name] = _read_audio(os.path.join(directory, fname))
+    for root, _dirs, files in os.walk(directory):
+        for fname in sorted(files):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in AUDIO_EXTENSIONS:
+                continue
+            full_path = os.path.join(root, fname)
+            rel_path = os.path.relpath(full_path, directory)
+            stem_name = os.path.splitext(rel_path)[0].replace(os.sep, "/")
+            named[stem_name] = _read_audio(full_path)
 
     if not named:
         raise ValueError(f"No audio files found in {directory}")
