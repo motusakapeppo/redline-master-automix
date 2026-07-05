@@ -20,14 +20,13 @@ from .analysis import (
     detect_genre,
     GenreProfile,
 )
+from .analysis.loudness import to_mono_downsampled
 
 
 @dataclass
 class StemAnalysis:
     name: str
-    lufs: float
     crest: float
-    band_energies: dict[str, float]
 
 
 @dataclass
@@ -51,25 +50,30 @@ def analyze(stems: Stems) -> AnalysisResult:
     mix = stems.mixdown()
     sr = stems.sample_rate
 
-    bpm = detect_bpm(mix, sr)
-    tonic, mode, key_conf = detect_key(mix, sr)
+    # BPM/key/spectral shape don't need full-resolution audio — analyzing a
+    # downsampled mono mixdown cuts their cost substantially with no material
+    # effect on the result (see analysis/loudness.py's ANALYSIS_SR).
+    analysis_mono, analysis_sr = to_mono_downsampled(mix, sr)
 
-    mix_bands = spectral_band_energies(mix, sr)
+    bpm = detect_bpm(analysis_mono, analysis_sr)
+    tonic, mode, key_conf = detect_key(analysis_mono, analysis_sr)
+
+    mix_bands = spectral_band_energies(analysis_mono, analysis_sr)
     mix_sub_bass = sub_bass_ratio(mix_bands)
     mix_crest = crest_factor(mix)
-    mix_lufs = integrated_lufs(mix, sr)
+    mix_lufs = integrated_lufs(mix, sr)  # kept at full resolution — feeds mastering targets
 
     genre = detect_genre(mix_crest, mix_sub_bass)
 
-    per_stem: dict[str, StemAnalysis] = {}
-    for name, audio in stems.tracks.items():
-        bands = spectral_band_energies(audio, sr)
-        per_stem[name] = StemAnalysis(
-            name=name,
-            lufs=integrated_lufs(audio, sr),
-            crest=crest_factor(audio),
-            band_energies=bands,
-        )
+    # Cheap per-stem stats only (crest is nearly free). The expensive 6-band
+    # spectral filtering used to also run per-stem here, but nothing
+    # downstream consumed it yet (masking.py, which will, doesn't exist yet)
+    # — computing it for all 24+ stems was pure wasted time. Bring it back
+    # scoped to whichever stems actually need it once that lands.
+    per_stem: dict[str, StemAnalysis] = {
+        name: StemAnalysis(name=name, crest=crest_factor(audio))
+        for name, audio in stems.tracks.items()
+    }
 
     return AnalysisResult(
         bpm=bpm,

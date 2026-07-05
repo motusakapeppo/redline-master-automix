@@ -4,8 +4,15 @@ mixing and mastering stages, and used as inputs to genre detection."""
 from __future__ import annotations
 
 import numpy as np
+import librosa
 import pyloudnorm as pyln
 from scipy.signal import butter, sosfiltfilt
+
+# BPM/key/spectral-shape detection don't need broadcast-quality resolution —
+# downsampling before those (comparatively expensive) analyses cuts their
+# cost roughly in proportion to sr, with no meaningful effect on the result.
+# LUFS is kept at the source sample rate since it feeds mastering targets.
+ANALYSIS_SR = 22050
 
 # Sub-bass -> air, matches the bands the old (broken) RuleEngine tried to use
 SPECTRAL_BANDS = [
@@ -20,6 +27,16 @@ SPECTRAL_BANDS = [
 
 def to_mono(signal: np.ndarray) -> np.ndarray:
     return signal.mean(axis=1) if signal.ndim == 2 else signal
+
+
+def to_mono_downsampled(signal: np.ndarray, sr: int, target_sr: int = ANALYSIS_SR) -> tuple[np.ndarray, int]:
+    """Mono mixdown resampled to a lower rate for cheaper BPM/key/spectral
+    analysis. No-op if the source is already at or below target_sr."""
+    mono = to_mono(signal).astype(np.float32)
+    if sr <= target_sr:
+        return mono, sr
+    resampled = librosa.resample(mono, orig_sr=sr, target_sr=target_sr)
+    return resampled, target_sr
 
 
 def integrated_lufs(signal: np.ndarray, sr: int) -> float:
