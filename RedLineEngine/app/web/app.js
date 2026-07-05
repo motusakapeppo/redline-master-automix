@@ -21,9 +21,12 @@ async function startRun() {
 
   showScreen("screen-progress");
   document.getElementById("log").innerHTML = "";
+  document.getElementById("event-feed").innerHTML = "";
   document.getElementById("spinner").classList.remove("hidden");
   document.getElementById("result").classList.add("hidden");
   document.getElementById("result").innerHTML = "";
+  eqBands = {};
+  redrawEq();
 
   const prefs = {
     aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
@@ -68,4 +71,145 @@ function onDone(result) {
 
 function openOutput() {
   window.pywebview.api.open_folder(selectedOutput);
+}
+
+// --- Animated "studio rack": every visual here reacts to a real value the
+// engine just computed (an actual EQ freq/gain, a real compressor ratio, a
+// real de-esser band, a real QC measurement) — not a generic looping
+// animation. onEvent() is called by app/api.py's _emit(), fed straight from
+// the on_event callbacks threaded through mixengine.py/masterengine.py.
+
+let eqBands = {}; // key -> {freq, gain} — accumulates the bus EQ shape as it's built
+
+const FREQ_MIN = 20;
+const FREQ_MAX = 20000;
+
+function freqToX(freq) {
+  const t = (Math.log10(freq) - Math.log10(FREQ_MIN)) / (Math.log10(FREQ_MAX) - Math.log10(FREQ_MIN));
+  return Math.max(0, Math.min(300, t * 300));
+}
+
+function gainToY(gainDb) {
+  return 45 - Math.max(-6, Math.min(6, gainDb)) * 6;
+}
+
+function redrawEq() {
+  const points = Object.values(eqBands).sort((a, b) => a.freq - b.freq);
+  if (points.length === 0) {
+    document.getElementById("eq-path").setAttribute("d", "M0,45 L300,45");
+    return;
+  }
+  let d = `M0,${gainToY(0)} `;
+  for (const p of points) {
+    d += `L${freqToX(p.freq).toFixed(1)},${gainToY(p.gain_db).toFixed(1)} `;
+  }
+  d += `L300,${gainToY(0)}`;
+  document.getElementById("eq-path").setAttribute("d", d);
+}
+
+function flashDetail(id, text) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.classList.add("flash");
+  setTimeout(() => el.classList.remove("flash"), 400);
+}
+
+function addEventChip(text) {
+  const feed = document.getElementById("event-feed");
+  const chip = document.createElement("div");
+  chip.className = "event-chip";
+  chip.textContent = text;
+  feed.appendChild(chip);
+  feed.scrollTop = feed.scrollHeight;
+  // keep the feed from growing unbounded during a long render
+  while (feed.children.length > 40) feed.removeChild(feed.firstChild);
+}
+
+function onEvent(evt) {
+  switch (evt.type) {
+    case "bus_eq_band":
+      eqBands[`bus_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
+      redrawEq();
+      flashDetail("eq-detail", `Bus: ${evt.freq_hz}Hz ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB`);
+      break;
+
+    case "resonance_cut":
+      eqBands[`res_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
+      redrawEq();
+      flashDetail("eq-detail", `${evt.stem}: risonanza ${evt.freq_hz.toFixed(0)}Hz ${evt.gain_db}dB`);
+      break;
+
+    case "dynamic_hpf":
+      flashDetail("eq-detail", `${evt.stem}: HPF dinamico ${evt.cutoff_hz}Hz (fondamentale ${evt.fundamental_hz}Hz)`);
+      addEventChip(`\u{1F3A4} ${evt.stem}: taglio adattivo a ${evt.cutoff_hz}Hz`);
+      break;
+
+    case "compressor":
+    case "bus_compressor": {
+      const ratio = evt.ratio;
+      const pct = Math.min(100, (ratio - 1) * 14);
+      const fill = document.getElementById("gr-fill");
+      fill.style.width = `${pct}%`;
+      const label = evt.stem ? evt.stem : "bus";
+      flashDetail("comp-detail", `${label}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+      break;
+    }
+
+    case "parallel_bus":
+      addEventChip(`\u{1F3B8} Bus parallelo (NY comp) ${Math.round(evt.mix * 100)}%`);
+      break;
+
+    case "deesser": {
+      const center = Math.round((evt.low_hz + evt.high_hz) / 2);
+      const dial = document.getElementById("deess-dial");
+      dial.textContent = `${(center / 1000).toFixed(1)}kHz`;
+      dial.classList.remove("pulse");
+      void dial.offsetWidth; // restart animation
+      dial.classList.add("pulse");
+      flashDetail("deess-detail", `${evt.stem}: banda ${evt.low_hz.toFixed(0)}-${evt.high_hz.toFixed(0)}Hz`);
+      break;
+    }
+
+    case "time_align":
+      addEventChip(`\u{23F1}\u{FE0F} ${evt.stem} allineata (${evt.delay_ms > 0 ? "+" : ""}${evt.delay_ms}ms)`);
+      break;
+
+    case "role_correction":
+      addEventChip(`\u{26A0}\u{FE0F} ${evt.stem}: ${evt.from} -> ${evt.to}`);
+      break;
+
+    case "spectral_duck":
+      addEventChip(`\u{1F507} Ducking spettrale ${evt.band_low_hz}-${evt.band_high_hz}Hz (${evt.amount_db}dB)`);
+      break;
+
+    case "loudness_gain":
+      addEventChip(`\u{1F50A} ${evt.current_lufs} LUFS -> ${evt.target_lufs} LUFS (${evt.gain_db}dB)`);
+      break;
+
+    case "soft_clip":
+      addEventChip(`\u{2702}\u{FE0F} Soft clip a ${evt.ceiling_db}dB`);
+      break;
+
+    case "mid_side":
+      addEventChip(`\u{2194}\u{FE0F} M/S: mono sotto ${evt.mono_below_hz}Hz`);
+      break;
+
+    case "limiter":
+      addEventChip(`\u{1F6A7} Limiter a ${evt.ceiling_db}dB`);
+      break;
+
+    case "qc_report": {
+      const hp = document.getElementById("headphones");
+      hp.classList.add("active");
+      setTimeout(() => hp.classList.remove("active"), 2500);
+      flashDetail(
+        "qc-detail",
+        `${evt.lufs} LUFS, peak ${evt.true_peak_db}dB, mono ${evt.mono_compatibility} — ${evt.passed ? "OK" : "corretto"}`
+      );
+      break;
+    }
+
+    default:
+      break;
+  }
 }

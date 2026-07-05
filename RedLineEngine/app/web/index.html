@@ -61,6 +61,38 @@
 <div id="screen-progress" class="screen">
   <h1>Al lavoro...</h1>
   <div id="spinner" class="spinner"><div class="spinner-ring"></div></div>
+
+  <div class="rack">
+    <div class="module">
+      <div class="module-title">EQ</div>
+      <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
+        <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
+        <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
+      </svg>
+      <div class="module-detail" id="eq-detail">in attesa...</div>
+    </div>
+
+    <div class="module">
+      <div class="module-title">Compressore</div>
+      <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
+      <div class="module-detail" id="comp-detail">in attesa...</div>
+    </div>
+
+    <div class="module">
+      <div class="module-title">De-esser</div>
+      <div class="deess-dial" id="deess-dial">&mdash;</div>
+      <div class="module-detail" id="deess-detail">in attesa...</div>
+    </div>
+
+    <div class="module">
+      <div class="module-title">Ascolto / QC</div>
+      <div class="headphones" id="headphones">&#127911;</div>
+      <div class="module-detail" id="qc-detail">in attesa...</div>
+    </div>
+  </div>
+
+  <div id="event-feed" class="event-feed"></div>
+
   <div id="log" class="log"></div>
   <div id="result" class="hidden"></div>
 </div>

@@ -27,6 +27,14 @@ class Api:
         if self.window is not None:
             self.window.evaluate_js(f"onStep({json.dumps(msg)})")
 
+    def _emit(self, evt: dict) -> None:
+        """Structured, real-valued event (an actual EQ freq/gain, a real
+        compressor ratio, a real de-esser band, etc.) — the UI renders the
+        corresponding animated module reacting to these exact numbers,
+        instead of a generic canned animation loop."""
+        if self.window is not None:
+            self.window.evaluate_js(f"onEvent({json.dumps(evt)})")
+
     def pick_input_path(self) -> str | None:
         result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
@@ -63,7 +71,7 @@ class Api:
             )
 
             self._narrate("Avvio il mix...")
-            mixed = render_mix(stems, analysis, mix_prefs, on_step=self._narrate)
+            mixed = render_mix(stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit)
 
             mix_path = os.path.join(out_dir, "mix.wav")
             sf.write(mix_path, mixed, stems.sample_rate)
@@ -78,7 +86,7 @@ class Api:
                     render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
                 else:
                     platform = prefs.get("platform", "auto")
-                    mastered = render_master(mixed, stems.sample_rate, analysis, platform=platform, on_step=self._narrate)
+                    mastered = render_master(mixed, stems.sample_rate, analysis, platform=platform, on_step=self._narrate, on_event=self._emit)
                     master_path = os.path.join(out_dir, "master.wav")
                     sf.write(master_path, mastered, stems.sample_rate)
                 self._narrate(f"Master salvato: {master_path}")
