@@ -73,6 +73,8 @@ from .resonance import find_resonance
 from .alignment import align_to_reference
 from .masking import find_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
+from .fxsends import genre_space_amount, vocal_send, drum_room_send
+from .leveling import concurrent_take_gain_curves
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -320,6 +322,34 @@ def render_mix(
             continue  # handled below, register by register
         on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
         processed[name] = _process_stem(name, audio, sr, d, on_step, on_event)
+
+    # --- Concurrent-take level compensation: when several lead ("Main")
+    # takes are simultaneously active (alternate lines/ad-libs across
+    # sections), summing them raises the level unpredictably. Power-
+    # preserving compensation (1/sqrt(active_count)) instead of a fixed pad.
+    if len(lead_names) > 1:
+        lead_tracks = {name: processed[name] for name in lead_names}
+        gain_curves = concurrent_take_gain_curves(lead_tracks, sr)
+        on_step(f"Compensazione livello prese vocali multiple ({len(lead_names)} prese Main simultanee possibili)")
+        on_event({"type": "concurrent_take_leveling", "stems": lead_names})
+        for name in lead_names:
+            processed[name] = apply_gain_curve(processed[name], gain_curves[name])
+
+    # --- Space: a short send-style reverb + BPM-synced delay on the lead
+    # vocal (genre/aggressiveness-informed amount), a subtle room send on
+    # drums for cohesion. Parallel, not insert — the dry signal underneath
+    # is preserved.
+    if lead_names:
+        space_mix = genre_space_amount(analysis.genre.name, prefs.aggressiveness)
+        on_step(f"Spazio voce: riverbero + delay sincronizzato al BPM ({analysis.bpm:.0f}), mix {space_mix * 100:.0f}%")
+        on_event({"type": "vocal_space", "mix": round(space_mix, 2), "bpm": analysis.bpm})
+        for name in lead_names:
+            processed[name] = vocal_send(processed[name], sr, analysis.bpm, space_mix)
+
+    drum_names_for_space = [n for n, r in roles.items() if r == "drums"]
+    if drum_names_for_space:
+        for name in drum_names_for_space:
+            processed[name] = drum_room_send(processed[name], sr)
 
     # --- Vocal stack: classify each double's register from its own measured
     # pitch relative to the lead, process it with that register's recipe,

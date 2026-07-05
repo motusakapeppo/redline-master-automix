@@ -26,3 +26,11 @@ __pycache__/
 # Generated stems / audio outputs
 AutoMixerVST/stems/*
 !AutoMixerVST/stems/.gitkeep
+
+# Local LLM model weights — multi-GB, downloaded separately (see redline/llm_classifier.py)
+RedLineEngine/models/*.gguf
+
+# PyInstaller build output
+RedLineEngine/build/
+RedLineEngine/dist/
+RedLineEngine/*.spec.bak
