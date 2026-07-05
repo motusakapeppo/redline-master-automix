@@ -12,13 +12,25 @@ plugin):
     warning) — the bus EQ, not per-stem EQ, carries the genre-specific tonal
     shape; per-stem EQ only does corrective, *measured* resonance cuts.
   - The lead vocal ("Main") is the star: full-range, centered, presence-
-    boosted, minimally processed. Doubles/harmonies are support: time-
-    aligned to the lead so they don't smear it, then thinned, panned hard,
-    and pulled back in level — they are not supposed to compete with the
-    lead for space.
+    boosted, minimally processed.
+  - Doubles/harmonies are support, routed through a Backing Vocals bus with
+    four register sub-buses (Low/Unison/High/Falsetto) — a wall of doubles
+    only sounds like one big, defined thing if each register actually gets a
+    different treatment (vocalstack.py), not one generic "double" recipe.
+    Register is classified from each double's own measured pitch relative to
+    the lead, not trusted blindly from the file name. Doubles are time-
+    aligned to the lead first (cross-correlation) so they reinforce it
+    instead of smearing it.
   - Vocal is ducked into the mix spectrally (only the ~1-4kHz band the
     vocal actually occupies gets pulled back in the instrumental), not by
-    ducking the instrumental broadband, which pumps audibly.
+    ducking the instrumental broadband, which pumps audibly. The kick/bass
+    relationship gets its own separate, faster, broadband sidechain — the
+    classic low-end "pumping" trick, distinct from the vocal's spectral duck.
+  - Instrumental ("other") stems get a preventive, measured masking cut where
+    they structurally pile up energy in the vocal's presence band, and are
+    grouped into a Music bus with Mid/Side EQ (mono dip in the center where
+    the vocal sits, a touch of side width) instead of each fighting for space
+    independently.
   - Compression ratios are multiplicative across stages (Stavrou's warning),
     so per-stem compression stays gentle; a parallel (New York-style) bus
     adds punch/weight without crushing transients, and glue/limiting happens
@@ -38,6 +50,7 @@ from pedalboard import (
     PeakFilter,
     Compressor,
     Gain,
+    Reverb,
 )
 
 from .input_loader import Stems
@@ -49,13 +62,17 @@ from .dsp_utils import (
     duck_gain_curve,
     apply_gain_curve,
     apply_band_gain_curve,
+    apply_eq_cut,
+    saturate,
     db_to_gain,
     pan_stereo,
 )
 from .naming import parse_stem, StemDescriptor
-from .deesser import deess
+from .deesser import deess, detect_sibilance_band
 from .resonance import find_resonance
 from .alignment import align_to_reference
+from .masking import find_masking_cut
+from .vocalstack import classify_register, RECIPES, EqCut
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -73,15 +90,26 @@ def _noop_event(_evt: dict) -> None:
     pass
 
 
-# A vocal "double"/harmony take sits hard-panned and slightly under the lead,
-# never as loud or as central — this is what the take actually is for.
-DOUBLE_GAIN_DB = -4.0
-DOUBLE_HPF_HZ = 150.0
-DOUBLE_AIR_CUT_DB = -1.5  # gentle high-shelf pullback so doubles sit *behind* the lead
 LEAD_PRESENCE_FREQ_HZ = 3000.0
 LEAD_PRESENCE_GAIN_DB = 1.5
 VOCAL_DUCK_BAND_HZ = (1000.0, 4000.0)  # the band a lead vocal actually occupies most
 PARALLEL_BUS_MIX = 0.22
+BACKING_VOCALS_GLUE_RATIO = 2.0
+
+# Kick/bass sidechain: a pure, fast broadband duck of the bass every time the
+# drums hit — the classic "pumping" low-end trick that keeps the kick and
+# bass from fighting for the same transient, separate from (and faster than)
+# the vocal's spectral ducking above.
+KICK_BASS_DUCK_ATTACK_MS = 2.0
+KICK_BASS_DUCK_RELEASE_MS = 90.0
+KICK_BASS_DUCK_BASE_DB = 3.5
+
+# Music bus (the "other"/harmonic instruments grouped together) Mid/Side EQ:
+# dip the mono center where the vocal needs to sit, widen the sides a touch
+# so the instrumental still reads as large despite the dip.
+MUSIC_BUS_MID_DIP_DB = -1.5
+MUSIC_BUS_SIDE_WIDTH_DB = 1.0
+MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
 
 
 def _describe(d: StemDescriptor) -> str:
@@ -107,6 +135,16 @@ def _eq_plugin(band: EQBand):
     return PeakFilter(cutoff_frequency_hz=band.freq, gain_db=band.gain_db, q=band.q)
 
 
+def _eq_cut_plugin(cut: EqCut):
+    if cut.kind == "highpass":
+        return HighpassFilter(cutoff_frequency_hz=cut.freq)
+    if cut.kind == "low_shelf":
+        return LowShelfFilter(cutoff_frequency_hz=cut.freq, gain_db=cut.gain_db, q=cut.q)
+    if cut.kind == "high_shelf":
+        return HighShelfFilter(cutoff_frequency_hz=cut.freq, gain_db=cut.gain_db, q=cut.q)
+    return PeakFilter(cutoff_frequency_hz=cut.freq, gain_db=cut.gain_db, q=cut.q)
+
+
 def _scaled_bands(bands: list[EQBand], warmth: float) -> list[EQBand]:
     """Tilts the genre EQ by the wizard's warmth answer: warm pulls highs down
     / low-mids up slightly, cold does the opposite."""
@@ -129,30 +167,24 @@ def _process_stem(
     on_step: StepCallback,
     on_event: EventCallback,
 ) -> np.ndarray:
+    """Lead vocal, bass, drums, other — doubles are handled separately by
+    _process_double_stem, since their treatment depends on register, not
+    just "is a double"."""
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
-    is_double_vocal = role == "vocal" and descriptor.layer == "double"
 
     board_fx: list = []
 
-    # --- High-pass: adaptive for the lead vocal (tracks its real range),
-    # fixed but role-appropriate for everything else. Only bass keeps the
-    # full low end — it's the one element allowed to own that space.
     if is_lead_vocal:
         fundamental = estimate_fundamental(audio, sr)
         hpf_hz = float(np.clip(fundamental / 2.0, 40.0, 150.0))
         on_event({"type": "dynamic_hpf", "stem": name, "fundamental_hz": round(fundamental, 1), "cutoff_hz": round(hpf_hz, 1)})
         board_fx.append(HighpassFilter(cutoff_frequency_hz=hpf_hz))
-    elif is_double_vocal:
-        hpf_hz = DOUBLE_HPF_HZ
-        board_fx.append(HighpassFilter(cutoff_frequency_hz=hpf_hz))
     elif role == "other":
-        hpf_hz = 60.0
-        board_fx.append(HighpassFilter(cutoff_frequency_hz=hpf_hz))
+        board_fx.append(HighpassFilter(cutoff_frequency_hz=60.0))
     elif role == "drums":
-        hpf_hz = 30.0
-        board_fx.append(HighpassFilter(cutoff_frequency_hz=hpf_hz))
-    # bass: no HPF
+        board_fx.append(HighpassFilter(cutoff_frequency_hz=30.0))
+    # bass: no HPF — it's the one element allowed to own the low end
 
     # --- Adaptive resonance suppression: cut only where THIS stem's energy
     # actually piles up in the mud range, only if it's a real accumulation
@@ -166,14 +198,9 @@ def _process_stem(
     if is_lead_vocal:
         # The lead is the star: give it presence instead of just carving cuts.
         board_fx.append(PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=LEAD_PRESENCE_GAIN_DB, q=1.0))
-    elif is_double_vocal:
-        # Pull doubles back in the air band so they read as "behind" the lead.
-        board_fx.append(HighShelfFilter(cutoff_frequency_hz=6000.0, gain_db=DOUBLE_AIR_CUT_DB, q=0.7))
 
-    # --- Gentle per-stem compression only (glue/limiting happens once on the
-    # bus, per Stavrou's warning that ratios multiply across stages).
     role_comp = {
-        "vocal": dict(threshold_db=-20.0, ratio=2.2 if is_lead_vocal else 2.8, attack_ms=8.0, release_ms=120.0),
+        "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
         "bass": dict(threshold_db=-18.0, ratio=3.0, attack_ms=10.0, release_ms=150.0),
         "drums": dict(threshold_db=-16.0, ratio=2.5, attack_ms=5.0, release_ms=100.0),
         "other": dict(threshold_db=-20.0, ratio=2.0, attack_ms=15.0, release_ms=180.0),
@@ -184,17 +211,58 @@ def _process_stem(
     board = Pedalboard(board_fx)
     out = board(audio.T, sr).T
 
-    if role == "vocal":
-        # After compression, not before: compression tends to bring sibilance
-        # up along with everything else. Adaptive: finds this stem's real
-        # sibilance frequency instead of assuming a fixed 5-9kHz band.
-        from .deesser import detect_sibilance_band
-
+    if is_lead_vocal:
         band = detect_sibilance_band(out, sr)
         on_event({"type": "deesser", "stem": name, "low_hz": round(band.low_hz, 0), "high_hz": round(band.high_hz, 0)})
         out = deess(out, sr, band=band)
 
     return out
+
+
+def _process_double_stem(
+    name: str,
+    audio: np.ndarray,
+    sr: int,
+    register: str,
+    on_step: StepCallback,
+    on_event: EventCallback,
+) -> np.ndarray:
+    """Register-specific chain for a vocal double/harmony (see vocalstack.py
+    for why each register needs genuinely different treatment, not one
+    generic "double" recipe)."""
+    recipe = RECIPES[register]
+
+    board_fx = [_eq_cut_plugin(cut) for cut in recipe.extra_eq]
+    board_fx.append(
+        Compressor(
+            threshold_db=recipe.comp_threshold_db,
+            ratio=recipe.comp_ratio,
+            attack_ms=recipe.comp_attack_ms,
+            release_ms=recipe.comp_release_ms,
+        )
+    )
+    on_event({"type": "vocal_stack_register", "stem": name, "register": register, "comp_ratio": recipe.comp_ratio})
+
+    out = Pedalboard(board_fx)(audio.T, sr).T
+
+    # Register-appropriate de-esser aggressiveness — unisons especially need
+    # a much heavier hand: several unaligned "S"s at once is a dead giveaway.
+    band = detect_sibilance_band(out, sr)
+    on_event({"type": "deesser", "stem": name, "low_hz": round(band.low_hz, 0), "high_hz": round(band.high_hz, 0), "register": register})
+    out = deess(out, sr, band=band, threshold_db=recipe.deess_threshold_db, max_reduction_db=recipe.deess_max_reduction_db)
+
+    if recipe.saturation_drive > 0.0:
+        out = saturate(out, recipe.saturation_drive)
+        on_event({"type": "saturation", "stem": name, "drive": recipe.saturation_drive})
+
+    return out
+
+
+def _reverb_send(signal: np.ndarray, sr: int, mix: float) -> np.ndarray:
+    """A long, diffuse reverb blended in at `mix` — used to make falsettos
+    feel like a distant cloud rather than individually-placed singers."""
+    wet = Pedalboard([Reverb(room_size=0.9, damping=0.3, wet_level=1.0, dry_level=0.0, width=1.0)])(signal.T, sr).T
+    return signal * (1.0 - mix) + wet * mix
 
 
 def render_mix(
@@ -225,32 +293,105 @@ def render_mix(
         + ", ".join(f"{name} -> {_describe(d)}" for name, d in descriptors.items())
     )
 
-    # --- Time-align vocal doubles to the lead vocal reference so they
-    # reinforce it instead of smearing it (doubles recorded even slightly
-    # off-time create a flammed, amateurish blur once mixed in).
     lead_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "primary"]
     double_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "double"]
 
+    # --- Mass phase control: before any panning, align every double's
+    # transients to the lead vocal via cross-correlation. Summing several
+    # takes of the same person/mic without this creates real phase
+    # cancellation ("boxy" comb-filtered sound), not just a timing blur.
     working_tracks = dict(stems.tracks)
-    if lead_names and double_names:
-        lead_reference = sum(working_tracks[n] for n in lead_names)
-        for name in double_names:
-            aligned, delay = align_to_reference(working_tracks[name], lead_reference, sr)
-            if delay != 0:
-                on_step(f"  '{name}' allineata alla voce principale ({delay / sr * 1000:+.1f}ms)")
-                on_event({"type": "time_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
-            working_tracks[name] = aligned
+    lead_fundamental = 110.0
+    if lead_names:
+        lead_reference_dry = sum(working_tracks[n] for n in lead_names)
+        lead_fundamental = estimate_fundamental(lead_reference_dry, sr)
+        if double_names:
+            for name in double_names:
+                aligned, delay = align_to_reference(working_tracks[name], lead_reference_dry, sr)
+                if delay != 0:
+                    on_step(f"  '{name}' allineata alla voce principale ({delay / sr * 1000:+.1f}ms)")
+                    on_event({"type": "time_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
+                working_tracks[name] = aligned
 
     processed: dict[str, np.ndarray] = {}
     for name, audio in working_tracks.items():
         d = descriptors[name]
+        if d.role == "vocal" and d.layer == "double":
+            continue  # handled below, register by register
         on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
         processed[name] = _process_stem(name, audio, sr, d, on_step, on_event)
 
-        if d.role == "vocal" and d.layer == "double":
-            # Doubles/harmonies: hard-panned per dx/sx and sat under the lead,
-            # not centered and not fighting it for level.
-            processed[name] = pan_stereo(processed[name], d.pan) * db_to_gain(DOUBLE_GAIN_DB)
+    # --- Vocal stack: classify each double's register from its own measured
+    # pitch relative to the lead, process it with that register's recipe,
+    # then route into four sub-buses (matrioska routing) so a wall of
+    # doubles reads as one big, defined thing instead of mush.
+    register_buses: dict[str, np.ndarray] = {}
+    if double_names:
+        on_step(f"Voce principale: fondamentale misurata {lead_fundamental:.0f}Hz — classifico le doppie per registro")
+        for name in double_names:
+            d = descriptors[name]
+            audio = working_tracks[name]
+            double_fundamental = estimate_fundamental(audio, sr)
+            register = classify_register(double_fundamental, lead_fundamental)
+            on_step(f"  '{name}': fondamentale {double_fundamental:.0f}Hz -> registro '{register}'")
+            on_event({"type": "register_classified", "stem": name, "fundamental_hz": round(double_fundamental, 1), "register": register})
+
+            out = _process_double_stem(name, audio, sr, register, on_step, on_event)
+
+            recipe = RECIPES[register]
+            hard_pan = recipe.pan_magnitude if d.pan >= 0 else -recipe.pan_magnitude
+            out = pan_stereo(out, hard_pan)
+
+            if recipe.reverb_send > 0.0:
+                out = _reverb_send(out, sr, recipe.reverb_send)
+                on_step(f"  '{name}': inviata al riverbero lungo ({recipe.reverb_send * 100:.0f}%) per un effetto diffuso")
+                on_event({"type": "reverb_send", "stem": name, "mix": recipe.reverb_send})
+
+            register_buses.setdefault(register, np.zeros((n, 2), dtype=np.float32))
+            register_buses[register] += out
+
+    backing_vocals_bus = None
+    if register_buses:
+        backing_vocals_bus = np.zeros((n, 2), dtype=np.float32)
+        for sub in register_buses.values():
+            backing_vocals_bus += sub
+        backing_vocals_bus = Pedalboard(
+            [Compressor(threshold_db=-18.0, ratio=BACKING_VOCALS_GLUE_RATIO, attack_ms=10.0, release_ms=150.0)]
+        )(backing_vocals_bus.T, sr).T
+        on_step(f"Bus voci di supporto: {len(register_buses)} sub-bus per registro ({', '.join(register_buses.keys())}), colla finale {BACKING_VOCALS_GLUE_RATIO:.1f}:1")
+        on_event({"type": "backing_vocals_bus", "registers": list(register_buses.keys())})
+
+    # --- Preventive masking: cut instrumental stems that structurally pile
+    # up energy in the vocal's presence band (2-5kHz), sized by how much
+    # real overlap there is — a static, measured carve, complementing the
+    # dynamic (vocal-triggered) ducking below rather than replacing it.
+    if lead_names:
+        vocal_reference = sum(processed[n] for n in lead_names)
+        for name, role in roles.items():
+            if role != "other":
+                continue
+            cut = find_masking_cut(processed[name], vocal_reference, sr)
+            if cut is not None:
+                on_step(f"  '{name}': mascheramento con la voce a {cut.freq:.0f}Hz, taglio preventivo {cut.gain_db:.1f}dB")
+                on_event({"type": "masking_cut", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1)})
+                processed[name] = apply_eq_cut(processed[name], sr, cut.freq, cut.gain_db, cut.q)
+
+    # --- Kick/bass sidechain: pure, fast duck of the bass every time the
+    # drums hit, independent of the vocal ducking — the classic low-end
+    # "pumping" trick that keeps kick and bass from smearing on transients.
+    drum_names = [n for n, r in roles.items() if r == "drums"]
+    bass_names = [n for n, r in roles.items() if r == "bass"]
+    if drum_names and bass_names:
+        drum_key = sum(processed[n] for n in drum_names)
+        duck_db = KICK_BASS_DUCK_BASE_DB + prefs.aggressiveness * 0.6
+        on_step(f"Sidechain kick/basso: il basso si abbassa di {duck_db:.1f}dB ad ogni colpo di batteria")
+        on_event({"type": "kick_bass_sidechain", "amount_db": round(duck_db, 1)})
+        kb_curve = duck_gain_curve(
+            drum_key, sr, amount_db=duck_db,
+            attack_ms=KICK_BASS_DUCK_ATTACK_MS, release_ms=KICK_BASS_DUCK_RELEASE_MS,
+        )
+        for name in bass_names:
+            processed[name] = apply_gain_curve(processed[name], kb_curve)
 
     # --- Spectral (not broadband) ducking: pull back only the band the
     # vocal actually occupies (~1-4kHz) in the instrumental/drums, instead
@@ -266,19 +407,38 @@ def render_mix(
             if role in ("other", "drums"):
                 processed[name] = apply_band_gain_curve(processed[name], sr, VOCAL_DUCK_BAND_HZ[0], VOCAL_DUCK_BAND_HZ[1], gain_curve)
 
+    # --- Music bus Mid/Side: group harmonic instruments together and dip the
+    # mono center where the vocal needs to sit, widen the sides a touch so
+    # the instrumental still reads as large despite the dip.
+    other_names = [n for n, r in roles.items() if r == "other"]
+    music_bus = None
+    if other_names:
+        music_bus = np.zeros((n, 2), dtype=np.float32)
+        for name in other_names:
+            music_bus += processed[name]
+        mid = (music_bus[:, 0] + music_bus[:, 1]) * 0.5
+        side = (music_bus[:, 0] - music_bus[:, 1]) * 0.5
+        mid = Pedalboard([PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=MUSIC_BUS_MID_DIP_DB, q=1.0)])(mid.reshape(1, -1), sr).reshape(-1)
+        side = Pedalboard([HighShelfFilter(cutoff_frequency_hz=MUSIC_BUS_SIDE_WIDTH_HZ, gain_db=MUSIC_BUS_SIDE_WIDTH_DB, q=0.7)])(side.reshape(1, -1), sr).reshape(-1)
+        music_bus = np.stack([mid + side, mid - side], axis=1).astype(np.float32)
+        on_step(f"Bus musicale Mid/Side: buco vocale {MUSIC_BUS_MID_DIP_DB:+.1f}dB a {LEAD_PRESENCE_FREQ_HZ:.0f}Hz, lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz")
+        on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
+
     # Gain-stage vocal prominence: +/- up to 5dB relative to everything else
-    # (applies to lead and doubles alike, preserving their relative balance)
+    # (applies to the lead and the whole backing vocals bus alike, preserving
+    # their relative internal balance)
     vocal_gain_db = prefs.vocal_prominence * 5.0
-    vocal_names = lead_names + double_names
-    if vocal_names:
+    if lead_names or backing_vocals_bus is not None:
         on_step(f"Regolazione presenza voce: {vocal_gain_db:+.1f}dB")
-    for name in vocal_names:
+    for name in lead_names:
         processed[name] = processed[name] * db_to_gain(vocal_gain_db)
+    if backing_vocals_bus is not None:
+        backing_vocals_bus = backing_vocals_bus * db_to_gain(vocal_gain_db)
 
     # --- Parallel (New York) compression bus for drums + lead vocal: adds
     # weight/punch by blending in a hard-compressed copy, rather than
     # crushing the clean signal's own transients.
-    parallel_source_names = [n for n in (list(lead_names)) if n in processed] + [
+    parallel_source_names = [n for n in lead_names if n in processed] + [
         n for n, r in roles.items() if r == "drums" and n in processed
     ]
     parallel_bus = None
@@ -294,8 +454,14 @@ def render_mix(
         on_event({"type": "parallel_bus", "mix": PARALLEL_BUS_MIX, "sources": parallel_source_names})
 
     mix_bus = np.zeros((n, 2), dtype=np.float32)
-    for audio in processed.values():
+    for name, audio in processed.items():
+        if name in other_names:
+            continue  # folded into the Mid/Side-processed music_bus instead
         mix_bus += audio
+    if music_bus is not None:
+        mix_bus += music_bus
+    if backing_vocals_bus is not None:
+        mix_bus += backing_vocals_bus
     if parallel_bus is not None:
         mix_bus += parallel_bus * PARALLEL_BUS_MIX
 

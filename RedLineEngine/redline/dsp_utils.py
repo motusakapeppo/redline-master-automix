@@ -104,6 +104,27 @@ def from_mid_side(mid: np.ndarray, side: np.ndarray) -> np.ndarray:
     return np.stack([left, right], axis=1).astype(np.float32)
 
 
+def saturate(signal: np.ndarray, drive: float) -> np.ndarray:
+    """Gentle tanh harmonic saturation — helps a thin register (high
+    harmonies/falsettos) read as present without needing more level, a
+    cheap stand-in for "analog warmth" without a third-party plugin."""
+    if drive <= 0.0:
+        return signal
+    driven = np.tanh(signal * (1.0 + drive))
+    normalize = np.tanh(1.0 + drive)
+    return (driven / normalize).astype(np.float32)
+
+
+def apply_eq_cut(signal: np.ndarray, sr: int, freq_hz: float, gain_db: float, q: float = 1.0) -> np.ndarray:
+    """One-off peak EQ application without building a Pedalboard by hand at
+    the call site — used for the ad-hoc corrective cuts (masking, resonance)
+    that get computed per-stem rather than assembled into a fixed chain."""
+    from pedalboard import Pedalboard, PeakFilter
+
+    board = Pedalboard([PeakFilter(cutoff_frequency_hz=freq_hz, gain_db=gain_db, q=q)])
+    return board(signal.T, sr).T
+
+
 def pan_stereo(signal: np.ndarray, pan: float) -> np.ndarray:
     """Constant-power pan. `pan` is -1 (hard left) .. +1 (hard right), 0 = center.
     Used for vocal doubles/harmonies named e.g. '... dx.wav' / '... sx.wav',
