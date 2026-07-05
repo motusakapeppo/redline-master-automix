@@ -1,13 +1,15 @@
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
-from redline.deesser import deess, SIBILANCE_LOW_HZ, SIBILANCE_HIGH_HZ
+from redline.deesser import deess, detect_sibilance_band, SibilanceBand
+
+TEST_BAND = SibilanceBand(5000.0, 9000.0)
 
 
-def _band_energy(signal: np.ndarray, sr: int) -> float:
-    sos = butter(6, [SIBILANCE_LOW_HZ / (sr / 2), SIBILANCE_HIGH_HZ / (sr / 2)], btype="bandpass", output="sos")
-    band = sosfiltfilt(sos, signal)
-    return float(np.sqrt(np.mean(band**2)))
+def _band_energy(signal: np.ndarray, sr: int, band: SibilanceBand = TEST_BAND) -> float:
+    sos = butter(6, [band.low_hz / (sr / 2), band.high_hz / (sr / 2)], btype="bandpass", output="sos")
+    filtered = sosfiltfilt(sos, signal)
+    return float(np.sqrt(np.mean(filtered**2)))
 
 
 def test_deesser_reduces_sibilance_but_leaves_low_freq_untouched():
@@ -19,7 +21,7 @@ def test_deesser_reduces_sibilance_but_leaves_low_freq_untouched():
 
     rng = np.random.default_rng(0)
     noise = rng.standard_normal(n).astype(np.float32)
-    sos = butter(6, [SIBILANCE_LOW_HZ / (sr / 2), SIBILANCE_HIGH_HZ / (sr / 2)], btype="bandpass", output="sos")
+    sos = butter(6, [TEST_BAND.low_hz / (sr / 2), TEST_BAND.high_hz / (sr / 2)], btype="bandpass", output="sos")
     sibilant_noise = sosfiltfilt(sos, noise)
 
     burst_mask = np.zeros(n)
@@ -27,7 +29,9 @@ def test_deesser_reduces_sibilance_but_leaves_low_freq_untouched():
     sibilant_burst = sibilant_noise * burst_mask * 0.5
 
     signal = (low_tone + sibilant_burst).astype(np.float32)
-    out = deess(signal, sr)
+    # Fixed band here so the test isolates the reduction behavior from the
+    # adaptive detection behavior (covered separately below).
+    out = deess(signal, sr, band=TEST_BAND)
 
     energy_before = _band_energy(signal[: n // 2], sr)
     energy_after = _band_energy(out[: n // 2], sr)
@@ -47,3 +51,24 @@ def test_deesser_handles_stereo():
     stereo = np.stack([mono, mono], axis=1)
     out = deess(stereo, sr)
     assert out.shape == stereo.shape
+
+
+def test_adaptive_band_detection_finds_the_actual_sibilance_frequency():
+    sr = 44100
+    n = sr * 2
+    rng = np.random.default_rng(2)
+
+    # A voice with sibilance concentrated much higher than the "classic"
+    # 5-9kHz assumption (e.g. a bright mic/voice) should still be found.
+    high_band = SibilanceBand(8500.0, 10200.0)
+    sos = butter(6, [high_band.low_hz / (sr / 2), high_band.high_hz / (sr / 2)], btype="bandpass", output="sos")
+    noise = rng.standard_normal(n).astype(np.float64)
+    sibilant = sosfiltfilt(sos, noise)
+
+    burst_mask = np.zeros(n)
+    burst_mask[::5] = 1.0  # scattered short consonant-like bursts
+    signal = (sibilant * burst_mask * 0.6).astype(np.float32)
+
+    detected = detect_sibilance_band(signal, sr)
+    center = (detected.low_hz + detected.high_hz) / 2.0
+    assert 7500.0 < center < 10500.0
