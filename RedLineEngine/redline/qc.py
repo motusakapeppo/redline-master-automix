@@ -102,23 +102,40 @@ def run_qc(
     target = TARGET_BAND_RATIOS.get(genre_name, TARGET_BAND_RATIOS["Balanced"])
     deviations = {name: bands[name] - target[name] for name in target}
 
+    from . import analysis as _analysis_pkg2  # local import avoids a cycle at module load
+
     board, notes = _build_correction_board(deviations)
     corrected = mastered
+    final_lufs = lufs
     if board is not None:
         corrected = board(mastered.T, sr).T
-        # Re-measure after correction so the report reflects reality, not intent
+        # The corrective EQ changes overall energy, which drifts loudness
+        # away from the target that was already hit — re-measure and trim
+        # gain back to the target instead of just reporting the drift.
+        # Found in practice: without this, a genre with a sizeable spectral
+        # correction could land 2+ LUFS off its own stated target.
+        final_lufs = _analysis_pkg2.integrated_lufs(corrected, sr)
+        makeup_db = float(np.clip(target_lufs - final_lufs, -3.0, 3.0))
+        if abs(makeup_db) > 0.1:
+            corrected = corrected * (10.0 ** (makeup_db / 20.0))
+            final_lufs = _analysis_pkg2.integrated_lufs(corrected, sr)
+            notes.append(f"loudness trim {makeup_db:+.1f}dB (post-EQ drift correction)")
+
+        # Re-measure spectral deviations and true peak against the corrected,
+        # gain-trimmed signal so the report reflects reality, not intent.
         bands_after = spectral_band_energies(corrected, sr)
         deviations = {name: bands_after[name] - target[name] for name in target}
+        true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
 
     passed = (
-        abs(lufs - target_lufs) < 1.0
+        abs(final_lufs - target_lufs) < 1.0
         and true_peak_db <= true_peak_ceiling_db + 0.1
         and mono_compat > 0.6
         and all(abs(d) < DEVIATION_THRESHOLD * 2 for d in deviations.values())
     )
 
     report = QcReport(
-        lufs=lufs,
+        lufs=final_lufs,
         true_peak_db=true_peak_db,
         mono_compatibility=mono_compat,
         band_deviations=deviations,

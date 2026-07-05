@@ -15,6 +15,19 @@ import librosa
 
 AUDIO_EXTENSIONS = (".wav", ".flac", ".aiff", ".aif", ".mp3", ".ogg")
 
+# Our own conventional output file names (cli.py/app/api.py always write
+# exactly "mix.wav"/"master.wav"). If a previous run's output happens to sit
+# inside the folder being loaded as input (e.g. an output dir nested under
+# the source project), it must not be silently re-ingested as an extra stem
+# and summed into the next render — that's real, confirmed-in-practice data
+# contamination on repeated runs, not a hypothetical edge case.
+RESERVED_OUTPUT_NAMES = {"mix", "master"}
+
+
+def _is_reserved_output(rel_path_no_ext: str) -> bool:
+    basename = os.path.basename(rel_path_no_ext).lower()
+    return basename in RESERVED_OUTPUT_NAMES
+
 
 @dataclass
 class Stems:
@@ -84,6 +97,8 @@ def load_stems_dir(directory: str) -> Stems:
             full_path = os.path.join(root, fname)
             rel_path = os.path.relpath(full_path, directory)
             stem_name = os.path.splitext(rel_path)[0].replace(os.sep, "/")
+            if _is_reserved_output(stem_name):
+                continue
             named[stem_name] = _read_audio(full_path)
 
     if not named:
@@ -138,7 +153,8 @@ def _find_audio_files(directory: str) -> list[str]:
     found = []
     for root, _dirs, files in os.walk(directory):
         for fname in files:
-            if os.path.splitext(fname)[1].lower() in AUDIO_EXTENSIONS:
+            base, ext = os.path.splitext(fname)
+            if ext.lower() in AUDIO_EXTENSIONS and base.lower() not in RESERVED_OUTPUT_NAMES:
                 found.append(os.path.join(root, fname))
     return found
 
