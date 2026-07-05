@@ -20,7 +20,7 @@ Two things live in this repo:
 - **Analysis**: BPM, musical key, genre (rule-based, informed by real measured sub-bass ratio and crest factor — not a hardcoded placeholder like the old plugin), integrated LUFS, spectral balance.
 - **Mixing**: per-stem high-pass/mud-carve + compression by role, band-split de-esser on vocals, sidechain ducking of the instrumental bed under the vocal, vocal doubles panned hard L/R under the lead, genre-informed bus EQ + glue compression, a wizard (aggressiveness / warmth / vocal prominence / genre override / mastering on-off).
 - **Mastering**: platform-aware LUFS targeting (Spotify/Apple/YouTube/club), true-peak limiting, optional reference-track matching via `matchering`.
-- **Desktop app** (`RedLineEngine/app/`): a pywebview window (dark theme, live narration log, simple animated progress) wrapping the engine — not yet packaged into a standalone `.exe`.
+- **Desktop app** (`RedLineEngine/app/`): a pywebview window (dark theme, live narration log, simple animated progress) wrapping the engine, confirmed launching and rendering correctly (`python app/main.py`) — not yet packaged into a standalone `.exe`.
 - 10 automated tests (`pytest RedLineEngine/tests/`), all green — covering naming edge cases, de-essing, input auto-detection, and an end-to-end pipeline smoke test that fails if a stage silently becomes a no-op (the exact class of bug the old plugin had).
 
 ### Known gaps (being worked through — see plan for order)
@@ -31,7 +31,7 @@ Honest self-assessment, not marketing: today's mix is a solid automatic rough-mi
 4. Mastering is single-band gain + limiter, not multiband + stereo width + saturation
 5. No automated post-render QC pass that measures the result and corrects it
 6. Song section (verse/chorus — already parsed from file names) doesn't yet vary the treatment
-7. Not yet packaged as a standalone `.exe`
+7. Not yet packaged as a standalone `.exe` (runs today via `python app/main.py`)
 
 ### Not yet done
 VST/AU real-time DAW integration (deliberately deferred until the offline engine is solid).
