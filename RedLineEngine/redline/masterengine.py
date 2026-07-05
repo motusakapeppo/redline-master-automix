@@ -134,6 +134,14 @@ def render_master(
     peak = np.max(np.abs(mastered)) + 1e-9
     if peak > ceiling:
         mastered = mastered * (ceiling / peak)
+
+    # report.true_peak_db was measured *inside* run_qc, before this final
+    # clamp — reporting that stale number would claim a peak that no longer
+    # exists in the actual output (confirmed in practice: it printed +0.58dB
+    # while the saved file was correctly at -1.00dB). Overwrite it with the
+    # real final measurement so what's printed matches what's on disk.
+    report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
+
     on_event({
         "type": "qc_report",
         "lufs": round(report.lufs, 1),

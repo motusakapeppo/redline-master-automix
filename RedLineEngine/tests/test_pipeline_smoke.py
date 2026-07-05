@@ -51,10 +51,18 @@ def test_pipeline_produces_nonzero_changed_output():
     # ducking silently did nothing, which is exactly the old plugin's bug.
     assert not np.allclose(mixed, dry_sum[: mixed.shape[0]], atol=1e-4)
 
-    mastered = render_master(mixed, stems.sample_rate, analysis)
+    events = []
+    mastered = render_master(mixed, stems.sample_rate, analysis, on_event=events.append)
     assert mastered.shape == mixed.shape
     peak = np.max(np.abs(mastered))
     assert peak <= 10 ** (-0.9 / 20.0) + 1e-3  # respects the -1dB true-peak ceiling
+
+    # The QC report's stated true peak must match reality (found in practice:
+    # it was measured before the final post-QC safety clamp and printed a
+    # stale, higher value than what actually ended up in the file).
+    qc_events = [e for e in events if e["type"] == "qc_report"]
+    assert qc_events, "expected a qc_report event"
+    assert qc_events[-1]["true_peak_db"] <= -0.9
 
 
 def test_analysis_fields_are_populated():
