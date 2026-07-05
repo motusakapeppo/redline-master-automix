@@ -5,18 +5,20 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # Allow `python app/main.py` to find the `redline` package that lives in the
 # RedLineEngine root, one level up from this file, without a pip install step.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import webview
-
-from api import Api
+LOG_PATH = Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "startup_error.log"
 
 
-def main() -> None:
+def _run() -> None:
+    import webview
+
+    from api import Api
     api = Api()
     web_dir = Path(__file__).resolve().parent / "web"
     # .as_uri() percent-encodes spaces etc. in the path — the project lives
@@ -42,6 +44,19 @@ def main() -> None:
     # blank/black with no visible error to the user.
     storage_path = str(Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "webview")
     webview.start(storage_path=storage_path)
+
+
+def main() -> None:
+    # When launched via pythonw.exe (no console) or a double-clicked shortcut,
+    # an unhandled exception is otherwise invisible — the process just exits.
+    # Log it somewhere findable instead of failing silently.
+    try:
+        _run()
+    except Exception:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.write(traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":
