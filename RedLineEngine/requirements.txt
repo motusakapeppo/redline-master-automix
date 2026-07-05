@@ -1,0 +1,9 @@
+numpy
+scipy
+soundfile
+librosa
+pyloudnorm
+pedalboard
+matchering
+torch
+demucs
