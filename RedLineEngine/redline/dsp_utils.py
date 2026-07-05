@@ -1,10 +1,11 @@
 """Small numpy DSP helpers shared by the mix and master engines that pedalboard
 doesn't provide out of the box (block-rate envelope following for sidechain
-ducking, simple stereo utilities)."""
+ducking, simple stereo utilities, band-limited processing, mid-side)."""
 
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 
 
 def envelope_follower(mono: np.ndarray, sr: int, attack_ms: float, release_ms: float, block: int = 512) -> np.ndarray:
@@ -55,6 +56,52 @@ def apply_gain_curve(signal: np.ndarray, gain_curve: np.ndarray) -> np.ndarray:
 
 def db_to_gain(db: float) -> float:
     return float(10.0 ** (db / 20.0))
+
+
+def split_band(signal: np.ndarray, sr: int, low_hz: float, high_hz: float, order: int = 4) -> tuple[np.ndarray, np.ndarray]:
+    """Splits `signal` into (band, rest) via a bandpass filter — `rest` is
+    everything outside [low_hz, high_hz], `band` is what's inside. Works
+    per-channel automatically. Used for spectral (band-limited) ducking
+    instead of ducking the whole signal broadband."""
+    nyquist = sr / 2.0
+    low_n = max(low_hz / nyquist, 1e-5)
+    high_n = min(high_hz / nyquist, 0.999)
+    sos = butter(order, [low_n, high_n], btype="bandpass", output="sos")
+
+    if signal.ndim == 1:
+        band = sosfiltfilt(sos, signal.astype(np.float64)).astype(np.float32)
+        return band, signal - band
+
+    band = np.stack(
+        [sosfiltfilt(sos, signal[:, ch].astype(np.float64)) for ch in range(signal.shape[1])],
+        axis=1,
+    ).astype(np.float32)
+    return band, signal - band
+
+
+def apply_band_gain_curve(signal: np.ndarray, sr: int, low_hz: float, high_hz: float, gain_curve: np.ndarray) -> np.ndarray:
+    """Applies a time-varying gain curve to only the [low_hz, high_hz] band
+    of `signal`, leaving everything outside that band untouched. This is
+    the "spectral ducking" building block: ducking only the vocal-occupied
+    band (~1-4kHz) of an instrumental bed avoids the broadband "pumping"
+    feeling of ducking the whole signal."""
+    band, rest = split_band(signal, sr, low_hz, high_hz)
+    return rest + apply_gain_curve(band, gain_curve)
+
+
+def to_mid_side(signal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Stereo -> (mid, side). mid = (L+R)/2, side = (L-R)/2."""
+    left, right = signal[:, 0], signal[:, 1]
+    mid = (left + right) * 0.5
+    side = (left - right) * 0.5
+    return mid.astype(np.float32), side.astype(np.float32)
+
+
+def from_mid_side(mid: np.ndarray, side: np.ndarray) -> np.ndarray:
+    """(mid, side) -> stereo. Inverse of to_mid_side."""
+    left = mid + side
+    right = mid - side
+    return np.stack([left, right], axis=1).astype(np.float32)
 
 
 def pan_stereo(signal: np.ndarray, pan: float) -> np.ndarray:
