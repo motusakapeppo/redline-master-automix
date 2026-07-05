@@ -96,10 +96,15 @@ _PROFILES: dict[str, dict] = {
 }
 
 
-def detect_genre(crest: float, sub_bass_ratio: float) -> GenreProfile:
+def detect_genre(crest: float, sub_bass_ratio: float, transient_density: float | None = None) -> GenreProfile:
     """Heuristic classifier: crest factor (dynamics) + measured sub-bass energy
-    ratio. Same decision boundaries as the original RuleEngine, but now fed a
-    real sub_bass_ratio instead of a constant."""
+    ratio, same decision boundaries as the original RuleEngine but now fed a
+    real sub_bass_ratio instead of a constant. `transient_density` (onsets/sec,
+    optional) breaks ties between genres that share similar crest/sub-bass but
+    differ in rhythmic density — e.g. dense trap hi-hats vs sustained pads."""
+    dense = transient_density is not None and transient_density > 4.0
+    sparse = transient_density is not None and transient_density < 1.5
+
     if crest < 10.0 and sub_bass_ratio > 0.30:
         name = "EDM / Urban"
     elif crest < 13.0 and sub_bass_ratio > 0.35:
@@ -107,9 +112,9 @@ def detect_genre(crest: float, sub_bass_ratio: float) -> GenreProfile:
     elif crest < 12.0 and sub_bass_ratio > 0.20:
         name = "Pop / Rock"
     elif crest > 14.0 and sub_bass_ratio < 0.15:
-        name = "Acoustic / Classical"
+        name = "Jazz / Vintage" if dense else "Acoustic / Classical"
     elif crest > 12.0 and sub_bass_ratio > 0.20:
-        name = "Jazz / Vintage"
+        name = "Acoustic / Classical" if sparse else "Jazz / Vintage"
     else:
         name = "Balanced"
 

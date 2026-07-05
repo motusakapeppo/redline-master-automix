@@ -21,6 +21,14 @@ from .analysis import (
     GenreProfile,
 )
 from .analysis.loudness import to_mono_downsampled
+from .analysis.transients import onset_density
+
+# A stem named "bass"/"basso" etc. with less than this fraction of its
+# energy below 150Hz almost certainly isn't actually carrying the low end
+# (e.g. a "bass" guitar stem that's mostly midrange growl) — validated
+# against the actual audio rather than trusted blindly from the file name.
+BASS_SUB_ENERGY_MIN = 0.12
+BASS_VALIDATION_BAND_HZ = (20.0, 150.0)
 
 
 @dataclass
@@ -39,11 +47,20 @@ class AnalysisResult:
     mix_lufs: float
     mix_crest: float
     mix_sub_bass_ratio: float
+    transient_density: float
     stems: dict[str, StemAnalysis]
 
     @property
     def key_name(self) -> str:
         return f"{self.key_tonic} {self.key_mode}"
+
+
+def has_sub_content(audio, sr: int) -> bool:
+    """Checks a single stem's actual audio for real sub/bass energy — used to
+    catch a "bass"-named stem that isn't really carrying the low end (a
+    growly midrange bass guitar sample, a mislabeled file, etc.)."""
+    bands = spectral_band_energies(audio, sr)
+    return (bands["sub_bass"] + bands["bass"]) >= BASS_SUB_ENERGY_MIN
 
 
 def analyze(stems: Stems) -> AnalysisResult:
@@ -62,8 +79,9 @@ def analyze(stems: Stems) -> AnalysisResult:
     mix_sub_bass = sub_bass_ratio(mix_bands)
     mix_crest = crest_factor(mix)
     mix_lufs = integrated_lufs(mix, sr)  # kept at full resolution — feeds mastering targets
+    density = onset_density(analysis_mono, analysis_sr)
 
-    genre = detect_genre(mix_crest, mix_sub_bass)
+    genre = detect_genre(mix_crest, mix_sub_bass, transient_density=density)
 
     # Cheap per-stem stats only (crest is nearly free). The expensive 6-band
     # spectral filtering used to also run per-stem here, but nothing
@@ -84,5 +102,6 @@ def analyze(stems: Stems) -> AnalysisResult:
         mix_lufs=mix_lufs,
         mix_crest=mix_crest,
         mix_sub_bass_ratio=mix_sub_bass,
+        transient_density=density,
         stems=per_stem,
     )
