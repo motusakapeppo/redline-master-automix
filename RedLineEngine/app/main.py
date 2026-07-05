@@ -15,12 +15,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOG_PATH = Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "startup_error.log"
 
 
+def _web_dir() -> Path:
+    # PyInstaller (--add-data "web;web") extracts bundled data next to the
+    # executable under sys._MEIPASS; in dev mode it's just alongside this file.
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "web"
+    return Path(__file__).resolve().parent / "web"
+
+
 def _run() -> None:
     import webview
 
     from api import Api
     api = Api()
-    web_dir = Path(__file__).resolve().parent / "web"
+    web_dir = _web_dir()
     # .as_uri() percent-encodes spaces etc. in the path — the project lives
     # under "D:\FASE REM_automix\..." (note the space), and passing the raw
     # Windows path straight to the webview control silently fails to load
