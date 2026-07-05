@@ -38,6 +38,7 @@ from .analysis import EQBand
 from .wizard import MixPreferences
 from .dsp_utils import duck_gain_curve, apply_gain_curve, db_to_gain, pan_stereo
 from .naming import parse_stem, StemDescriptor
+from .deesser import deess
 
 # Called with a short human-readable description of each mixing step as it
 # happens — the CLI prints these directly; a future GUI can wrap the same
@@ -117,7 +118,15 @@ def _process_stem(audio: np.ndarray, sr: int, role: str, analysis: AnalysisResul
     board_fx.append(Compressor(**role_comp))
 
     board = Pedalboard(board_fx)
-    return board(audio.T, sr).T
+    out = board(audio.T, sr).T
+
+    if role == "vocal":
+        # After compression, not before: compression tends to bring sibilance
+        # up along with everything else, so de-essing the already-compressed
+        # signal is what actually needs taming.
+        out = deess(out, sr)
+
+    return out
 
 
 def render_mix(
