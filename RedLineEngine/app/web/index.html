@@ -12,6 +12,37 @@
   <span class="brand-name">RedLine Engine</span>
 </div>
 
+<!-- First-pass animated assistant: bald, single hoop earring (viewer-right
+     ear), three small hoops (viewer-left ear), nose ring (left nostril).
+     Built with SVG/CSS since it's what's actually available here (no Rive
+     editor access) — meant as a starting point, not a final design. -->
+<div id="assistant" class="assistant">
+  <svg viewBox="0 0 160 160" class="assistant-svg">
+    <ellipse cx="80" cy="88" rx="46" ry="52" class="assistant-head" />
+    <!-- left ear (viewer's left): three small hoops -->
+    <ellipse cx="35" cy="90" rx="7" ry="14" class="assistant-ear" />
+    <circle cx="33" cy="80" r="3" class="assistant-piercing" />
+    <circle cx="33" cy="90" r="3" class="assistant-piercing" />
+    <circle cx="33" cy="100" r="3" class="assistant-piercing" />
+    <!-- right ear (viewer's right): single hoop earring -->
+    <ellipse cx="125" cy="90" rx="7" ry="14" class="assistant-ear" />
+    <circle cx="127" cy="98" r="5" class="assistant-piercing-hoop" />
+    <!-- nose ring, left nostril -->
+    <circle cx="70" cy="112" r="3.5" class="assistant-piercing-hoop" />
+    <!-- eyes -->
+    <g id="assistant-eyes">
+      <ellipse cx="62" cy="80" rx="6" ry="7" class="assistant-eye" />
+      <ellipse cx="98" cy="80" rx="6" ry="7" class="assistant-eye" />
+    </g>
+    <!-- eyebrows -->
+    <path d="M53,66 Q62,60 71,66" class="assistant-brow" />
+    <path d="M89,66 Q98,60 107,66" class="assistant-brow" />
+    <!-- mouth -->
+    <path id="assistant-mouth" d="M62,118 Q80,124 98,118" class="assistant-mouth" />
+  </svg>
+  <div class="assistant-label" id="assistant-label">pronto</div>
+</div>
+
 <div id="screen-input" class="screen active">
   <h1>Carica il tuo progetto</h1>
   <p class="hint">Seleziona la cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file già mixato.</p>

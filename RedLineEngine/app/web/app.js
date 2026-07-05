@@ -27,6 +27,7 @@ async function startRun() {
   document.getElementById("result").innerHTML = "";
   eqBands = {};
   redrawEq();
+  setAssistantLabel("al lavoro...");
 
   const prefs = {
     aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
@@ -48,6 +49,20 @@ function onStep(msg) {
   line.textContent = msg;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
+  animateAssistantTalking();
+}
+
+function animateAssistantTalking() {
+  const mouth = document.getElementById("assistant-mouth");
+  if (!mouth) return;
+  mouth.classList.remove("talking");
+  void mouth.offsetWidth; // restart animation
+  mouth.classList.add("talking");
+}
+
+function setAssistantLabel(text) {
+  const label = document.getElementById("assistant-label");
+  if (label) label.textContent = text;
 }
 
 function onDone(result) {
@@ -206,8 +221,53 @@ function onEvent(evt) {
         "qc-detail",
         `${evt.lufs} LUFS, peak ${evt.true_peak_db}dB, mono ${evt.mono_compatibility} — ${evt.passed ? "OK" : "corretto"}`
       );
+      setAssistantLabel(evt.passed ? "tutto ok" : "corretto");
       break;
     }
+
+    case "register_classified":
+      addEventChip(`\u{1F3B5} ${evt.stem}: ${evt.fundamental_hz}Hz -> ${evt.register}`);
+      break;
+
+    case "backing_vocals_bus":
+      addEventChip(`\u{1F465} Bus voci di supporto: ${evt.registers.join(", ")}`);
+      break;
+
+    case "kick_bass_sidechain":
+      addEventChip(`\u{1F941} Sidechain kick/basso ${evt.amount_db}dB`);
+      break;
+
+    case "masking_cut":
+      addEventChip(`\u{1F3B8} ${evt.stem}: mascheramento a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
+      break;
+
+    case "music_bus_ms":
+      addEventChip(`\u{1F3B9} Bus musicale M/S: buco ${evt.mid_dip_db}dB`);
+      break;
+
+    case "multiband_compressor":
+      addEventChip(`\u{1F39B}\u{FE0F} Multibanda: <${evt.low_hz}Hz / ${evt.low_hz}-${evt.high_hz}Hz / >${evt.high_hz}Hz`);
+      break;
+
+    case "vocal_space":
+      addEventChip(`\u{1F30C} Spazio voce: riverbero+delay ${Math.round(evt.mix * 100)}%`);
+      break;
+
+    case "concurrent_take_leveling":
+      addEventChip(`\u{2696}\u{FE0F} Bilanciamento prese multiple: ${evt.stems.length} tracce`);
+      break;
+
+    case "saturation":
+      addEventChip(`\u{1F525} ${evt.stem}: saturazione (drive ${evt.drive})`);
+      break;
+
+    case "reverb_send":
+      addEventChip(`\u{2601}\u{FE0F} ${evt.stem}: riverbero lungo ${Math.round(evt.mix * 100)}%`);
+      break;
+
+    case "done":
+      setAssistantLabel("fatto!");
+      break;
 
     default:
       break;

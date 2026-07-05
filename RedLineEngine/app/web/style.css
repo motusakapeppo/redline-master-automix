@@ -41,6 +41,91 @@ html, body {
   text-transform: uppercase;
 }
 
+.assistant {
+  position: fixed;
+  top: 10px;
+  right: 20px;
+  width: 88px;
+  text-align: center;
+  z-index: 50;
+  animation: assistant-bob 3.2s ease-in-out infinite;
+}
+
+@keyframes assistant-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.assistant-svg { width: 100%; height: auto; }
+
+.assistant-head {
+  fill: #2a2020;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.assistant-ear {
+  fill: #2a2020;
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.assistant-piercing {
+  fill: none;
+  stroke: #c9c9c9;
+  stroke-width: 1.5;
+}
+
+.assistant-piercing-hoop {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.assistant-eye {
+  fill: var(--text);
+  transform-origin: center;
+  animation: assistant-blink 4.5s ease-in-out infinite;
+}
+
+@keyframes assistant-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+
+.assistant-brow {
+  fill: none;
+  stroke: #c9c9c9;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: d 0.3s ease;
+}
+
+.assistant-mouth {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: d 0.15s ease;
+}
+
+.assistant-mouth.talking {
+  animation: assistant-talk 0.3s ease;
+}
+
+@keyframes assistant-talk {
+  0%, 100% { d: path("M62,118 Q80,124 98,118"); }
+  50% { d: path("M64,116 Q80,132 96,116"); }
+}
+
+.assistant-label {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .screen {
   padding: 24px 32px 32px;
   height: calc(100% - 48px);
