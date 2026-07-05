@@ -1,9 +1,17 @@
 """Standalone entrypoint: input -> analysis -> wizard -> mix -> optional master.
 
 Usage:
+  python -m redline.cli --folder PATH --out OUTDIR
+      Point at one file or one folder and it figures out the rest: a
+      folder with a pre-mixed instrumental + a "vocals stems" subfolder
+      full of takes, a folder of arbitrary stems, or a single file (auto
+      Demucs separation) all work without picking a mode by hand.
+
+  Explicit modes remain available for cases that don't share one parent folder:
   python -m redline.cli --stems-dir PATH --out OUTDIR
   python -m redline.cli --vocals V.wav --instrumental I.wav --out OUTDIR
   python -m redline.cli --input song.wav --out OUTDIR
+
   (add --reference REF.wav to master-match against a reference track instead
    of fixed platform loudness targets; add --non-interactive to skip the
    wizard and use default preferences; add --platform spotify|apple|youtube|club|auto)
@@ -17,7 +25,7 @@ import sys
 
 import soundfile as sf
 
-from .input_loader import load_stems_dir, load_two_track, load_single_file
+from .input_loader import load_stems_dir, load_two_track, load_single_file, load_auto
 from .analyze import analyze
 from .wizard import run_wizard
 from .mixengine import render_mix
@@ -31,6 +39,7 @@ def _narrate(msg: str) -> None:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="RedLine Engine — standalone mix + mastering")
     src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--folder", help="A single file or folder — the right loading mode is auto-detected")
     src.add_argument("--stems-dir", help="Folder with an arbitrary number of named stem files")
     src.add_argument("--vocals", help="Path to a pre-mixed vocals track (pair with --instrumental)")
     src.add_argument("--input", help="Single mixed file — auto-separated via Demucs")
@@ -52,7 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     os.makedirs(args.out, exist_ok=True)
 
     _narrate("Carico l'audio...")
-    if args.stems_dir:
+    if args.folder:
+        stems = load_auto(args.folder, work_dir=os.path.join(args.out, "_demucs"), on_step=_narrate)
+    elif args.stems_dir:
         stems = load_stems_dir(args.stems_dir)
     elif args.vocals:
         stems = load_two_track(args.vocals, args.instrumental)

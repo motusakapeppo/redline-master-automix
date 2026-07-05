@@ -132,3 +132,46 @@ def load_single_file(input_path: str, work_dir: str | None = None) -> Stems:
     stem_paths = separate_with_demucs(input_path, work_dir)
     named = {name: _read_audio(path) for name, path in stem_paths.items()}
     return _align(named)
+
+
+def _find_audio_files(directory: str) -> list[str]:
+    found = []
+    for root, _dirs, files in os.walk(directory):
+        for fname in files:
+            if os.path.splitext(fname)[1].lower() in AUDIO_EXTENSIONS:
+                found.append(os.path.join(root, fname))
+    return found
+
+
+def load_auto(path: str, work_dir: str | None = None, on_step=None) -> Stems:
+    """Single entry point: point it at one file or one folder and it figures
+    out the right loading mode, so the user doesn't need to already know
+    whether they have stems, a vocals+instrumental pair, or a single mixdown.
+
+    - A single audio file (or a folder containing exactly one) -> Demucs
+      auto-separation (Mode C).
+    - A folder containing several audio files, in any subfolder layout (e.g.
+      a top-level pre-mixed instrumental + a "vocals stems" subfolder full of
+      takes, as in a real production session) -> load_stems_dir, which already
+      keys stems by their folder-inclusive relative path so naming.py can read
+      the folder name as a role signal (Mode A).
+    """
+    narrate = on_step or (lambda _msg: None)
+
+    if os.path.isfile(path):
+        narrate(f"Rilevato un singolo file audio: separazione automatica con Demucs...")
+        return load_single_file(path, work_dir)
+
+    if not os.path.isdir(path):
+        raise ValueError(f"Path not found: {path}")
+
+    audio_files = _find_audio_files(path)
+    if not audio_files:
+        raise ValueError(f"No audio files found in {path}")
+
+    if len(audio_files) == 1:
+        narrate(f"Cartella con un solo file audio ('{os.path.basename(audio_files[0])}'): separazione automatica con Demucs...")
+        return load_single_file(audio_files[0], work_dir)
+
+    narrate(f"Rilevati {len(audio_files)} file audio nella cartella: uso la struttura di sottocartelle per capire i ruoli.")
+    return load_stems_dir(path)
