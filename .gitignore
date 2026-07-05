@@ -1,0 +1,25 @@
+# Build artifacts
+build/
+AutoMixerVST/build/
+AutoMixerVST/JUCE/
+
+# Backups
+.backup-*/
+
+# Large reference material (books, not source)
+*.pdf
+*.epub
+*.docx
+*.exe
+
+# Editor/tooling
+.ruff_cache/
+.sisyphus/
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated stems / audio outputs
+AutoMixerVST/stems/*
+!AutoMixerVST/stems/.gitkeep
