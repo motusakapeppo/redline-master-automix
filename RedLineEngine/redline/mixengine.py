@@ -47,9 +47,11 @@ StepCallback = Callable[[str], None]
 def _noop(_msg: str) -> None:
     pass
 
-VOCAL_HINTS = ("vocal", "vox", "voice", "lead")
-BASS_HINTS = ("bass", "sub")
-DRUM_HINTS = ("drum", "kick", "snare", "perc")
+# English + Italian naming hints — users name their own stems, so both must
+# be recognized (e.g. "voce.wav"/"vocals.wav", "basso.wav"/"bass.wav").
+VOCAL_HINTS = ("vocal", "vox", "voice", "lead", "voce", "canto", "cantante")
+BASS_HINTS = ("bass", "sub", "basso")
+DRUM_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullante")
 
 
 def classify_role(stem_name: str) -> str:
