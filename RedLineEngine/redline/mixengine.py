@@ -199,7 +199,13 @@ def _process_stem(
 
     if is_lead_vocal:
         # The lead is the star: give it presence instead of just carving cuts.
-        board_fx.append(PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=LEAD_PRESENCE_GAIN_DB, q=1.0))
+        # A chorus take gets a touch more (the section that's meant to lift),
+        # a verse take stays closer to the baseline (more intimate) — reusing
+        # naming.py's already-parsed section field instead of treating every
+        # vocal take identically regardless of where it sits in the song.
+        section_boost = 0.7 if descriptor.section == "chorus" else (-0.3 if descriptor.section == "verse" else 0.0)
+        presence_gain = LEAD_PRESENCE_GAIN_DB + section_boost
+        board_fx.append(PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=presence_gain, q=1.0))
 
     role_comp = {
         "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
@@ -340,10 +346,15 @@ def render_mix(
     # drums for cohesion. Parallel, not insert — the dry signal underneath
     # is preserved.
     if lead_names:
-        space_mix = genre_space_amount(analysis.genre.name, prefs.aggressiveness)
-        on_step(f"Spazio voce: riverbero + delay sincronizzato al BPM ({analysis.bpm:.0f}), mix {space_mix * 100:.0f}%")
-        on_event({"type": "vocal_space", "mix": round(space_mix, 2), "bpm": analysis.bpm})
+        base_space_mix = genre_space_amount(analysis.genre.name, prefs.aggressiveness)
+        on_step(f"Spazio voce: riverbero + delay sincronizzato al BPM ({analysis.bpm:.0f}), base {base_space_mix * 100:.0f}%")
+        on_event({"type": "vocal_space", "mix": round(base_space_mix, 2), "bpm": analysis.bpm})
         for name in lead_names:
+            # Chorus lifts (more space, meant to open up), verse stays more
+            # intimate/dry — same section-aware idea as the presence boost.
+            section = descriptors[name].section
+            section_scale = 1.4 if section == "chorus" else (0.7 if section == "verse" else 1.0)
+            space_mix = float(np.clip(base_space_mix * section_scale, 0.0, 0.45))
             processed[name] = vocal_send(processed[name], sr, analysis.bpm, space_mix)
 
     drum_names_for_space = [n for n, r in roles.items() if r == "drums"]
