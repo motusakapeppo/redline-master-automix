@@ -118,6 +118,11 @@
          no fill except the red accent details, per the RedLine style. -->
     <div id="assistant" class="assistant">
       <svg id="avatar-svg" viewBox="0 0 200 250" class="assistant-svg">
+        <!-- motus_base.png as SVG image behind the wireframe, same
+             opacity/positioning as the old CSS background approach but
+             now inside the SVG viewport so it scales with the vector. -->
+        <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="250" opacity="0.25" preserveAspectRatio="xMidYMid slice" />
+
         <defs>
           <filter id="redline-glow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="4" result="blur" />
@@ -127,11 +132,6 @@
             </feMerge>
           </filter>
         </defs>
-
-        <!-- motus_base.png as SVG image behind the wireframe, same
-             opacity/positioning as the old CSS background approach but
-             now inside the SVG viewport so it scales with the vector. -->
-        <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="250" opacity="0.25" preserveAspectRatio="xMidYMid slice" />
 
         <g id="avatar-head">
           <path d="M55 110 L75 165 L100 185 L125 165 L145 110" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.9" />

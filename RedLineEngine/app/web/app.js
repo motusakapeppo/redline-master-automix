@@ -416,6 +416,8 @@ let cylonAnimationId = null;
 function startDeepScan(stemCount) {
   const assistant = document.getElementById("assistant");
   if (assistant) assistant.classList.add("deep-scan");
+  const bg = document.getElementById("avatar-bg");
+  if (bg) bg.setAttribute("opacity", "0.12");
   setAssistantLabel("deep scan...");
 
   const console_ = document.getElementById("llm-console");
@@ -441,6 +443,8 @@ function appendLlmToken(text) {
 function stopDeepScan() {
   const assistant = document.getElementById("assistant");
   if (assistant) assistant.classList.remove("deep-scan");
+  const bg = document.getElementById("avatar-bg");
+  if (bg) bg.setAttribute("opacity", "0.25");
   setAssistantLabel("");
 
   const bar = document.getElementById("cylon-bar");
