@@ -379,6 +379,7 @@ function showDirectorCheckpoint(evt) {
 function approveDirectorCheckpoint() {
   const panel = document.getElementById("director-panel");
   if (panel) panel.classList.add("hidden");
+  if (window.avatarAPI) window.avatarAPI.onApprove();
   if (window.pywebview) {
     window.pywebview.api.approve_director_checkpoint();
   }

@@ -10,9 +10,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ─── Module state ───────────────────────────────────────────────────────────
 
@@ -42,6 +40,26 @@ let systemReadyPulse = 0;
 let celebrationWave = 0;
 let auditionTilt = 0;
 let idleFloatPhase = 0;
+
+// The skull GLB ships as a fully rigged, animated character (baked clips:
+// Idle, Yes, No, Bite_Front, Bite_InPlace, Dance, HitRecieve, ...) --
+// playing those directly through an AnimationMixer is what makes this
+// read as alive (natural idle sway, a real head nod/shake, an actual bite/
+// mouth-open motion) instead of hand-rolled bone-rotation guesses.
+let mixer = null;
+let skullActions = {};
+let currentAction = null;
+
+// Natural head glances: real people don't slowly and constantly swivel
+// their head, they hold still, then snap a quick glance somewhere, hold
+// again. State machine below alternates HOLD (still) and TURN (moving
+// toward a new random target) phases with randomized durations/angles.
+let lookPhase = 'hold'; // 'hold' | 'turn'
+let lookPhaseStartTime = 0;
+let lookPhaseEndTime = 0;
+let lookFromY = 0, lookFromX = 0;
+let lookTargetY = 0, lookTargetX = 0;
+let lookCurrentY = 0, lookCurrentX = 0;
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -124,13 +142,17 @@ function init(canvasId) {
     composer.addPass(new RenderPass(scene, camera));
     composer.addPass(new OutputPass());
 
+    // buildRing() dropped per direct feedback ("elimina quella linea rossa")
+    // -- every reference to `ring` elsewhere is already null-guarded, so
+    // simply never constructing it removes the ring cleanly with no
+    // further changes needed. buildRingGlowParticles() / buildParticles()
+    // were dropped earlier in the same pass (visual clutter, not
+    // atmosphere, once the background went transparent).
     buildSkull();
-    buildRing();
-    buildEarrings();
-    // buildRingGlowParticles() / buildParticles() dropped per direct
-    // feedback: with a transparent background the particle clouds read as
-    // visual clutter, not atmosphere -- the skull + reactive ring carry the
-    // design on their own.
+    // buildEarrings() dropped per direct feedback ("evitiamo di metterli,
+    // davvero, non ci servono") -- every `for (const e of earrings)` loop
+    // elsewhere just iterates an empty array, so skipping this removes
+    // them cleanly with no other changes needed.
 
     clock = new THREE.Clock();
     animate();
@@ -143,163 +165,159 @@ function init(canvasId) {
 
 // ─── Skull Geometry ─────────────────────────────────────────────────────────
 
-function buildSkull() {
+const SKULL_MODEL_URL = 'assets/skull.glb';
+const SKULL_MATERIAL_COLOR = '#C8C8D0'; // matches the RedLine silver/bone palette used elsewhere (earrings, piercings)
+
+function buildSkull(onReady) {
   const group = new THREE.Group();
-
-  // Cranium: LatheGeometry with detailed skull profile
-  const profilePoints = [];
-  const profile = [
-    [0.0, 0.0],
-    [0.15, -0.02],
-    [0.3, 0.0],
-    [0.42, 0.05],
-    [0.52, 0.12],
-    [0.6, 0.2],
-    [0.65, 0.28],
-    [0.7, 0.38],
-    [0.72, 0.48],
-    [0.7, 0.58],
-    [0.65, 0.68],
-    [0.58, 0.78],
-    [0.48, 0.88],
-    [0.35, 0.95],
-    [0.2, 1.0],
-    [0.0, 1.02],
-  ];
-  for (const [x, y] of profile) {
-    profilePoints.push(new THREE.Vector2(x, y));
-  }
-  const latheGeo = new THREE.LatheGeometry(profilePoints, 32);
-
-  // Jaw: half sphere
-  const jawGeo = new THREE.SphereGeometry(0.38, 16, 10, 0, Math.PI, 0, Math.PI / 2);
-  jawGeo.rotateX(Math.PI);
-  jawGeo.translate(0, -0.12, 0);
-
-  // Cheekbone protrusions
-  const cheekGeo = new THREE.SphereGeometry(0.12, 8, 8);
-  cheekGeo.scale(1, 0.5, 0.6);
-  cheekGeo.translate(-0.55, 0.15, 0.3);
-  const cheekGeo2 = cheekGeo.clone();
-  cheekGeo2.translate(1.1, 0, 0);
-
-  // Merge
-  const merged = mergeGeometries([latheGeo, jawGeo, cheekGeo, cheekGeo2]);
-  merged.computeVertexNormals();
-
-  // Vertex displacement for organic bone texture
-  const pos = merged.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const y = pos.getY(i);
-    const z = pos.getZ(i);
-    const noise = Math.sin(x * 12) * Math.cos(y * 10) * Math.sin(z * 8) * 0.008;
-    const scale = 1 + noise;
-    pos.setXYZ(i, x * scale, y * scale, z * scale);
-  }
-  pos.needsUpdate = true;
-  merged.computeVertexNormals();
-
-  // Skull material with custom onBeforeCompile for fresnel-like effect
-  const material = new THREE.MeshStandardMaterial({
-    color: '#C8C8D0',
-    metalness: 0.6,
-    roughness: 0.3,
-    envMapIntensity: 1.2,
-  });
-
-  craniumMesh = new THREE.Mesh(merged, material);
-  craniumMesh.position.y = -0.1;
-  group.add(craniumMesh);
-
-  // Eye sockets: emissive red with glow
-  const eyeMat = new THREE.MeshStandardMaterial({
-    color: '#FF003F',
-    emissive: '#FF003F',
-    emissiveIntensity: 0.6,
-  });
-
-  eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 14), eyeMat);
-  eyeLeft.position.set(-0.35, 0.25, 0.5);
-  eyeLeft.scale.set(1, 0.85, 0.7);
-  group.add(eyeLeft);
-
-  eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 14), eyeMat);
-  eyeRight.position.set(0.35, 0.25, 0.5);
-  eyeRight.scale.set(1, 0.85, 0.7);
-  group.add(eyeRight);
-
-  // Eye socket rims (darker rings around eyes)
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: '#1A1A1A',
-    metalness: 0.3,
-    roughness: 0.8,
-  });
-  const rimGeo = new THREE.TorusGeometry(0.3, 0.03, 8, 20);
-  const rimLeft = new THREE.Mesh(rimGeo, rimMat);
-  rimLeft.position.set(-0.35, 0.25, 0.48);
-  rimLeft.scale.set(1, 0.85, 0.7);
-  group.add(rimLeft);
-  const rimRight = new THREE.Mesh(rimGeo.clone(), rimMat);
-  rimRight.position.set(0.35, 0.25, 0.48);
-  rimRight.scale.set(1, 0.85, 0.7);
-  group.add(rimRight);
-
-  // Nose cavity
-  const noseMat = new THREE.MeshStandardMaterial({
-    color: '#0D0000',
-    emissive: '#1A0005',
-    emissiveIntensity: 0.15,
-  });
-  noseCavity = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.15, 8), noseMat);
-  noseCavity.position.set(0, 0.05, 0.55);
-  noseCavity.rotation.x = Math.PI / 2;
-  group.add(noseCavity);
-
-  // Nose bridge ridge
-  const bridgeMat = new THREE.MeshStandardMaterial({
-    color: '#B0B0B8',
-    metalness: 0.5,
-    roughness: 0.35,
-  });
-  const bridgeGeo = new THREE.CylinderGeometry(0.02, 0.06, 0.25, 6);
-  bridgeGeo.rotateX(0.3);
-  const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
-  bridge.position.set(0, 0.2, 0.5);
-  group.add(bridge);
-
-  // Teeth row
-  const teethMat = new THREE.MeshStandardMaterial({
-    color: '#E8E8E0',
-    metalness: 0.1,
-    roughness: 0.6,
-  });
-  const teethGroup = new THREE.Group();
-  for (let i = 0; i < 6; i++) {
-    const t = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.03), teethMat);
-    const angle = (i / 6 - 0.5) * 0.8;
-    t.position.set(Math.sin(angle) * 0.2, -0.08, 0.35 + Math.cos(angle) * 0.05 - 0.02);
-    t.rotation.z = angle * 0.3;
-    teethGroup.add(t);
-  }
-  group.add(teethGroup);
-
-  // Temporal lines (subtle ridges on sides)
-  const lineMat = new THREE.MeshStandardMaterial({
-    color: '#A0A0A8',
-    metalness: 0.4,
-    roughness: 0.5,
-  });
-  for (let side = -1; side <= 1; side += 2) {
-    const lineGeo = new THREE.CylinderGeometry(0.01, 0.015, 0.3, 4);
-    lineGeo.rotateZ(side * 0.3);
-    const line = new THREE.Mesh(lineGeo, lineMat);
-    line.position.set(side * 0.55, 0.5, 0.1);
-    group.add(line);
-  }
-
   skull = group;
   scene.add(skull);
+
+  // Restyle every mesh in the loaded model with a single consistent
+  // material (RedLine silver/bone, matte-metallic) instead of whatever
+  // the source asset shipped with -- keeps it visually coherent with the
+  // rest of the UI (earrings, piercing) rather than looking like a
+  // dropped-in stock asset.
+  const skullMaterial = new THREE.MeshStandardMaterial({
+    color: SKULL_MATERIAL_COLOR,
+    metalness: 0.5,
+    roughness: 0.4,
+    envMapIntensity: 1.1,
+  });
+
+  new GLTFLoader().load(
+    SKULL_MODEL_URL,
+    (gltf) => {
+      const model = gltf.scene;
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.material = skullMaterial;
+        }
+      });
+
+      // Normalize scale/position: the source asset's own units/origin are
+      // arbitrary (typical for a downloaded asset) -- center it and scale
+      // it to a consistent ~1.4-unit-tall footprint so the existing
+      // camera framing, earring placement, and reaction animations (which
+      // were all tuned against that scale) still line up.
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      const targetHeight = 1.4;
+      const scale = targetHeight / Math.max(size.y, 0.001);
+      model.scale.setScalar(scale);
+
+      // Re-measure after scaling to center it precisely at the origin.
+      const scaledBox = new THREE.Box3().setFromObject(model);
+      const scaledCenter = new THREE.Vector3();
+      scaledBox.getCenter(scaledCenter);
+      model.position.sub(scaledCenter);
+
+      craniumMesh = model;
+      group.add(model);
+
+      // Small emissive markers for the reactive "eye glow" (de-esser flash,
+      // deep-scan pulse, etc.) -- positioned at an approximate eye-socket
+      // location relative to the model's own (now-normalized) bounding box
+      // rather than baked-in coordinates tuned for the old procedural mesh.
+      const eyeMat = new THREE.MeshStandardMaterial({
+        color: '#FF003F',
+        emissive: '#FF003F',
+        emissiveIntensity: 0.5,
+      });
+      const eyeY = scaledBox.max.y * 0.35;
+      const eyeZ = scaledBox.max.z * 0.7;
+      const eyeX = size.x * scale * 0.16;
+
+      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat);
+      eyeLeft.position.set(-eyeX, eyeY, eyeZ);
+      group.add(eyeLeft);
+
+      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat.clone());
+      eyeRight.position.set(eyeX, eyeY, eyeZ);
+      group.add(eyeRight);
+
+      // Set up the baked animation clips on the model's own armature.
+      if (gltf.animations && gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(model);
+        for (const clip of gltf.animations) {
+          skullActions[clip.name] = mixer.clipAction(clip);
+        }
+        playSkullAction('Idle', { loop: true });
+      }
+
+      if (typeof onReady === 'function') onReady();
+    },
+    undefined,
+    (err) => {
+      console.error('[three-avatar] Failed to load skull model:', err);
+      if (typeof onReady === 'function') onReady();
+    }
+  );
+}
+
+// See `lookPhase` state comment above. A real head turn accelerates into
+// the motion and decelerates out of it (ease-in-out), over roughly half a
+// second to a second -- not a linear snap, and not the 0.25s "flick" this
+// used to do. Holds for 1.5-5s between glances.
+function updateNaturalLook(time) {
+  if (!skull) return;
+
+  if (time >= lookPhaseEndTime) {
+    if (lookPhase === 'hold') {
+      lookPhase = 'turn';
+      lookFromY = lookCurrentY;
+      lookFromX = lookCurrentX;
+      lookTargetY = (Math.random() - 0.5) * 0.7; // ~±20°
+      lookTargetX = (Math.random() - 0.5) * 0.25; // ~±7°, heads tilt less than they turn
+      lookPhaseStartTime = time;
+      lookPhaseEndTime = time + 0.6 + Math.random() * 0.5;
+    } else {
+      lookPhase = 'hold';
+      lookPhaseEndTime = time + 1.5 + Math.random() * 3.5;
+    }
+  }
+
+  if (lookPhase === 'turn') {
+    const span = Math.max(lookPhaseEndTime - lookPhaseStartTime, 0.001);
+    const t = Math.min(1, Math.max(0, (time - lookPhaseStartTime) / span));
+    // Smoothstep-style ease-in-out: accelerates into the turn, decelerates
+    // out of it -- a linear/ease-out-only curve is what read as jerky.
+    const eased = t * t * (3 - 2 * t);
+    lookCurrentY = lookFromY + (lookTargetY - lookFromY) * eased;
+    lookCurrentX = lookFromX + (lookTargetX - lookFromX) * eased;
+  }
+
+  skull.rotation.y = lookCurrentY;
+  skull.rotation.x = lookCurrentX;
+}
+
+// Crossfades to a named baked clip. `loop: true` keeps it running (Idle);
+// otherwise it plays once and falls back to Idle when it finishes -- a
+// "gesture" (Yes/No/Bite_Front/Dance) that interrupts the idle sway
+// briefly, the way a real head does, rather than replacing it forever.
+function playSkullAction(name, { loop = false, fadeSeconds = 0.3 } = {}) {
+  if (!mixer || !skullActions[name]) return;
+  const next = skullActions[name];
+  if (next === currentAction) return;
+
+  next.reset();
+  next.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+  next.clampWhenFinished = !loop;
+  next.fadeIn(fadeSeconds);
+  next.play();
+
+  if (currentAction) currentAction.fadeOut(fadeSeconds);
+  currentAction = next;
+
+  if (!loop) {
+    const durationMs = (next.getClip().duration / next.timeScale) * 1000;
+    setTimeout(() => {
+      if (currentAction === next) playSkullAction('Idle', { loop: true });
+    }, durationMs);
+  }
 }
 
 // ─── Reactive Ring ──────────────────────────────────────────────────────────
@@ -490,14 +508,13 @@ function animate() {
   // Idle floating
   idleFloatPhase += delta * 0.5;
   const floatY = Math.sin(idleFloatPhase) * 0.015;
-  const floatRotX = Math.sin(idleFloatPhase * 0.7) * 0.005;
-  const floatRotZ = Math.sin(idleFloatPhase * 0.9) * 0.003;
 
-  // Skull slow rotation + idle float
-  skull.rotation.y += ringRotationSpeed;
+  // Baked-clip playback (Idle/Yes/No/Bite_Front/Dance/...) drives the
+  // actual body motion now -- this loop only adds the subtle vertical
+  // breathing float and the natural, intermittent head glance below.
+  if (mixer) mixer.update(delta);
   skull.position.y = -0.1 + floatY;
-  skull.rotation.x += (floatRotX - skull.rotation.x) * 0.02;
-  skull.rotation.z += (floatRotZ - skull.rotation.z) * 0.02;
+  updateNaturalLook(time);
 
   // Skull vibration from compression
   if (compressionIntensity > 0.01) {
@@ -748,6 +765,7 @@ function onCompression(ratio, releaseMs) {
 function onGlueCompression(ratio) {
   const amplitude = Math.min(0.4, (ratio - 1) * 0.35);
   compressionIntensity = Math.max(compressionIntensity, amplitude);
+  if (amplitude > 0.2) playSkullAction('HitRecieve');
 
   ringColorTarget.set('#FF3366');
   setTimeout(() => { ringColorTarget.set('#FF003F'); }, 250);
@@ -760,6 +778,7 @@ function onGlueCompression(ratio) {
 
 function onDeesser() {
   deesserFlash = 1.0;
+  playSkullAction('Bite_Front');
 
   if (eyeLeft) eyeLeft.material.emissiveIntensity = 3.0;
   if (eyeRight) eyeRight.material.emissiveIntensity = 3.0;
@@ -778,35 +797,35 @@ function onBpm(bpm) {
 
 function onListening(on) {
   listeningMode = on;
-  if (on) {
-    ringRotationSpeed = 0.0008;
-    particleOrbitSpeed = 0.0002;
-  } else {
-    ringRotationSpeed = 0.002 + activityLevel * 0.003;
-    particleOrbitSpeed = 0.0003 + activityLevel * 0.001;
-  }
 }
 
 function onDeepScan() {
   deepScanMode = true;
-  ringRotationSpeed = 0.01;
   ringColorTarget.set('#FF0044');
-  particleOrbitSpeed = 0.003;
+  playSkullAction('Bite_InPlace', { loop: true });
 }
 
 function onDeepScanDone() {
   deepScanMode = false;
-  ringRotationSpeed = 0.002 + activityLevel * 0.003;
   ringColorTarget.set('#FF003F');
-  particleOrbitSpeed = 0.0003 + activityLevel * 0.001;
+  playSkullAction('Idle', { loop: true });
 }
 
 function onStep() {
   compressionIntensity = Math.max(compressionIntensity, 0.04);
 }
 
+function onApprove() {
+  playSkullAction('Yes');
+}
+
+function onReject() {
+  playSkullAction('No');
+}
+
 function onDone() {
   celebrationWave = 1.0;
+  playSkullAction('Dance');
 
   if (particles) {
     const pos = particles.geometry.attributes.position;
@@ -906,5 +925,7 @@ window.avatarAPI = {
   onStep,
   onDone,
   onAuditionState,
+  onApprove,
+  onReject,
   setActivity,
 };
