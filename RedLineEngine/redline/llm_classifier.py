@@ -116,6 +116,20 @@ def classify_ambiguous_stems(stem_infos: list[dict], on_token=None) -> dict[str,
 # "too warm" or "too aggressive", never a broken signal chain.
 BRIEF_ADJUSTABLE_KEYS = ("aggressiveness", "warmth", "vocal_prominence")
 
+# Even with few-shot examples in the prompt, a 1.5B model reliably invents
+# "courtesy" adjustments the user never asked for (confirmed in practice:
+# "vorrei un suono più caldo" alone came back with an unrequested
+# vocal_prominence nudge too). Range-clamping alone can't catch this --
+# it's a real, in-range value, just not one anyone asked for. This keyword
+# gate is the actual fix: a suggested key is only kept if the brief text
+# itself mentions something relevant to it, checked independently of
+# whatever the model claims it was responding to.
+_BRIEF_RELEVANCE_KEYWORDS = {
+    "warmth": ("cald", "freddo", "fredda", "brillante", "vinil", "morbid", "vintage", "analog", "scuro", "scura"),
+    "vocal_prominence": ("voce", "vocal", "cantante", "protagonist", "indietro", "avanti", "presenza", "canto"),
+    "aggressiveness": ("aggressiv", "compress", "delicat", "gentile", "duro", "dura", "radio", "forte", "spinto", "spinta", "punch"),
+}
+
 
 def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
     """Translates a free-text, non-technical creative brief (e.g. "voglio
@@ -138,12 +152,26 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
         "regolazione di al massimo questi 3 parametri:\n"
         "- aggressiveness: intero 1-5 (1=delicato, 5=molto compresso/aggressivo)\n"
         "- warmth: numero -1.0 a 1.0 (negativo=freddo/brillante, positivo=caldo)\n"
-        "- vocal_prominence: numero -1.0 a 1.0 (negativo=voce indietro, positivo=voce protagonista)\n"
-        "Includi SOLO i parametri realmente implicati dalla richiesta, ometti gli altri. "
-        "Non esagerare mai: piccoli aggiustamenti, mai valori estremi.\n\n"
-        f'Richiesta dell\'utente: "{brief_text.strip()}"\n\n'
-        "Rispondi SOLO con un oggetto JSON valido, ad esempio "
-        '{"warmth": 0.4, "vocal_prominence": 0.3}, nient\'altro.'
+        "- vocal_prominence: numero -1.0 a 1.0 (negativo=voce PIU' INDIETRO/meno protagonista, "
+        "positivo=voce PIU' AVANTI/protagonista)\n\n"
+        "REGOLE FERREE:\n"
+        "1. Includi SOLO i parametri esplicitamente e chiaramente richiesti. Se la richiesta "
+        "non menziona affatto un aspetto, NON includerlo -- non indovinare, non aggiungere "
+        "parametri 'di cortesia'.\n"
+        "2. Se la richiesta dice che va bene così, che non c'è nulla da cambiare, o è troppo vaga "
+        "per implicare un parametro specifico, rispondi con un oggetto vuoto: {}\n"
+        "3. Controlla due volte il segno di vocal_prominence: 'più indietro' o 'meno protagonista' "
+        "è SEMPRE un numero NEGATIVO, mai positivo.\n"
+        "4. Piccoli aggiustamenti, mai valori estremi.\n\n"
+        "Esempi:\n"
+        'Richiesta: "va tutto bene così, nessuna modifica particolare"\n'
+        "Risposta: {}\n\n"
+        'Richiesta: "la voce deve stare più indietro nel mix"\n'
+        'Risposta: {"vocal_prominence": -0.4}\n\n'
+        'Richiesta: "vorrei un suono più caldo"\n'
+        'Risposta: {"warmth": 0.5}\n\n'
+        f'Richiesta dell\'utente: "{brief_text.strip()}"\n'
+        "Risposta (SOLO l'oggetto JSON, nient'altro):"
     )
 
     try:
@@ -173,6 +201,13 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
         if not match:
             return {}
         parsed = json.loads(match.group(0))
-        return {k: v for k, v in parsed.items() if k in BRIEF_ADJUSTABLE_KEYS}
+
+        lowered_brief = brief_text.lower()
+        return {
+            k: v
+            for k, v in parsed.items()
+            if k in BRIEF_ADJUSTABLE_KEYS
+            and any(kw in lowered_brief for kw in _BRIEF_RELEVANCE_KEYWORDS[k])
+        }
     except Exception:
         return {}
