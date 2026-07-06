@@ -58,10 +58,21 @@ class AudioDriver:
                     audio_array[:fade_samples, ch] *= fade_in
                     audio_array[-fade_samples:, ch] *= fade_out
 
+        # channels was missing entirely -- PortAudio needs to be told how many
+        # output channels to open (1 for mono, 2 for stereo) or it silently
+        # opens a stream that doesn't match the array shape and produces no
+        # audible output at all, with no exception raised. Also drop the
+        # explicit `device=sd.default.device` -- passing that tuple back in
+        # as `device` is redundant (omitting it already selects the system
+        # default) and was one more way this call could mismatch.
+        channels = 1 if audio_array.ndim == 1 else audio_array.shape[1]
+        if audio_array.ndim > 1 and not audio_array.flags['C_CONTIGUOUS']:
+            audio_array = np.ascontiguousarray(audio_array)
+
         try:
             with sd.OutputStream(
                 samplerate=sr,
-                device=sd.default.device,
+                channels=channels,
                 blocksize=512,
                 latency='low',
             ) as stream:

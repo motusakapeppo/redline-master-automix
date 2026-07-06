@@ -118,7 +118,36 @@ window.addEventListener('error', function(e) {
           <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
           <div class="module-detail" id="qc-detail">in attesa...</div>
         </div>
+
+        <div class="module">
+          <div class="module-title">Riverbero / Spazio</div>
+          <div class="module-detail" id="reverb-detail">in attesa...</div>
+        </div>
+
+        <div class="module">
+          <div class="module-title">Saturazione</div>
+          <div class="module-detail" id="saturation-detail">in attesa...</div>
+        </div>
+
+        <div class="module">
+          <div class="module-title">Master (Multiband/Limiter)</div>
+          <div class="module-detail" id="master-detail">in attesa...</div>
+        </div>
+
+        <div class="module">
+          <div class="module-title">Mid/Side</div>
+          <div class="module-detail" id="midside-detail">in attesa...</div>
+        </div>
       </div>
+
+      <!-- Per-stem breakdown: one persistent row per track instead of a
+           scrolling log that discards which stage each stem is at. A stem
+           gets exactly one row (keyed by name) for the whole render; coming
+           back to it (e.g. after a double's register classification runs on
+           a different thread) re-selects that same row and lights up
+           whichever stage badge just fired, instead of creating a new one
+           or losing the earlier state. -->
+      <div id="stem-rows" class="stem-rows"></div>
 
       <!-- Director Mode checkpoint: appears only when the pipeline is
            actually paused waiting for approval (director_checkpoint event),
@@ -363,12 +392,20 @@ window.addEventListener('error', function(e) {
         <label for="audition-switch">NEURAL MONITOR [LIVE A/B]</label>
         <input type="checkbox" id="audition-switch" onchange="toggleAudition()">
       </div>
+
+      <div class="monitor-toggle">
+        <label for="director-mode-switch">MODALITÀ: <span id="director-mode-label">AUTO</span></label>
+        <input type="checkbox" id="director-mode-switch" onchange="toggleDirectorMode()">
+      </div>
     </div>
 
     <div id="terminal-box" class="terminal-box">
       <div id="event-feed" class="event-feed"></div>
       <div id="log" class="log"></div>
-      <div id="llm-console" class="llm-console"></div>
+      <div id="llm-console-wrap" class="llm-console-wrap">
+        <div class="llm-console-label">&#129504; Ragionamento IA locale (grezzo)</div>
+        <div id="llm-console" class="llm-console"></div>
+      </div>
       <div id="cylon-bar" class="cylon-bar"><div class="cylon-bar-eye" id="cylon-bar-eye"></div></div>
     </div>
   </div>

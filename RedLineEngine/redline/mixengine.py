@@ -718,16 +718,40 @@ def render_mix(
     register_buses: dict[str, np.ndarray] = {}
     if double_names:
         on_step(f"Voce principale: fondamentale misurata {lead_fundamental:.0f}Hz — classifico le doppie per registro")
-        for name in double_names:
-            d = descriptors[name]
+
+        # Same rationale as the main per-stem loop above: pitch estimation
+        # (pYIN) + the double's own DSP chain is independent double-to-double,
+        # so it's dispatched to a thread pool instead of a sequential loop.
+        # Only the bus accumulation and shared reverb_bus.send afterward stay
+        # sequential (they mutate shared state and must stay in a stable
+        # order for reproducible bus sums).
+        double_lock = threading.Lock()
+
+        def _guarded_step(msg: str) -> None:
+            with double_lock:
+                on_step(msg)
+
+        def _guarded_event(evt: dict) -> None:
+            with double_lock:
+                on_event(evt)
+
+        def _process_one_double(name: str):
             audio = working_tracks[name]
             double_fundamental = estimate_fundamental(audio, sr)
             hf_ratio = high_frequency_ratio(audio, sr)
             register = classify_register(double_fundamental, lead_fundamental, hf_ratio=hf_ratio)
+            out = _process_double_stem(name, audio, sr, register, _guarded_step, _guarded_event)
+            return double_fundamental, hf_ratio, register, out
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(double_names)))) as pool:
+            futures = {name: pool.submit(_process_one_double, name) for name in double_names}
+            results = {name: future.result() for name, future in futures.items()}
+
+        for name in double_names:
+            d = descriptors[name]
+            double_fundamental, hf_ratio, register, out = results[name]
             on_step(f"  '{name}': fondamentale {double_fundamental:.0f}Hz, energia alte {hf_ratio * 100:.0f}% -> registro '{register}'")
             on_event({"type": "register_classified", "stem": name, "fundamental_hz": round(double_fundamental, 1), "hf_ratio": round(hf_ratio, 3), "register": register})
-
-            out = _process_double_stem(name, audio, sr, register, on_step, on_event)
 
             recipe = RECIPES[register]
             hard_pan = recipe.pan_magnitude if d.pan >= 0 else -recipe.pan_magnitude

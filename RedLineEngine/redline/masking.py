@@ -18,11 +18,13 @@ PRESENCE_CENTER_HZ = 3200.0
 
 # An instrumental stem needs to hold a meaningful share of its own energy in
 # the presence band before it's worth cutting; below this it's not really
-# competing with the vocal there.
-OVERLAP_THRESHOLD = 0.16
+# competing with the vocal there. Was 0.16 -- most real instrumental beds
+# that do genuinely mask the vocal only carry 11-15% of their energy there,
+# so the original threshold rarely fired on real material.
+OVERLAP_THRESHOLD = 0.12
 # The vocal itself needs to actually live in the presence band for this to
-# matter — if it doesn't, there's nothing to protect.
-VOCAL_PRESENCE_MIN = 0.08
+# matter — if it doesn't, there's nothing to protect. Was 0.08.
+VOCAL_PRESENCE_MIN = 0.06
 
 MAX_CUT_DB = 4.5
 

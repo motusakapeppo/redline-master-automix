@@ -40,6 +40,10 @@ let systemReadyPulse = 0;
 let celebrationWave = 0;
 let auditionTilt = 0;
 let idleFloatPhase = 0;
+// Punch-scale: a quick squash/stretch impulse on hard hits (glue
+// compression slam, de-esser bite, done celebration) so those moments read
+// as a snappy "hit" instead of only the subtler continuous vibration/glow.
+let punchScale = 0;
 
 // The skull GLB ships as a fully rigged, animated character (baked clips:
 // Idle, Yes, No, Bite_Front, Bite_InPlace, Dance, HitRecieve, ...) --
@@ -166,16 +170,48 @@ function init(canvasId) {
 // ─── Skull Geometry ─────────────────────────────────────────────────────────
 
 const SKULL_MODEL_URL = 'assets/skull.glb';
-// A faint warm-bone tint multiplied over the source asset's own painted
-// texture -- not a flat override. The original material was being replaced
-// entirely with one flat silver color, which is why the model rendered as
-// a nearly featureless white shape: it discarded the asset's actual
-// texture map (shading, cracks, tonal variation) instead of keeping it.
-// Cool silver-grey rather than a warm bone tone -- the source texture's own
-// warm/khaki base color read as off-palette against the rest of the UI
-// (black/red/silver). This multiplies toward that cooler, more metallic
-// range while still preserving the texture's own shading/detail/variation.
+// Cool silver-grey, multiplied over the source texture. Multiply can only
+// scale each channel, not shift hue -- so multiplying this over the source
+// asset's own warm khaki/olive-painted texture still reads as khaki (just a
+// darker khaki), not silver, because R/G/B keep their original ratio. See
+// _desaturateTexture below: the texture is grayscaled first so this tint
+// actually determines the final hue instead of just dimming the wrong one.
 const SKULL_TINT = '#AEB4C2';
+
+// One-time canvas desaturation of a loaded texture's image, so a colored
+// material tint (multiply blend) actually produces that color instead of a
+// darker version of whatever hue the source texture happened to be painted.
+// Falls back to the original texture untouched if the image isn't readable
+// (e.g. a CORS-tainted canvas in some hosting setups) rather than throwing.
+function _desaturateTexture(map) {
+  if (!map || !map.image || !map.image.width) return map;
+  try {
+    const img = map.image;
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      data[i] = gray;
+      data[i + 1] = gray;
+      data[i + 2] = gray;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = map.colorSpace;
+    tex.wrapS = map.wrapS;
+    tex.wrapT = map.wrapT;
+    tex.needsUpdate = true;
+    return tex;
+  } catch (err) {
+    console.warn('[three-avatar] Texture desaturation skipped:', err);
+    return map;
+  }
+}
 
 function buildSkull(onReady) {
   const group = new THREE.Group();
@@ -196,7 +232,7 @@ function buildSkull(onReady) {
           // while keeping the real texture map for genuine surface detail
           // and color variation instead of one uniform flat tone.
           child.material = new THREE.MeshStandardMaterial({
-            map: sourceMap,
+            map: _desaturateTexture(sourceMap),
             color: SKULL_TINT,
             metalness: 0.15,
             roughness: 0.65,
@@ -280,7 +316,7 @@ const PROP_CONFIGS = {
   headphones: { url: 'assets/headphones.glb', targetHeight: 1.7, position: [0, 0.75, 0], tint: '#9098A8' },
   vinyl: { url: 'assets/vinyl.glb', targetHeight: 1.3, position: [1.5, -0.2, -0.3], tint: '#7A8290', spin: true },
   cassette: { url: 'assets/cassette.glb', targetHeight: 0.9, position: [1.4, -0.1, 0], tint: '#8890A0' },
-  music_note: { url: 'assets/music_note.glb', targetHeight: 0.8, position: [-1.4, 0.6, 0], tint: '#C85068' },
+  music_note: { url: 'assets/music_note.glb', targetHeight: 0.8, position: [-1.4, 0.6, 0], tint: '#9A5560' },
   guitar: { url: 'assets/guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
   bass: { url: 'assets/bass_guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
   piano: { url: 'assets/piano.glb', targetHeight: 1.4, position: [-1.5, -0.5, 0], tint: '#8890A0' },
@@ -319,7 +355,7 @@ function _loadProp(name, onReady) {
           const sourceMap = child.material && child.material.map ? child.material.map : null;
           if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
           child.material = tintMaterial.clone();
-          child.material.map = sourceMap;
+          child.material.map = _desaturateTexture(sourceMap);
         }
       });
 
@@ -637,9 +673,11 @@ function animate() {
     _props.vinyl.rotation.z -= delta * 2.2; // steady spin, independent of the skull's own motion
   }
 
-  // Skull vibration from compression
+  // Skull vibration from compression -- amplitude bumped up (was 0.04) so
+  // a hard-hitting glue/multiband moment actually reads as a visible shake
+  // instead of a barely-perceptible jitter.
   if (compressionIntensity > 0.01) {
-    const amp = compressionIntensity * 0.04;
+    const amp = compressionIntensity * 0.09;
     skullVibrateOffset.set(
       (Math.random() - 0.5) * amp,
       (Math.random() - 0.5) * amp,
@@ -650,6 +688,16 @@ function animate() {
   } else {
     skull.position.x += (0 - skull.position.x) * 0.05;
     skull.position.z += (0 - skull.position.z) * 0.05;
+  }
+
+  // Punch-scale decay: quick snap up then settle back to 1.0 (critically
+  // damped feel via exponential decay of the offset from rest).
+  if (punchScale > 0.001) {
+    punchScale *= Math.max(0, 1 - delta * 10);
+    const s = 1 + punchScale * 0.18;
+    skull.scale.set(s, 1 - punchScale * 0.10, s);
+  } else if (skull.scale.x !== 1) {
+    skull.scale.set(1, 1, 1);
   }
 
   // Ring deformation
@@ -873,7 +921,10 @@ function onSystemReady() {
 }
 
 function onCompression(ratio, releaseMs) {
-  const amplitude = Math.min(0.35, (ratio - 1) * 0.06);
+  // Cap and multiplier both raised (was 0.35 / 0.06) -- the old range
+  // topped out so subtly that most real compressor ratios (2:1-6:1) barely
+  // moved the needle visually.
+  const amplitude = Math.min(0.5, (ratio - 1) * 0.09);
   compressionIntensity = amplitude;
   ringWaveDecay = Math.max(0.85, 1 - (releaseMs || 150) / 2000);
 
@@ -884,9 +935,12 @@ function onCompression(ratio, releaseMs) {
 }
 
 function onGlueCompression(ratio) {
-  const amplitude = Math.min(0.4, (ratio - 1) * 0.35);
+  const amplitude = Math.min(0.6, (ratio - 1) * 0.5);
   compressionIntensity = Math.max(compressionIntensity, amplitude);
-  if (amplitude > 0.2) playSkullAction('HitRecieve');
+  if (amplitude > 0.15) {
+    playSkullAction('HitRecieve');
+    punchScale = Math.min(1, amplitude * 1.5);
+  }
 
   ringColorTarget.set('#FF3366');
   setTimeout(() => { ringColorTarget.set('#FF003F'); }, 250);
@@ -900,13 +954,14 @@ function onGlueCompression(ratio) {
 function onDeesser() {
   deesserFlash = 1.0;
   playSkullAction('Bite_Front');
+  punchScale = Math.max(punchScale, 0.55);
 
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 3.0;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 3.0;
+  if (eyeLeft) eyeLeft.material.emissiveIntensity = 4.0;
+  if (eyeRight) eyeRight.material.emissiveIntensity = 4.0;
   setTimeout(() => {
     if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
     if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
-  }, 200);
+  }, 220);
 }
 
 function onBpm(bpm) {
@@ -968,15 +1023,29 @@ function onStep() {
 
 function onApprove() {
   playSkullAction('Yes');
+  ringColorTarget.set('#33FF88');
+  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 500);
+  punchScale = Math.max(punchScale, 0.35);
 }
 
 function onReject() {
   playSkullAction('No');
+  ringColorTarget.set('#FF3300');
+  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 500);
+  punchScale = Math.max(punchScale, 0.35);
 }
 
 function onDone() {
   celebrationWave = 1.0;
+  punchScale = 1.0;
   playSkullAction('Dance');
+
+  if (eyeLeft) eyeLeft.material.emissiveIntensity = 5.0;
+  if (eyeRight) eyeRight.material.emissiveIntensity = 5.0;
+  setTimeout(() => {
+    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
+    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+  }, 600);
 
   if (particles) {
     const pos = particles.geometry.attributes.position;

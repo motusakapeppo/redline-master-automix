@@ -65,6 +65,20 @@ class Api:
         self._js_worker: threading.Thread | None = None
         self._start_js_worker()
 
+        # Post-render re-evaluation cache: the three stages of the last
+        # successful render (raw stems summed / mixed / mastered), plus
+        # enough context (analysis, sr, platform, out_dir, version counter)
+        # to run a fast re-mastering-only pass from user feedback without
+        # re-running the expensive mix stage from scratch.
+        self._last_dry: np.ndarray | None = None
+        self._last_mix: np.ndarray | None = None
+        self._last_master: np.ndarray | None = None
+        self._last_sr: int | None = None
+        self._last_analysis = None
+        self._last_platform: str = "auto"
+        self._last_out_dir: str | None = None
+        self._feedback_version: int = 1
+
     def _start_js_worker(self) -> None:
         """Daemon thread that drains the JS eval queue. A sentinel None shuts
         it down cleanly. Drops stale entries when the queue grows beyond 60
@@ -132,6 +146,16 @@ class Api:
         this running process only (no .flags.json edit, no restart)."""
         config.set_override("ENABLE_LIVE_AUDITION", is_enabled)
         self._narrate(f"Neural Monitor: {'attivo' if is_enabled else 'disattivo'}")
+
+    def toggle_director_mode(self, is_manual: bool) -> None:
+        """Called by the GUI's AUTO/MANUALE switch. AUTO (default) is the
+        common case -- the engine classifies stems and proceeds without
+        interrupting the render. MANUAL re-enables the Director Mode
+        checkpoint (pipeline pauses for the user to confirm stem
+        classification before continuing), for sessions where the auto
+        classification needs a human sanity check."""
+        config.set_override("ENABLE_DIRECTOR_MODE", is_manual)
+        self._narrate(f"Modalità: {'MANUALE (conferma richiesta)' if is_manual else 'AUTOMATICA'}")
 
     def _audition(self, dry: np.ndarray, wet: np.ndarray, sr: int) -> None:
         """Plays a loud/dense before-and-after chunk of the master bus glue
@@ -244,6 +268,21 @@ class Api:
             sf.write(mix_path, mixed, stems.sample_rate)
             self._narrate(f"Mix salvato: {mix_path}")
 
+            # Cache for the post-render "NO MIX / CON MIX / CON MASTERING"
+            # in-app audition and the feedback re-mastering pass below.
+            # Raw stems are just summed dry (no panning/leveling/EQ) -- the
+            # simplest honest definition of "before" to compare against.
+            dry_sum = np.zeros_like(mixed)
+            for track in stems.tracks.values():
+                dry_sum += track
+            self._last_dry = dry_sum
+            self._last_mix = mixed
+            self._last_master = None
+            self._last_sr = stems.sample_rate
+            self._last_analysis = analysis
+            self._last_out_dir = out_dir
+            self._feedback_version = 1
+
             master_path = None
             if mix_prefs.do_mastering:
                 self._narrate("Avvio il mastering...")
@@ -253,6 +292,7 @@ class Api:
                     render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
                 else:
                     platform = prefs.get("platform", "auto")
+                    self._last_platform = platform
                     mastered = render_master(
                         mixed, stems.sample_rate, analysis, platform=platform,
                         on_step=self._narrate, on_event=self._emit,
@@ -260,6 +300,7 @@ class Api:
                     )
                     master_path = os.path.join(out_dir, "master.wav")
                     sf.write(master_path, mastered, stems.sample_rate)
+                    self._last_master = mastered
                 self._narrate(f"Master salvato: {master_path}")
 
             self._narrate("Fatto.")
@@ -279,3 +320,90 @@ class Api:
 
     def open_folder(self, path: str) -> None:
         os.startfile(path)  # noqa: S606 — Windows-only app, opening a folder the user just produced
+
+    def audition_stage(self, stage: str) -> dict:
+        """Post-render re-evaluation: play a chunk of one of the three
+        cached stages (dry stems / mixed / mastered) through real speakers
+        so the user can A/B them in-app instead of only in a file browser.
+        Independent of the live "Neural Monitor" toggle -- this is an
+        explicit, one-off listen request, not the automatic before/after
+        during a render."""
+        buffers = {"dry": self._last_dry, "mix": self._last_mix, "master": self._last_master}
+        buf = buffers.get(stage)
+        if buf is None or self._last_sr is None:
+            return {"ok": False, "error": "Nessun render disponibile per questo stadio."}
+        try:
+            from redline.audition import driver, extract_smart_chunk
+
+            chunk = extract_smart_chunk(buf, self._last_sr)
+            self._narrate(f"Ascolto: {stage}...")
+            driver.play_chunk(chunk, self._last_sr)
+            return {"ok": True}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
+    def submit_feedback(self, text: str) -> dict:
+        """Fast re-evaluation pass: re-runs ONLY the mastering stage (cheap)
+        against the already-cached mix (the expensive stage), nudged by a
+        few keyword-driven adjustments parsed from free-text feedback, and
+        writes a new versioned master file. Does not re-run the mix itself
+        -- that's the whole point of being faster than starting over."""
+        if self._last_mix is None or self._last_sr is None or self._last_analysis is None:
+            return {"ok": False, "error": "Nessun mix disponibile da ricalibrare."}
+        if self._last_out_dir is None:
+            return {"ok": False, "error": "Cartella di output non disponibile."}
+
+        try:
+            from pedalboard import Pedalboard, Gain, HighShelfFilter, LowShelfFilter
+
+            lower = (text or "").lower()
+
+            def any_kw(*words: str) -> bool:
+                return any(w in lower for w in words)
+
+            self._narrate(f"Ricalibro in base al feedback: \"{text}\"...")
+
+            mastered = render_master(
+                self._last_mix, self._last_sr, self._last_analysis,
+                platform=self._last_platform,
+                on_step=self._narrate, on_event=self._emit,
+                on_audition=None,
+            )
+
+            # Lightweight, honest post-adjustment layer -- these do NOT
+            # re-run the full mastering chain's internal decisions, they
+            # nudge the already-mastered signal based on the feedback's
+            # plain-language intent. Clamped modestly so repeated feedback
+            # can't runaway the gain/tone over successive versions.
+            fx: list = []
+            if any_kw("più caldo", "piu caldo", "warmer", "caldo"):
+                fx.append(LowShelfFilter(cutoff_frequency_hz=200.0, gain_db=1.5))
+                fx.append(HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=-1.0))
+            if any_kw("più brillante", "piu brillante", "brighter", "più aria", "piu aria"):
+                fx.append(HighShelfFilter(cutoff_frequency_hz=8000.0, gain_db=1.5))
+            if any_kw("più forte", "piu forte", "più alto", "piu alto", "louder", "più volume", "piu volume"):
+                fx.append(Gain(gain_db=1.5))
+            if any_kw("più piano", "piu piano", "meno forte", "quieter", "più basso", "piu basso"):
+                fx.append(Gain(gain_db=-1.5))
+
+            if fx:
+                board = Pedalboard(fx)
+                mastered = board(mastered.T, self._last_sr).T
+                # Safety clamp: the nudges above are additive gain/tone
+                # tweaks, not a full remaster with its own limiter pass, so
+                # clip defensively instead of trusting headroom survived.
+                peak = float(np.max(np.abs(mastered)))
+                if peak > 0.99:
+                    mastered = mastered * (0.99 / peak)
+
+            self._feedback_version += 1
+            master_path = os.path.join(self._last_out_dir, f"master_v{self._feedback_version}.wav")
+            sf.write(master_path, mastered, self._last_sr)
+            self._last_master = mastered
+            self._narrate(f"Nuova versione salvata: {master_path}")
+            return _sanitize_for_json({"ok": True, "master_path": master_path, "version": self._feedback_version})
+        except Exception as exc:
+            traceback.print_exc()
+            self._narrate(f"Errore nella ricalibrazione: {exc}")
+            return {"ok": False, "error": str(exc)}

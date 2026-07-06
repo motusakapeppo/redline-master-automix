@@ -174,6 +174,12 @@ function onStep(msg) {
   if (window.avatarAPI) window.avatarAPI.onStep(msg);
   bumpActivity();
   wireInteractiveLine(line, msg);
+
+  // "Elaborazione stem 'X' (...)" / "  'X': ..." narration lines create or
+  // re-select that stem's row immediately, so the row exists (and lights up)
+  // even before its first tagged badge event arrives.
+  const stemMatch = msg.match(/'([^']+)'/);
+  if (stemMatch) touchStemRow(stemMatch[1]);
 }
 
 // Turns a log line into a "console" element: hovering a line that mentions a
@@ -248,6 +254,18 @@ function toggleAudition() {
   }
 }
 
+// --- AUTO/MANUALE: default AUTO never interrupts the render for stem
+// classification approval; MANUALE re-enables the Director Mode checkpoint
+// (pipeline pauses until the user clicks ENGAGE in the director panel).
+function toggleDirectorMode() {
+  const isManual = document.getElementById("director-mode-switch").checked;
+  const label = document.getElementById("director-mode-label");
+  if (label) label.textContent = isManual ? "MANUALE" : "AUTO";
+  if (window.pywebview) {
+    window.pywebview.api.toggle_director_mode(isManual);
+  }
+}
+
 // Called directly from Python (api.py's _audition) around each half of the
 // dry/wet playback -- reflects what's coming out of the speakers right now
 // onto the avatar so the A/B comparison reads as one continuous moment,
@@ -285,10 +303,9 @@ function startDeepScan(stemCount) {
   if (assistant) assistant.classList.add("deep-scan");
   setAssistantLabel("deep scan...");
   const console_ = document.getElementById("llm-console");
-  if (console_) {
-    console_.textContent = "";
-    console_.classList.add("active");
-  }
+  const consoleWrap = document.getElementById("llm-console-wrap");
+  if (console_) console_.textContent = "";
+  if (consoleWrap) consoleWrap.classList.add("active");
   const bar = document.getElementById("cylon-bar");
   if (bar) bar.classList.add("active");
   startCylonLoop();
@@ -307,6 +324,8 @@ function stopDeepScan() {
   const assistant = document.getElementById("assistant");
   if (assistant) assistant.classList.remove("deep-scan");
   setAssistantLabel("");
+  const consoleWrap = document.getElementById("llm-console-wrap");
+  if (consoleWrap) consoleWrap.classList.remove("active");
   const bar = document.getElementById("cylon-bar");
   if (bar) bar.classList.remove("active");
   if (cylonAnimationId !== null) {
@@ -345,6 +364,20 @@ function onDone(result) {
         <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
         <div>Loudness: ${result.lufs.toFixed(1)} LUFS</div>
         <button class="btn btn-accent" onclick="openOutput()">Apri cartella risultati</button>
+
+        <div class="audition-abc">
+          <div class="audition-abc-label">Riascolta:</div>
+          <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
+          <button class="btn" onclick="auditionStage('mix')">Con mix</button>
+          <button class="btn" onclick="auditionStage('master')" ${result.master_path ? "" : "disabled"}>Con mastering</button>
+        </div>
+
+        <div class="feedback-box">
+          <label for="feedback-text">Feedback (es. "pi&ugrave; caldo", "pi&ugrave; forte", "pi&ugrave; brillante")</label>
+          <textarea id="feedback-text" rows="2" placeholder="Cosa vorresti cambiare?"></textarea>
+          <button class="btn btn-accent" onclick="submitFeedback()" ${result.master_path ? "" : "disabled"}>Rielabora (veloce)</button>
+          <div id="feedback-status"></div>
+        </div>
       </div>`;
   } else {
     const errorMsg = result ? result.error : "errore sconosciuto";
@@ -354,6 +387,31 @@ function onDone(result) {
 
 function openOutput() {
   window.pywebview.api.open_folder(selectedOutput);
+}
+
+// --- Post-render re-evaluation: A/B/C audition of the three cached render
+// stages, and free-text feedback that triggers a fast re-mastering-only
+// pass (skips re-running the mix, which is the expensive part).
+async function auditionStage(stage) {
+  if (!window.pywebview) return;
+  const res = await window.pywebview.api.audition_stage(stage);
+  if (res && !res.ok) {
+    addEventChip(`\u{26A0}\u{FE0F} Ascolto non disponibile: ${res.error}`);
+  }
+}
+
+async function submitFeedback() {
+  const input = document.getElementById("feedback-text");
+  const status = document.getElementById("feedback-status");
+  const text = input ? input.value.trim() : "";
+  if (!text || !window.pywebview) return;
+  if (status) status.textContent = "Ricalibro...";
+  const res = await window.pywebview.api.submit_feedback(text);
+  if (status) {
+    status.textContent = res && res.ok
+      ? `Nuova versione salvata (v${res.version}): ${res.master_path}`
+      : `Errore: ${res ? res.error : "sconosciuto"}`;
+  }
 }
 
 // --- Director Mode: the pipeline is genuinely paused on a Python thread
@@ -427,6 +485,77 @@ function flashDetail(id, text) {
   setTimeout(() => el.classList.remove("flash"), 400);
 }
 
+// --- Per-stem breakdown rows: one row per track for the whole render,
+// keyed by stem name, so processing the same stem again (e.g. a double's
+// register-classification thread finishing after another stem's) re-uses
+// its existing row and lights up the badge for whatever stage just fired,
+// instead of the old scrolling log where earlier stems' progress just
+// disappeared off the top.
+const STEM_STAGE_BADGES = [
+  { key: "denoise", label: "NR" },
+  { key: "hpf", label: "HPF" },
+  { key: "resonance", label: "RES" },
+  { key: "compressor", label: "COMP" },
+  { key: "deesser", label: "DEESS" },
+  { key: "saturation", label: "SAT" },
+  { key: "masking", label: "MASK" },
+  { key: "reverb", label: "VERB" },
+  { key: "register", label: "REG" },
+];
+const stemRows = new Map(); // stem name -> { row, badges: {stageKey: el} }
+
+function getOrCreateStemRow(name) {
+  if (stemRows.has(name)) return stemRows.get(name);
+  const container = document.getElementById("stem-rows");
+  if (!container) return null;
+
+  const row = document.createElement("div");
+  row.className = "stem-row";
+
+  const label = document.createElement("div");
+  label.className = "stem-row-label";
+  label.textContent = name;
+  label.title = name;
+  row.appendChild(label);
+
+  const badgeStrip = document.createElement("div");
+  badgeStrip.className = "stem-row-badges";
+  const badges = {};
+  for (const stage of STEM_STAGE_BADGES) {
+    const b = document.createElement("span");
+    b.className = "stem-badge";
+    b.textContent = stage.label;
+    badgeStrip.appendChild(b);
+    badges[stage.key] = b;
+  }
+  row.appendChild(badgeStrip);
+
+  container.appendChild(row);
+  const entry = { row, badges };
+  stemRows.set(name, entry);
+  return entry;
+}
+
+function touchStemRow(name) {
+  const entry = getOrCreateStemRow(name);
+  if (!entry) return;
+  entry.row.classList.add("row-active");
+  clearTimeout(entry._activeTimer);
+  entry._activeTimer = setTimeout(() => entry.row.classList.remove("row-active"), 1400);
+}
+
+function markStemStage(name, stageKey) {
+  const entry = getOrCreateStemRow(name);
+  if (!entry) return;
+  touchStemRow(name);
+  const badge = entry.badges[stageKey];
+  if (!badge) return;
+  badge.classList.add("done");
+  badge.classList.add("flash");
+  clearTimeout(badge._flashTimer);
+  badge._flashTimer = setTimeout(() => badge.classList.remove("flash"), 900);
+}
+
 function addEventChip(text) {
   const feed = document.getElementById("event-feed");
   const chip = document.createElement("div");
@@ -456,11 +585,13 @@ function onEvent(evt) {
       eqBands[`res_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
       redrawEq();
       flashDetail("eq-detail", `${evt.stem}: risonanza ${evt.freq_hz.toFixed(0)}Hz ${evt.gain_db}dB`);
+      markStemStage(evt.stem, "resonance");
       break;
 
     case "dynamic_hpf":
       flashDetail("eq-detail", `${evt.stem}: HPF dinamico ${evt.cutoff_hz}Hz (fondamentale ${evt.fundamental_hz}Hz)`);
       addEventChip(`\u{1F3A4} ${evt.stem}: taglio adattivo a ${evt.cutoff_hz}Hz`);
+      markStemStage(evt.stem, "hpf");
       break;
 
     case "compressor":
@@ -471,6 +602,7 @@ function onEvent(evt) {
       fill.style.width = `${pct}%`;
       const label = evt.stem ? evt.stem : "bus";
       flashDetail("comp-detail", `${label}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+      if (evt.stem) markStemStage(evt.stem, "compressor");
       reactToCompression(ratio, evt.release_ms);
       if (!evt.stem) {
         // No per-stem name on the event -- this is a bus-level compressor,
@@ -493,6 +625,7 @@ function onEvent(evt) {
       void dial.offsetWidth; // restart animation
       dial.classList.add("pulse");
       flashDetail("deess-detail", `${evt.stem}: banda ${evt.low_hz.toFixed(0)}-${evt.high_hz.toFixed(0)}Hz`);
+      markStemStage(evt.stem, "deesser");
       reactToDeesser();
       break;
     }
@@ -503,6 +636,7 @@ function onEvent(evt) {
 
     case "denoise":
       addEventChip(`\u{1F9FC} ${evt.stem}: riduzione rumore`);
+      markStemStage(evt.stem, "denoise");
       setListening(true);
       setTimeout(() => setListening(false), 1200);
       break;
@@ -532,14 +666,17 @@ function onEvent(evt) {
 
     case "soft_clip":
       addEventChip(`\u{2702}\u{FE0F} Soft clip a ${evt.ceiling_db}dB`);
+      flashDetail("master-detail", `Soft clip: ceiling ${evt.ceiling_db}dB`);
       break;
 
     case "mid_side":
       addEventChip(`\u{2194}\u{FE0F} M/S: mono sotto ${evt.mono_below_hz}Hz`);
+      flashDetail("midside-detail", `Mono < ${evt.mono_below_hz}Hz, air shelf side`);
       break;
 
     case "limiter":
       addEventChip(`\u{1F6A7} Limiter a ${evt.ceiling_db}dB`);
+      flashDetail("master-detail", `Limiter: ceiling ${evt.ceiling_db}dB`);
       break;
 
     case "qc_report": {
@@ -558,6 +695,7 @@ function onEvent(evt) {
 
     case "register_classified":
       addEventChip(`\u{1F3B5} ${evt.stem}: ${evt.fundamental_hz}Hz -> ${evt.register}`);
+      markStemStage(evt.stem, "register");
       break;
 
     case "backing_vocals_bus":
@@ -570,6 +708,7 @@ function onEvent(evt) {
 
     case "masking_cut":
       addEventChip(`\u{1F3B8} ${evt.stem}: mascheramento a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
+      markStemStage(evt.stem, "masking");
       break;
 
     case "music_bus_ms":
@@ -579,11 +718,13 @@ function onEvent(evt) {
     case "multiband_compressor":
       addEventChip(`\u{1F39B}\u{FE0F} Multibanda: <${evt.low_hz}Hz / ${evt.low_hz}-${evt.high_hz}Hz / >${evt.high_hz}Hz`);
       reactToGlueCompression(evt.recipes.mid.ratio);
+      flashDetail("master-detail", `Multibanda: 3 bande, split ${evt.low_hz}/${evt.high_hz}Hz`);
       break;
 
     case "vocal_space":
       addEventChip(`\u{1F30C} Spazio voce: riverbero+delay ${Math.round(evt.mix * 100)}%`);
       syncAssistantToBpm(evt.bpm);
+      flashDetail("reverb-detail", `Voce: riverbero+delay BPM-sync ${Math.round(evt.mix * 100)}%`);
       break;
 
     case "concurrent_take_leveling":
@@ -592,14 +733,19 @@ function onEvent(evt) {
 
     case "saturation":
       addEventChip(`\u{1F525} ${evt.stem}: saturazione (drive ${evt.drive})`);
+      flashDetail("saturation-detail", `${evt.stem}: drive ${evt.drive}`);
+      markStemStage(evt.stem, "saturation");
       break;
 
     case "reverb_send":
       addEventChip(`\u{2601}\u{FE0F} ${evt.stem}: riverbero lungo ${Math.round(evt.mix * 100)}%`);
+      flashDetail("reverb-detail", `${evt.stem}: send ${evt.bus} ${Math.round(evt.mix * 100)}%`);
+      markStemStage(evt.stem, "reverb");
       break;
 
     case "reverb_bus_render":
       addEventChip(`\u{1F3DB}\u{FE0F} Bus riverbero renderizzati: ${evt.buses.join(", ")}`);
+      flashDetail("reverb-detail", `Bus renderizzati: ${evt.buses.join(", ")}`);
       break;
 
     case "ltas_match":
@@ -646,7 +792,25 @@ function onEvent(evt) {
       break;
     }
 
+    case "vocal_main_bus":
+      addEventChip(`\u{1F3A4} Bus Vocal_Main: ${evt.stems.length} tracce sommate`);
+      break;
+
+    case "bass_chain":
+      addEventChip(`\u{1F3B8} Basso: split 2-banda + saturazione armonica`);
+      flashDetail("saturation-detail", `Basso: split 2-banda + saturazione armonica`);
+      break;
+
     default:
+      // Every backend event is meant to be seen -- a silently dropped case
+      // here is exactly why effects the engine actually uses (reverb,
+      // saturation, limiter, bus glue...) could look "missing" to someone
+      // watching the log, when they were really just never rendered. Any
+      // event type without a specific case above still gets a generic chip
+      // instead of vanishing.
+      if (evt && evt.type) {
+        addEventChip(`⚙️ ${evt.type}`);
+      }
       break;
   }
 }

@@ -9,6 +9,31 @@
 
 * { box-sizing: border-box; }
 
+/* Themed scrollbars everywhere instead of the default white/grey OS
+   scrollbar, which clashed hard against the black/red palette. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 0, 63, 0.45) var(--bg-panel);
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--bg-panel);
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 0, 63, 0.45);
+  border-radius: 5px;
+  border: 2px solid var(--bg-panel);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 0, 63, 0.75);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--bg-panel);
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -175,22 +200,34 @@ html, body {
 /* Streaming reasoning console: raw model tokens appended live, monospace,
    dim by default so it doesn't compete with the main log — this exists so
    the wait feels like watching the machine think rather than a frozen UI. */
-.llm-console {
+.llm-console-wrap {
   display: none;
+  margin-top: 8px;
+}
+
+.llm-console-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 3px;
+}
+
+.llm-console {
   background: #0d0000;
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 8px 10px;
-  margin-top: 8px;
   font-family: "Consolas", monospace;
   font-size: 11px;
   color: #c96;
   max-height: 90px;
   overflow-y: auto;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-.llm-console.active { display: block; }
+.llm-console-wrap.active { display: block; }
 
 /* Cylon activity bar: a thin strip sweeping back and forth at 60fps under
    the console, confirming the UI thread is alive while the DSP/LLM thread
@@ -353,7 +390,11 @@ select { width: auto; }
 
 .rack {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Was a fixed repeat(4, 1fr) -- fine for exactly 4 modules, but adding
+     Riverbero/Saturazione/Master/Mid-Side (6 total) pushed the row wider
+     than the panel and forced a horizontal scrollbar that cropped the last
+     column. auto-fit + minmax wraps to however many columns actually fit. */
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 12px;
   margin: 16px 0 10px;
 }
@@ -517,6 +558,7 @@ select { width: auto; }
   padding: 14px 16px;
   height: 200px;
   overflow-y: auto;
+  overflow-x: hidden;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12.5px;
 }
@@ -526,6 +568,11 @@ select { width: auto; }
   padding: 2px 0;
   opacity: 0;
   animation: fade-in 0.3s ease forwards;
+  /* Long unbroken tokens (stem filenames especially) were overflowing the
+     box horizontally instead of wrapping, forcing a horizontal scrollbar
+     and cutting text off mid-line. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @keyframes fade-in {
@@ -535,6 +582,75 @@ select { width: auto; }
 
 .log-line:last-child {
   color: var(--text);
+}
+
+/* Per-stem breakdown rows: one persistent row per track (see #stem-rows in
+   index.html), small stage badges instead of scrolling text that vanishes
+   as new lines push old ones out. */
+.stem-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 4px 0 10px;
+}
+
+.stem-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  transition: border-color 0.25s ease, background 0.25s ease;
+}
+
+.stem-row.row-active {
+  border-color: var(--accent);
+  background: rgba(255, 0, 63, 0.08);
+}
+
+.stem-row-label {
+  font-size: 11px;
+  color: var(--text);
+  min-width: 110px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stem-row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.stem-badge {
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: transparent;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.stem-badge.done {
+  color: var(--text);
+  border-color: rgba(255, 0, 63, 0.5);
+  background: rgba(255, 0, 63, 0.1);
+}
+
+.stem-badge.flash {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.12);
 }
 
 .result-card {
@@ -589,4 +705,52 @@ select { width: auto; }
 .result-card.error {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.audition-abc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.audition-abc-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.feedback-box {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feedback-box label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.feedback-box textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.feedback-box .btn {
+  align-self: flex-start;
+}
+
+#feedback-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
 }

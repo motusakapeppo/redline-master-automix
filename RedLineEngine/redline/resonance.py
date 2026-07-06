@@ -11,7 +11,10 @@ from scipy.signal import welch
 
 MUD_LOW_HZ = 120.0
 MUD_HIGH_HZ = 500.0
-PROMINENCE_THRESHOLD_DB = 5.0  # peak must stick out this much above the band median to count as a resonance
+PROMINENCE_THRESHOLD_DB = 3.5  # peak must stick out this much above the band median to count as a resonance
+# Was 5.0 -- in practice most real mud accumulations sit in the 3-4.5dB
+# range, not the sharp 5dB+ spike this originally required, so the cut was
+# almost never actually firing on real material.
 MAX_CUT_DB = 4.0
 
 
