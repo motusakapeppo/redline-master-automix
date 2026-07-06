@@ -18,7 +18,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 |---|---|---|
 | `ENABLE_BLUEPRINT_CHAINS` | off | Serial vocal compression (FET peak-catcher + Opto leveler), drum bus glue + tape saturation, bass 2-band + harmonic exciter |
 | `ENABLE_LTAS_MATCHING` | off | FIR spectral matching (`redline/ltas.py`) against a reference track during mastering |
-| `ENABLE_RT60_CALIBRATION` | off | *(planned)* auto-tune reverb bus decay from a reference track's ambience |
+| `ENABLE_RT60_CALIBRATION` | off | Auto-tunes Room/Plate reverb bus decay from a reference track's onset/decay (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | *(planned)* local LLM (llama.cpp) fallback for low-confidence stem naming |
 | `ENABLE_DIRECTOR_MODE` | off | *(planned)* human-in-the-loop pause between pipeline stages |
 
@@ -31,6 +31,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/reverbbus.py` — 3 shared reverb buses (Room/Plate/Hall) instead of per-stem instances
 - `redline/masterengine.py` — multiband glue compression, soft-clip, mid/side polish, LUFS targeting, QC loop
 - `redline/ltas.py` — reference-track spectral (LTAS) FIR matching, ±2.5dB clamped
+- `redline/rt60.py` — reference-track RT60 estimation (onset + decay regression) to calibrate Room/Plate reverb buses
 - `redline/qc.py` — automated true-peak/LUFS/mono-correlation check with correction re-render
 - `redline/metrics.py` — in-memory per-stage timing (`[METRIC] stage: Xs`)
 - `app/` — pywebview desktop shell (API + web UI)
@@ -48,6 +49,6 @@ should trace back to this doc rather than inventing new numbers.
 ## Status
 
 Actively developed. See `.omo/` for planning notes and commit history for
-progress. Current focus: Fase 2 (blueprint DSP chains) and Fase 3 (LTAS
-matchering) landed behind flags; RT60 calibration, LLM advisory, GUI
-polish, and PyInstaller packaging are next.
+progress. Landed behind flags so far: Fase 2 blueprint DSP chains, Fase 2
+RT60 reverb calibration, Fase 3 LTAS spectral matching. Next: LLM advisory
+(llama.cpp, local-only), GUI polish, and PyInstaller packaging.
