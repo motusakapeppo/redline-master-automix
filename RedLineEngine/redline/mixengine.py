@@ -67,6 +67,7 @@ from .dsp_utils import (
     db_to_gain,
     pan_stereo,
 )
+from . import config
 from .naming import parse_stem, StemDescriptor
 from .deesser import deess, detect_sibilance_band
 from .resonance import find_resonance
@@ -133,6 +134,19 @@ KICK_BASS_DUCK_BASE_DB = 3.5
 MUSIC_BUS_MID_DIP_DB = -1.5
 MUSIC_BUS_SIDE_WIDTH_DB = 1.0
 MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
+
+# Drum bus tape-style saturation (§3 Drum Bus blueprint): even-harmonic
+# "dirt" blended in after glue compression, standard on urban/modern busses.
+DRUM_SATURATION_DRIVE = 0.35
+DRUM_SATURATION_MIX = 0.18
+
+# Bass 2-band split + harmonic exciter (§4 Bass blueprint): the split point
+# separates the immobile sub from the more dynamic pluck/attack band, and
+# the exciter drive generates upper harmonics of the fundamental so the
+# bass reads as present even on speakers that can't reproduce the sub.
+BASS_SPLIT_HZ = 120.0
+BASS_EXCITER_DRIVE = 0.4
+BASS_EXCITER_MIX = 0.25
 
 
 def _describe(d: StemDescriptor) -> str:
@@ -237,14 +251,37 @@ def _process_stem(
         presence_gain = LEAD_PRESENCE_GAIN_DB + section_boost
         board_fx.append(PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=presence_gain, q=1.0))
 
-    role_comp = {
-        "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
-        "bass": dict(threshold_db=-18.0, ratio=3.0, attack_ms=10.0, release_ms=150.0),
-        "drums": dict(threshold_db=-16.0, ratio=2.5, attack_ms=5.0, release_ms=100.0),
-        "other": dict(threshold_db=-20.0, ratio=2.0, attack_ms=15.0, release_ms=180.0),
-    }[role]
-    on_event({"type": "compressor", "stem": name, **role_comp})
-    board_fx.append(Compressor(**role_comp))
+    blueprint_chains = config.is_enabled("ENABLE_BLUEPRINT_CHAINS")
+
+    if is_lead_vocal and blueprint_chains:
+        # Serial vocal compression (industry-standard 2-stage), not one
+        # compressor doing both jobs: a fast FET/1176-style peak catcher
+        # grabs only the sharpest transients/consonants (hard ratio, light
+        # overall reduction), then a slow LA-2A-style leveler rides the
+        # average level down gently and constantly. This combination is
+        # what actually keeps a vocal sounding close and controlled without
+        # sounding squashed the way a single aggressive compressor would.
+        peak_catcher = dict(threshold_db=-12.0, ratio=8.0, attack_ms=0.8, release_ms=60.0)
+        leveler = dict(threshold_db=-20.0, ratio=3.0, attack_ms=60.0, release_ms=250.0)
+        on_event({"type": "compressor", "stem": name, "stage": "peak_catcher", **peak_catcher})
+        on_event({"type": "compressor", "stem": name, "stage": "leveler", **leveler})
+        board_fx.append(Compressor(**peak_catcher))
+        board_fx.append(Compressor(**leveler))
+    elif role == "drums" and blueprint_chains:
+        # Bus-glue-style settings (slow attack lets the transient through,
+        # gentle ratio) — the saturation/"dirt" happens after, post-board.
+        drum_comp = dict(threshold_db=-16.0, ratio=3.0, attack_ms=30.0, release_ms=120.0)
+        on_event({"type": "compressor", "stem": name, **drum_comp})
+        board_fx.append(Compressor(**drum_comp))
+    else:
+        role_comp = {
+            "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
+            "bass": dict(threshold_db=-18.0, ratio=3.0, attack_ms=10.0, release_ms=150.0),
+            "drums": dict(threshold_db=-16.0, ratio=2.5, attack_ms=5.0, release_ms=100.0),
+            "other": dict(threshold_db=-20.0, ratio=2.0, attack_ms=15.0, release_ms=180.0),
+        }[role]
+        on_event({"type": "compressor", "stem": name, **role_comp})
+        board_fx.append(Compressor(**role_comp))
 
     board = Pedalboard(board_fx)
     out = board(audio.T, sr).T
@@ -253,7 +290,39 @@ def _process_stem(
         band = detect_sibilance_band(out, sr)
         on_event({"type": "deesser", "stem": name, "low_hz": round(band.low_hz, 0), "high_hz": round(band.high_hz, 0)})
         out = deess(out, sr, band=band)
+    elif role == "drums" and blueprint_chains:
+        # Tape-style saturation blended in — adds even harmonics that read
+        # as "bigger/dirtier" without moving the meter, standard on urban/
+        # modern drum busses.
+        out = out * (1.0 - DRUM_SATURATION_MIX) + saturate(out, DRUM_SATURATION_DRIVE) * DRUM_SATURATION_MIX
+        on_event({"type": "saturation", "stem": name, "drive": DRUM_SATURATION_DRIVE, "mix": DRUM_SATURATION_MIX})
+    elif role == "bass" and blueprint_chains:
+        out = _bass_chain(out, sr, name, on_event)
 
+    return out
+
+
+def _bass_chain(audio: np.ndarray, sr: int, name: str, on_event: EventCallback) -> np.ndarray:
+    """2-band compression (sub stays tight/immobile, the upper band keeps
+    its pluck/attack more free) plus a harmonic exciter: real distortion
+    targeted at the bass's low-mid range generates artificial harmonics a
+    couple octaves up (a 60-80Hz fundamental saturates into energy around
+    120-240Hz) — the classic trick that makes a bass audible on phone/TV
+    speakers that can't reproduce the sub-bass fundamental at all."""
+    nyquist = sr / 2.0
+    sos_low = butter(4, BASS_SPLIT_HZ / nyquist, btype="lowpass", output="sos")
+    low = np.stack(
+        [sosfiltfilt(sos_low, audio[:, ch].astype(np.float64)) for ch in range(audio.shape[1])], axis=1
+    ).astype(np.float32)
+    high = audio - low
+
+    low = Pedalboard([Compressor(threshold_db=-20.0, ratio=4.0, attack_ms=3.0, release_ms=120.0)])(low.T, sr).T
+    high = Pedalboard([Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=15.0, release_ms=150.0)])(high.T, sr).T
+
+    combined = low + high
+    excited = saturate(combined, BASS_EXCITER_DRIVE)
+    out = combined * (1.0 - BASS_EXCITER_MIX) + excited * BASS_EXCITER_MIX
+    on_event({"type": "bass_chain", "stem": name, "split_hz": BASS_SPLIT_HZ, "exciter_drive": BASS_EXCITER_DRIVE})
     return out
 
 
