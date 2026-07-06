@@ -15,7 +15,7 @@ function startIdleBreathing() {
   if (avatarIdleTween) avatarIdleTween.kill();
   if (earringSwayTween) earringSwayTween.kill();
   avatarIdleTween = gsap.to("#avatar-head", {
-    y: 6,
+    y: 2,
     duration: 3,
     repeat: -1,
     yoyo: true,
@@ -271,19 +271,15 @@ function reactToCompression(ratio, releaseMs) {
 }
 
 function reactToGlueCompression(ratio) {
-  // The harder the master bus glue squeezes, the more the avatar squints
-  // and the earrings take a physical "hit" -- a felt sense of "how much am
-  // I pushing this mix", not just a number in a meter. Ratio ~1.2:1
-  // (barely touching it) to ~4:1 (leaning on it hard) mapped to a 0..6
-  // "pressure" proxy (a real GR-in-dB reading isn't available yet).
+  // The harder the master bus glue squeezes, the more the whole linework
+  // "vibrates" and thickens -- as if the electrical signal itself were
+  // saturating the graphic -- plus the earrings take a physical hit.
+  // Ratio ~1.2:1 (barely touching it) to ~4:1 (leaning on it hard) mapped
+  // to a 0..6 "pressure" proxy (a real GR-in-dB reading isn't available yet).
   const pressure = Math.min(6, Math.max(0, (ratio - 1.2) * 2));
-  const eyeScale = Math.max(0.3, 1 - pressure * 0.1);
+  const strokeWidth = 2 + pressure * 0.3;
 
-  if (typeof gsap === "undefined") {
-    const eyes = document.getElementById("eyes");
-    if (eyes) eyes.style.transform = `scaleY(${eyeScale})`;
-    return;
-  }
+  if (typeof gsap === "undefined") return;
 
   gsap.to("#earring-left", {
     rotation: 15 + pressure * 2,
@@ -292,7 +288,13 @@ function reactToGlueCompression(ratio) {
     yoyo: true,
     repeat: 1,
   });
-  gsap.to("#eyes", { scaleY: eyeScale, transformOrigin: "center", duration: 0.2 });
+  gsap.to("#avatar-head path[stroke='#FFFFFF']", {
+    strokeWidth,
+    duration: 0.1,
+    yoyo: true,
+    repeat: 1,
+    ease: "power2.out",
+  });
 }
 
 function setListening(on) {
