@@ -20,6 +20,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 | `ENABLE_LTAS_MATCHING` | off | FIR spectral matching (`redline/ltas.py`) against a reference track during mastering |
 | `ENABLE_RT60_CALIBRATION` | off | Auto-tunes Room/Plate reverb bus decay from a reference track's onset/decay (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | Local LLM (llama.cpp, `redline/llm_classifier.py`) fallback for low-confidence stem naming, validated through `redline/director_safety.py` |
+| `ENABLE_LIVE_AUDITION` | off | Neural Monitor — real dry/wet A/B playback of the master bus glue compression through real speakers (`redline/audition.py`). Toggled live from the GUI switch (runtime-only, via `config.set_override`), not from `.flags.json` |
 | `ENABLE_DIRECTOR_MODE` | off | *(planned)* human-in-the-loop pause between pipeline stages |
 
 ## Architecture
@@ -36,7 +37,8 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/metrics.py` — in-memory per-stage timing (`[METRIC] stage: Xs`)
 - `redline/llm_classifier.py` — offline local LLM (`models/qwen2.5-1.5b-instruct-q4_0.gguf` via llama-cpp-python), advisory-only fallback for stems `naming.py` couldn't confidently place, streams tokens for the GUI console
 - `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
-- `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state) alongside a conversational terminal panel
+- `redline/audition.py` — Neural Monitor: sounddevice/PortAudio playback with peak-safety normalization + anti-click fades, and `extract_smart_chunk()` (finds the loudest window instead of comparing arbitrary/silent audio)
+- `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state/live A/B audition) alongside a conversational terminal panel
 
 ## Reference document
 
@@ -56,7 +58,13 @@ RT60 reverb calibration, Fase 3 LTAS spectral matching, Fase 4 LLM advisory
 (verified end-to-end against the real bundled model, including a real bug
 caught and fixed where the model echoed the wrong stem name), Fase 5 GUI
 (two-column layout, GSAP avatar with 3D shading/metallic jewelry/deep-scan
-halo/streaming console/cylon bar). Fase 6 PyInstaller packaging built and
-launch-tested on this machine (`llama_cpp` + the bundled model + `pywebview`
-all confirmed present and working in the frozen exe); still needs a
+halo/streaming console/cylon bar/Neural Monitor live A/B audition). Fase 6
+PyInstaller packaging built and launch-tested on this machine multiple
+times (`llama_cpp`, `pywebview`, `sounddevice` + the bundled model all
+confirmed present and working in the frozen exe); still needs a
 clean-machine test on hardware that never had Python installed.
+
+If the desktop shortcut (`Avvia RedLine Engine.vbs`) ever opens a blank/black
+window, delete `%LOCALAPPDATA%\RedLineEngine\webview` (WebView2's storage
+folder can get stuck/locked between runs) and relaunch — `main.py` already
+uses a dedicated storage path specifically to guard against this.
