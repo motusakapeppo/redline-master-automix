@@ -19,7 +19,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 | `ENABLE_BLUEPRINT_CHAINS` | off | Serial vocal compression (FET peak-catcher + Opto leveler), drum bus glue + tape saturation, bass 2-band + harmonic exciter |
 | `ENABLE_LTAS_MATCHING` | off | FIR spectral matching (`redline/ltas.py`) against a reference track during mastering |
 | `ENABLE_RT60_CALIBRATION` | off | Auto-tunes Room/Plate reverb bus decay from a reference track's onset/decay (`redline/rt60.py`) |
-| `ENABLE_LLM_ADVISORY` | off | *(planned)* local LLM (llama.cpp) fallback for low-confidence stem naming |
+| `ENABLE_LLM_ADVISORY` | off | Local LLM (llama.cpp, `redline/llm_classifier.py`) fallback for low-confidence stem naming, validated through `redline/director_safety.py` |
 | `ENABLE_DIRECTOR_MODE` | off | *(planned)* human-in-the-loop pause between pipeline stages |
 
 ## Architecture
@@ -34,7 +34,9 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/rt60.py` — reference-track RT60 estimation (onset + decay regression) to calibrate Room/Plate reverb buses
 - `redline/qc.py` — automated true-peak/LUFS/mono-correlation check with correction re-render
 - `redline/metrics.py` — in-memory per-stage timing (`[METRIC] stage: Xs`)
-- `app/` — pywebview desktop shell (API + web UI)
+- `redline/llm_classifier.py` — offline local LLM (`models/qwen2.5-1.5b-instruct-q4_0.gguf` via llama-cpp-python), advisory-only fallback for stems `naming.py` couldn't confidently place, streams tokens for the GUI console
+- `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
+- `app/` — pywebview desktop shell (API + web UI); assistant SVG shows a "deep scan" halo + streaming console + cylon activity bar while the local LLM is inferring
 
 ## Reference document
 
@@ -50,5 +52,8 @@ should trace back to this doc rather than inventing new numbers.
 
 Actively developed. See `.omo/` for planning notes and commit history for
 progress. Landed behind flags so far: Fase 2 blueprint DSP chains, Fase 2
-RT60 reverb calibration, Fase 3 LTAS spectral matching. Next: LLM advisory
-(llama.cpp, local-only), GUI polish, and PyInstaller packaging.
+RT60 reverb calibration, Fase 3 LTAS spectral matching, Fase 4 LLM advisory
+(verified end-to-end against the real bundled model), Fase 5 GUI (deep-scan
+halo, streaming console, cylon bar). PyInstaller `.spec` updated for
+`llama_cpp` + the bundled model (Fase 6); still needs a clean-machine test
+on hardware that never had Python installed.
