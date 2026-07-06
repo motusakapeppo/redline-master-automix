@@ -193,6 +193,10 @@ function onEvent(evt) {
       addEventChip(`\u{1F9FC} ${evt.stem}: riduzione rumore`);
       break;
 
+    case "elastic_align":
+      addEventChip(`\u{1F9F5} ${evt.stem}: allineamento elastico ${evt.windows_stretched}/${evt.windows_total}`);
+      break;
+
     case "role_correction":
       addEventChip(`\u{26A0}\u{FE0F} ${evt.stem}: ${evt.from} -> ${evt.to}`);
       break;

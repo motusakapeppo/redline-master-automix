@@ -76,6 +76,7 @@ from .vocalstack import classify_register, RECIPES, EqCut
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
+from .elastic_align import elastic_align
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -333,7 +334,27 @@ def render_mix(
                 if delay != 0:
                     on_step(f"  '{name}' allineata alla voce principale ({delay / sr * 1000:+.1f}ms)")
                     on_event({"type": "time_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
-                working_tracks[name] = aligned
+
+                # Elastic (syllable-level) correction on top of the coarse
+                # cross-correlation shift above: a dragged vowel or an early
+                # consonant creates smearing that a single global delay can't
+                # fix. Safety-netted — a window whose required warp is too
+                # large to trust is left alone rather than force-stretched.
+                elastic = elastic_align(aligned, lead_reference_dry, sr)
+                if elastic.windows_stretched > 0:
+                    on_step(
+                        f"  '{name}': allineamento elastico sillabico "
+                        f"({elastic.windows_stretched}/{elastic.windows_total} finestre corrette, "
+                        f"{elastic.windows_skipped_unsafe} saltate per sicurezza)"
+                    )
+                    on_event({
+                        "type": "elastic_align",
+                        "stem": name,
+                        "windows_stretched": elastic.windows_stretched,
+                        "windows_total": elastic.windows_total,
+                        "windows_skipped": elastic.windows_skipped_unsafe,
+                    })
+                working_tracks[name] = elastic.audio
 
     processed: dict[str, np.ndarray] = {}
     for name, audio in working_tracks.items():

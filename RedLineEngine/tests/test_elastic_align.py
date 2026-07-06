@@ -1,0 +1,60 @@
+import numpy as np
+
+from redline.elastic_align import elastic_align, MAX_SAFE_WARP_FRACTION
+
+
+def _click_track(sr, seconds, click_times, freq=1000.0, click_dur=0.02, amp=0.4):
+    n = int(sr * seconds)
+    signal = np.zeros(n, dtype=np.float32)
+    for ct in click_times:
+        start = int(ct * sr)
+        dur_samples = int(click_dur * sr)
+        end = min(start + dur_samples, n)
+        if start >= n:
+            continue
+        t = np.linspace(0, click_dur, end - start, endpoint=False)
+        signal[start:end] += (amp * np.sin(2 * np.pi * freq * t) * np.hanning(end - start)).astype(np.float32)
+    return signal
+
+
+def test_returns_original_length_and_shape():
+    sr = 22050
+    seconds = 6.0
+    lead_clicks = [1.0, 2.0, 3.0, 4.0, 5.0]
+    double_clicks = [1.05, 2.05, 3.05, 4.05, 5.05]  # consistently ~50ms late, small/safe drift
+
+    lead = _click_track(sr, seconds, lead_clicks)
+    double = _click_track(sr, seconds, double_clicks)
+    stereo_double = np.stack([double, double], axis=1)
+    stereo_lead = np.stack([lead, lead], axis=1)
+
+    result = elastic_align(stereo_double, stereo_lead, sr)
+    assert result.audio.shape == stereo_double.shape
+    assert result.windows_total > 0
+
+
+def test_grossly_mistimed_take_is_mostly_skipped_not_warped():
+    # A double that's wildly different in timing from the lead (not a real
+    # match) must trigger the safety net, not get aggressively time-stretched.
+    sr = 22050
+    seconds = 6.0
+    lead_clicks = [1.0, 2.0, 3.0, 4.0, 5.0]
+    double_clicks = [1.8, 2.2, 4.5, 4.6, 5.9]  # erratic, not a plausible same-phrase take
+
+    lead = _click_track(sr, seconds, lead_clicks)
+    double = _click_track(sr, seconds, double_clicks)
+    stereo_double = np.stack([double, double], axis=1)
+    stereo_lead = np.stack([lead, lead], axis=1)
+
+    result = elastic_align(stereo_double, stereo_lead, sr)
+    if result.windows_total > 0:
+        skip_ratio = result.windows_skipped_unsafe / result.windows_total
+        assert skip_ratio > 0.3  # a meaningful chunk must be refused, not force-warped
+
+
+def test_short_signal_is_noop():
+    sr = 22050
+    short = np.zeros((int(sr * 0.5), 2), dtype=np.float32)
+    result = elastic_align(short, short, sr)
+    assert result.windows_total == 0
+    assert np.array_equal(result.audio, short)
