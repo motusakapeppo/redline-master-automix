@@ -36,7 +36,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/metrics.py` — in-memory per-stage timing (`[METRIC] stage: Xs`)
 - `redline/llm_classifier.py` — offline local LLM (`models/qwen2.5-1.5b-instruct-q4_0.gguf` via llama-cpp-python), advisory-only fallback for stems `naming.py` couldn't confidently place, streams tokens for the GUI console
 - `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
-- `app/` — pywebview desktop shell (API + web UI); assistant SVG shows a "deep scan" halo + streaming console + cylon activity bar while the local LLM is inferring
+- `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state) alongside a conversational terminal panel
 
 ## Reference document
 
@@ -53,7 +53,10 @@ should trace back to this doc rather than inventing new numbers.
 Actively developed. See `.omo/` for planning notes and commit history for
 progress. Landed behind flags so far: Fase 2 blueprint DSP chains, Fase 2
 RT60 reverb calibration, Fase 3 LTAS spectral matching, Fase 4 LLM advisory
-(verified end-to-end against the real bundled model), Fase 5 GUI (deep-scan
-halo, streaming console, cylon bar). PyInstaller `.spec` updated for
-`llama_cpp` + the bundled model (Fase 6); still needs a clean-machine test
-on hardware that never had Python installed.
+(verified end-to-end against the real bundled model, including a real bug
+caught and fixed where the model echoed the wrong stem name), Fase 5 GUI
+(two-column layout, GSAP avatar with 3D shading/metallic jewelry/deep-scan
+halo/streaming console/cylon bar). Fase 6 PyInstaller packaging built and
+launch-tested on this machine (`llama_cpp` + the bundled model + `pywebview`
+all confirmed present and working in the frozen exe); still needs a
+clean-machine test on hardware that never had Python installed.
