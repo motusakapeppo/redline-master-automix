@@ -26,17 +26,39 @@ _LOW_MAX_RATIO = 0.75
 _UNISON_MAX_RATIO = 1.15
 _HIGH_MAX_RATIO = 1.8
 
+# A genuine falsetto/high take concentrates real energy up high. If the pitch
+# ratio *says* falsetto but the actual high-frequency energy ratio is below
+# this, the "high" f0 is almost certainly a pitch octave error (a
+# sub-harmonic read as the fundamental, or vice versa) — so we don't trust it
+# and down-rank the classification. This is the spectral cross-check that
+# catches octave errors pYIN doesn't.
+_FALSETTO_MIN_HF_RATIO = 0.06
+_HIGH_MIN_HF_RATIO = 0.03
 
-def classify_register(double_f0: float, lead_f0: float) -> str:
+
+def classify_register(double_f0: float, lead_f0: float, hf_ratio: float | None = None) -> str:
+    """Classify a double's register from its pitch relative to the lead.
+
+    `hf_ratio` (fraction of the take's energy above ~3.5kHz, from
+    pitch.high_frequency_ratio) is an optional spectral sanity check: a
+    high/falsetto classification is only trusted if there's actually HF
+    energy to back it up, guarding against pitch octave errors."""
     if lead_f0 <= 1.0 or double_f0 <= 1.0:
         return UNISON
     ratio = double_f0 / lead_f0
+
     if ratio < _LOW_MAX_RATIO:
         return LOW
     if ratio > _HIGH_MAX_RATIO:
-        return FALSETTO
+        # Only believe "falsetto" if the spectrum agrees; otherwise the high
+        # f0 is a likely octave error — treat it as a normal-range take.
+        if hf_ratio is None or hf_ratio >= _FALSETTO_MIN_HF_RATIO:
+            return FALSETTO
+        return HIGH if (hf_ratio >= _HIGH_MIN_HF_RATIO) else UNISON
     if ratio > _UNISON_MAX_RATIO:
-        return HIGH
+        if hf_ratio is None or hf_ratio >= _HIGH_MIN_HF_RATIO:
+            return HIGH
+        return UNISON
     return UNISON
 
 

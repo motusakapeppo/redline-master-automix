@@ -56,7 +56,7 @@ from pedalboard import (
 from .input_loader import Stems
 from .analyze import AnalysisResult, has_sub_content
 from .analysis import EQBand
-from .analysis.pitch import estimate_fundamental
+from .analysis.pitch import estimate_fundamental, high_frequency_ratio
 from .wizard import MixPreferences
 from .dsp_utils import (
     duck_gain_curve,
@@ -373,9 +373,10 @@ def render_mix(
             d = descriptors[name]
             audio = working_tracks[name]
             double_fundamental = estimate_fundamental(audio, sr)
-            register = classify_register(double_fundamental, lead_fundamental)
-            on_step(f"  '{name}': fondamentale {double_fundamental:.0f}Hz -> registro '{register}'")
-            on_event({"type": "register_classified", "stem": name, "fundamental_hz": round(double_fundamental, 1), "register": register})
+            hf_ratio = high_frequency_ratio(audio, sr)
+            register = classify_register(double_fundamental, lead_fundamental, hf_ratio=hf_ratio)
+            on_step(f"  '{name}': fondamentale {double_fundamental:.0f}Hz, energia alte {hf_ratio * 100:.0f}% -> registro '{register}'")
+            on_event({"type": "register_classified", "stem": name, "fundamental_hz": round(double_fundamental, 1), "hf_ratio": round(hf_ratio, 3), "register": register})
 
             out = _process_double_stem(name, audio, sr, register, on_step, on_event)
 
