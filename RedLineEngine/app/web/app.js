@@ -50,6 +50,49 @@ function onStep(msg) {
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
   animateAssistantTalking();
+  bumpActivity();
+  wireInteractiveLine(line, msg);
+}
+
+// Turns a log line into a "console" element: hovering a line that mentions a
+// frequency flashes exactly that point on the EQ curve; clicking a line
+// about saturation/distortion triggers a brief visual glitch on the rack.
+function wireInteractiveLine(line, msg) {
+  const hzMatch = msg.match(/([\d.]+)\s*k?Hz/i);
+  if (hzMatch) {
+    const isKilo = /kHz/i.test(hzMatch[0]);
+    const freq = parseFloat(hzMatch[1]) * (isKilo ? 1000 : 1);
+    line.style.cursor = "pointer";
+    line.addEventListener("mouseenter", () => showEqHoverMarker(freq));
+    line.addEventListener("mouseleave", hideEqHoverMarker);
+  }
+  if (/satura/i.test(msg)) {
+    line.style.cursor = "pointer";
+    line.addEventListener("click", triggerGlitch);
+  }
+}
+
+function showEqHoverMarker(freq) {
+  const marker = document.getElementById("eq-hover-marker");
+  if (!marker) return;
+  const x = freqToX(freq);
+  marker.setAttribute("x1", x.toFixed(1));
+  marker.setAttribute("x2", x.toFixed(1));
+  marker.classList.remove("hidden");
+  flashDetail("eq-detail", `${(freq / 1000).toFixed(2)}kHz`);
+}
+
+function hideEqHoverMarker() {
+  const marker = document.getElementById("eq-hover-marker");
+  if (marker) marker.classList.add("hidden");
+}
+
+function triggerGlitch() {
+  const rack = document.querySelector(".rack");
+  if (!rack) return;
+  rack.classList.remove("glitch");
+  void rack.offsetWidth;
+  rack.classList.add("glitch");
 }
 
 function animateAssistantTalking() {
@@ -234,9 +277,12 @@ function onEvent(evt) {
       addEventChip(`\u{1F9F5} ${evt.stem}: allineamento elastico ${evt.windows_stretched}/${evt.windows_total}`);
       break;
 
-    case "depth_stage":
-      addEventChip(`${evt.depth === "background" ? "\u{1F30C}" : "\u{1F3AF}"} ${evt.stem}: ${evt.depth === "background" ? "sfondo" : "primo piano"}`);
+    case "depth_stage": {
+      const depthIcon = { foreground: "\u{1F3AF}", midground: "\u{1F538}", background: "\u{1F30C}" }[evt.depth] || "\u{1F3AF}";
+      const depthLabel = { foreground: "primo piano", midground: "centro", background: "sfondo" }[evt.depth] || evt.depth;
+      addEventChip(`${depthIcon} ${evt.stem}: ${depthLabel}`);
       break;
+    }
 
     case "role_correction":
       addEventChip(`\u{26A0}\u{FE0F} ${evt.stem}: ${evt.from} -> ${evt.to}`);

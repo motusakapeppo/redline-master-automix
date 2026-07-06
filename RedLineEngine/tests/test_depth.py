@@ -1,12 +1,13 @@
 import numpy as np
 
-from redline.depth import classify_depth, classify_stem_depth, spectral_flux, FOREGROUND, BACKGROUND
+from redline.depth import classify_depth, classify_stem_depth, spectral_flux, FOREGROUND, MIDGROUND, BACKGROUND
 
 
 def test_classify_depth_thresholds():
     assert classify_depth(crest=8.0, flux=0.3) == FOREGROUND
     assert classify_depth(crest=3.0, flux=0.05) == BACKGROUND
-    assert classify_depth(crest=8.0, flux=0.05) == BACKGROUND  # peaky but tonally static
+    assert classify_depth(crest=8.0, flux=0.05) == MIDGROUND  # peaky but tonally static
+    assert classify_depth(crest=3.0, flux=0.3) == MIDGROUND  # low crest, high flux (filtered continuous synth)
 
 
 def test_sustained_pad_classifies_as_background():

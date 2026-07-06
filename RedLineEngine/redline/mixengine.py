@@ -78,7 +78,24 @@ from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
 from .elastic_align import elastic_align
-from .depth import classify_stem_depth, BACKGROUND, BACKGROUND_LOWPASS_HZ, BACKGROUND_REVERB_SEND
+from .depth import (
+    classify_stem_depth,
+    FOREGROUND,
+    MIDGROUND,
+    BACKGROUND,
+    FOREGROUND_AIR_SHELF_HZ,
+    FOREGROUND_AIR_GAIN_DB,
+    FOREGROUND_COMP_ATTACK_MS,
+    FOREGROUND_COMP_RATIO,
+    FOREGROUND_COMP_THRESHOLD_DB,
+    BACKGROUND_LOWPASS_HZ,
+    BACKGROUND_REVERB_SEND,
+    BACKGROUND_COMP_ATTACK_MS,
+    BACKGROUND_COMP_RATIO,
+    BACKGROUND_COMP_THRESHOLD_DB,
+    MIDGROUND_LOWPASS_HZ,
+    MIDGROUND_REVERB_SEND,
+)
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -374,12 +391,34 @@ def render_mix(
             # through EQ/reverb alone, without spending level/headroom on it.
             depth = classify_stem_depth(processed[name], sr)
             on_event({"type": "depth_stage", "stem": name, "depth": depth})
+
             if depth == BACKGROUND:
-                on_step(f"  '{name}': sfondo (taglio alti sopra {BACKGROUND_LOWPASS_HZ / 1000:.0f}kHz, riverbero {BACKGROUND_REVERB_SEND * 100:.0f}%)")
-                processed[name] = Pedalboard([LowpassFilter(cutoff_frequency_hz=BACKGROUND_LOWPASS_HZ)])(processed[name].T, sr).T
+                # Hard low-pass (air absorbs highs over distance) + fast-attack
+                # heavy compression to flatten it into an undifferentiated bed,
+                # plus a big reverb send.
+                on_step(f"  '{name}': sfondo (taglio sopra {BACKGROUND_LOWPASS_HZ / 1000:.0f}kHz, compressione {BACKGROUND_COMP_RATIO:.0f}:1, riverbero {BACKGROUND_REVERB_SEND * 100:.0f}%)")
+                board = Pedalboard([
+                    LowpassFilter(cutoff_frequency_hz=BACKGROUND_LOWPASS_HZ),
+                    Compressor(threshold_db=BACKGROUND_COMP_THRESHOLD_DB, ratio=BACKGROUND_COMP_RATIO, attack_ms=BACKGROUND_COMP_ATTACK_MS, release_ms=150.0),
+                ])
+                processed[name] = board(processed[name].T, sr).T
                 processed[name] = _reverb_send(processed[name], sr, BACKGROUND_REVERB_SEND)
+            elif depth == MIDGROUND:
+                # Split the difference: milder LPF/reverb, no strong dynamic
+                # push either way — these stems already sit ambiguously.
+                on_step(f"  '{name}': centro (taglio sopra {MIDGROUND_LOWPASS_HZ / 1000:.0f}kHz, riverbero {MIDGROUND_REVERB_SEND * 100:.0f}%)")
+                processed[name] = Pedalboard([LowpassFilter(cutoff_frequency_hz=MIDGROUND_LOWPASS_HZ)])(processed[name].T, sr).T
+                processed[name] = _reverb_send(processed[name], sr, MIDGROUND_REVERB_SEND)
             else:
-                on_step(f"  '{name}': primo piano (secco, full-range)")
+                # Foreground: no cut, a touch of "air" shelf instead, and a
+                # slower compressor attack so it doesn't squash the transients
+                # that keep it sounding close and up-front.
+                on_step(f"  '{name}': primo piano (aria +{FOREGROUND_AIR_GAIN_DB:.1f}dB sopra {FOREGROUND_AIR_SHELF_HZ / 1000:.0f}kHz, secco)")
+                board = Pedalboard([
+                    HighShelfFilter(cutoff_frequency_hz=FOREGROUND_AIR_SHELF_HZ, gain_db=FOREGROUND_AIR_GAIN_DB, q=0.7),
+                    Compressor(threshold_db=FOREGROUND_COMP_THRESHOLD_DB, ratio=FOREGROUND_COMP_RATIO, attack_ms=FOREGROUND_COMP_ATTACK_MS, release_ms=150.0),
+                ])
+                processed[name] = board(processed[name].T, sr).T
 
     # --- Concurrent-take level compensation: when several lead ("Main")
     # takes are simultaneously active (alternate lines/ad-libs across
