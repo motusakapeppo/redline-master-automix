@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import threading
+import time
 import traceback
 
 import numpy as np
@@ -53,17 +56,70 @@ class Api:
         # racing the first for the same gate.
         self.director_gate = DirectorGate()
 
+        # Async JS eval queue: the DSP pipeline can fire dozens of
+        # onStep/onEvent calls per second during a render, and pywebview's
+        # .NET/COM bridge serializes each evaluate_js call synchronously.
+        # A background thread drains the queue so the pipeline never blocks
+        # on UI updates.
+        self._js_queue: queue.Queue[str | None] = queue.Queue()
+        self._js_worker: threading.Thread | None = None
+        self._start_js_worker()
+
+    def _start_js_worker(self) -> None:
+        """Daemon thread that drains the JS eval queue. A sentinel None shuts
+        it down cleanly. Drops stale entries when the queue grows beyond 60
+        items (roughly 1 second of 60fps frames) — the UI only needs the
+        latest state, not every intermediate value. Also rate-limits actual
+        evaluate_js calls to 60fps (~16.7ms) so the .NET/COM bridge never
+        queues up stale frames."""
+        _JS_THROTTLE_S = 1.0 / 60.0
+
+        def _drain() -> None:
+            last_js_time = 0.0
+            while True:
+                js = self._js_queue.get()
+                if js is None:
+                    return  # sentinel shutdown
+                # Drain stale entries: if the queue has piled up, skip all
+                # but the most recent one to keep the UI responsive.
+                while not self._js_queue.empty():
+                    try:
+                        next_js = self._js_queue.get_nowait()
+                        if next_js is None:
+                            return  # sentinel while draining
+                        js = next_js
+                    except queue.Empty:
+                        break
+                # 60fps throttle: skip if we just sent a frame
+                now = time.perf_counter()
+                if now - last_js_time < _JS_THROTTLE_S:
+                    continue
+                last_js_time = now
+                if self.window is not None:
+                    try:
+                        self.window.evaluate_js(js)
+                    except Exception:
+                        pass  # window may be closing — swallow silently
+
+        self._js_worker = threading.Thread(target=_drain, daemon=True, name="js-eval-worker")
+        self._js_worker.start()
+
+    def _stop_js_worker(self) -> None:
+        """Signal the worker to shut down (called implicitly when the Api
+        instance is discarded)."""
+        if self._js_worker is not None and self._js_worker.is_alive():
+            self._js_queue.put(None)
+            self._js_worker = None
+
     def _narrate(self, msg: str) -> None:
-        if self.window is not None:
-            self.window.evaluate_js(f"onStep({json.dumps(str(msg))})")
+        self._js_queue.put(f"onStep({json.dumps(str(msg))})")
 
     def _emit(self, evt: dict) -> None:
         """Structured, real-valued event (an actual EQ freq/gain, a real
         compressor ratio, a real de-esser band, etc.) — the UI renders the
         corresponding animated module reacting to these exact numbers,
         instead of a generic canned animation loop."""
-        if self.window is not None:
-            self.window.evaluate_js(f"onEvent({json.dumps(_sanitize_for_json(evt))})")
+        self._js_queue.put(f"onEvent({json.dumps(_sanitize_for_json(evt))})")
 
     def toggle_neural_monitor(self, is_enabled: bool) -> None:
         """Called by the GUI's Neural Monitor switch -- flips the flag for
@@ -84,17 +140,14 @@ class Api:
             chunk_wet = extract_smart_chunk(wet, sr)
 
             self._narrate("Neural Monitor: ascolto il segnale grezzo (dry)...")
-            if self.window is not None:
-                self.window.evaluate_js("setAuditionState('BEFORE')")
+            self._js_queue.put("setAuditionState('BEFORE')")
             driver.play_chunk(chunk_dry, sr)
 
             self._narrate("Neural Monitor: ascolto la glue compression applicata (wet)...")
-            if self.window is not None:
-                self.window.evaluate_js("setAuditionState('AFTER')")
+            self._js_queue.put("setAuditionState('AFTER')")
             driver.play_chunk(chunk_wet, sr)
 
-            if self.window is not None:
-                self.window.evaluate_js("setAuditionState('IDLE')")
+            self._js_queue.put("setAuditionState('IDLE')")
         except Exception as exc:
             traceback.print_exc()
             self._narrate(f"Neural Monitor: errore driver audio ({exc})")

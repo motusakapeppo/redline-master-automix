@@ -59,13 +59,17 @@ class AudioDriver:
                     audio_array[-fade_samples:, ch] *= fade_out
 
         try:
-            sd.play(audio_array, samplerate=sr)
-            sd.wait()
+            with sd.OutputStream(
+                samplerate=sr,
+                device=sd.default.device,
+                blocksize=512,
+                latency='low',
+            ) as stream:
+                stream.write(audio_array)
         except Exception as exc:
             # A missing/busy audio device must never take down the render --
             # audition is a nice-to-have, not a pipeline dependency.
             print(f"[AUDITION ERROR] {exc}")
-            sd.stop()
 
 
 def extract_smart_chunk(audio_array: np.ndarray, sr: int, duration_sec: float = 2.0) -> np.ndarray:
