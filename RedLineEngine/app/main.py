@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 LOG_PATH = Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "startup_error.log"
+LOAD_LOG_PATH = Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "last_load.log"
 
 
 def _web_dir() -> Path:
@@ -46,12 +47,34 @@ def _run() -> None:
     )
     api.window = window
 
+    # A blank/black window is not the same failure as a Python exception --
+    # this writes a timestamped marker the moment WebView2 actually finishes
+    # loading the page, so the *next* report of a black window can be
+    # checked against this file: if it's missing/stale, the page genuinely
+    # never loaded (a WebView2-level problem); if it's fresh, the page did
+    # load and the blackness is something else (e.g. a CSS/JS issue).
+    def _on_loaded() -> None:
+        import datetime
+        LOAD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LOAD_LOG_PATH.write_text(
+            f"Page loaded OK at {datetime.datetime.now().isoformat()}\nurl={index_uri}\n",
+            encoding="utf-8",
+        )
+
+    window.events.loaded += _on_loaded
+
     # Dedicated WebView2 storage folder: a stale/locked shared default folder
     # from a previous run causes WebView2 init to fail with HRESULT
     # 0x8007139F ("resource not in the correct state") and the window stays
     # blank/black with no visible error to the user.
     storage_path = str(Path(os.environ["LOCALAPPDATA"]) / "RedLineEngine" / "webview")
-    webview.start(storage_path=storage_path)
+
+    # REDLINE_DEBUG_GUI=1 opens Chrome DevTools alongside the window --
+    # while the intermittent blank/black-window report is being chased down,
+    # this lets it be diagnosed directly (console errors, failed resource
+    # loads) instead of guessing blind from outside the process.
+    debug = os.environ.get("REDLINE_DEBUG_GUI", "").strip() == "1"
+    webview.start(storage_path=storage_path, debug=debug)
 
 
 def main() -> None:
