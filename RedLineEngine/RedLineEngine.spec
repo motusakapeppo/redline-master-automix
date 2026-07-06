@@ -20,6 +20,16 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('webview')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+# sounddevice bundles its own PortAudio DLL (_sounddevice_data) -- same
+# collect_all requirement as webview/llama_cpp above, a plain hiddenimport
+# would miss the native binary and the Neural Monitor audition feature
+# would fail to import at runtime in the frozen exe.
+try:
+    tmp_ret = collect_all('sounddevice')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+except Exception:
+    pass  # sounddevice not installed in this build env -- Neural Monitor simply won't be available in this exe
+
 # llama_cpp ships its own native llama.cpp shared library (llama.dll/libllama)
 # next to the Python bindings -- collect_all is what actually pulls that
 # binary into the frozen exe, a plain hiddenimport would miss it entirely.
