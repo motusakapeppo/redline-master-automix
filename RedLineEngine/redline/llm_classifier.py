@@ -211,3 +211,80 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
         }
     except Exception:
         return {}
+
+
+# The acoustic dictionary the Module 2 prompt is built from -- kept as data
+# (not embedded free-form in the prompt string) so it's the one place to
+# extend if more translations are needed later.
+_ACOUSTIC_DICTIONARY = """\
+- "Caldo" / "Corpo" / "Pieno": aumento (gain_db positivo) in banda 200-500Hz (type: "bell", freq: 250-400)
+- "Aperto" / "Aria" / "Cristallino": high-shelf positivo sopra i 10kHz (type: "high_shelf", freq: 10000-12000)
+- "Presenza" / "Avanti": aumento in banda 2-5kHz (type: "bell", freq: 3000)
+- "Nasale" / "Inscatolato": taglio (gain_db negativo) intorno a 800-1000Hz (type: "bell", freq: 900)"""
+
+
+def interpret_dsp_request(user_text: str, structure_map: list[dict], on_token=None) -> dict | None:
+    """Module 2 (NLP-to-DSP): translates a free-text request that names a
+    specific song section (e.g. "nel ritornello vorrei più aria e corpo")
+    into a section-scoped EQ adjustment. `structure_map` is the output of
+    redline.structure.analyze_structure() -- the model is only ever given
+    the section names/boundaries that were actually measured, and is
+    explicitly told to only use those.
+
+    Returns the model's raw parsed JSON (untouched) or None if unavailable/
+    unparseable. Callers MUST still run this through
+    director_safety.validate_dsp_automation() before acting on it -- this
+    function only talks to the model, it does not itself decide whether a
+    section name or a gain value is safe to use."""
+    model = _get_model()
+    if model is None or not user_text or not user_text.strip():
+        return None
+
+    sections_listing = "\n".join(
+        f'- "{s["name"]}": da {s["start"]}s a {s["end"]}s' for s in structure_map
+    )
+
+    prompt = (
+        "RUOLO: Sei l'Assistente DSP del RedLine Engine. Il tuo compito è tradurre "
+        "una richiesta in linguaggio naturale in un JSON di configurazione tecnica.\n\n"
+        "IL TUO DIZIONARIO ACUSTICO (regole di traduzione):\n"
+        f"{_ACOUSTIC_DICTIONARY}\n\n"
+        "STRUTTURA MISURATA DEL BRANO (usa SOLO questi nomi di sezione, mai inventarne altri):\n"
+        f"{sections_listing}\n"
+        '- "global": l\'intero brano\n\n'
+        "REGOLE DI ESECUZIONE:\n"
+        "1. Identifica se l'utente sta parlando di una sezione specifica elencata sopra, oppure "
+        "dell'intero brano (global).\n"
+        "2. Se la richiesta non nomina o non implica chiaramente nessuna sezione specifica, usa \"global\".\n"
+        "3. Mappa le sue parole al dizionario acustico. Includi SOLO gli aggiustamenti EQ realmente "
+        "impliciti nella richiesta, massimo 2.\n"
+        "4. Rispondi ESCLUSIVAMENTE con un oggetto JSON valido in questo schema esatto, nessun testo extra:\n"
+        '{"target_section": "chorus_1", "dsp_updates": {"eq_adjustments": '
+        '[{"type": "bell", "freq": 250, "gain_db": 2.0}]}, "ui_feedback_message": "breve conferma in italiano"}\n\n'
+        f'Richiesta dell\'utente: "{user_text.strip()}"\n'
+        "Risposta (SOLO l'oggetto JSON):"
+    )
+
+    try:
+        if on_token is not None:
+            text = ""
+            stream = model.create_chat_completion(
+                messages=[{"role": "user", "content": prompt}], max_tokens=300, temperature=0.2, stream=True,
+            )
+            for chunk in stream:
+                fragment = chunk["choices"][0].get("delta", {}).get("content")
+                if fragment:
+                    text += fragment
+                    on_token(fragment)
+        else:
+            result = model.create_chat_completion(
+                messages=[{"role": "user", "content": prompt}], max_tokens=300, temperature=0.2,
+            )
+            text = result["choices"][0]["message"]["content"]
+
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return None
+        return json.loads(match.group(0))
+    except Exception:
+        return None

@@ -125,6 +125,32 @@ def apply_eq_cut(signal: np.ndarray, sr: int, freq_hz: float, gain_db: float, q:
     return board(signal.T, sr).T
 
 
+def timed_gain_curve(
+    n_samples: int, sr: int, start_sec: float, end_sec: float, gain_db: float, fade_sec: float = 0.15
+) -> np.ndarray:
+    """Per-sample linear gain curve that is unity (1.0) outside
+    [start_sec, end_sec] and db_to_gain(gain_db) inside, with a fade_sec
+    crossfade ramp at both edges -- the building block for "only apply
+    this EQ/gain change during the chorus" without an audible click at
+    the section boundary. Built via np.interp over a handful of control
+    points rather than a per-sample loop, so it stays fast on full songs."""
+    target = db_to_gain(gain_db)
+    start_s = start_sec * sr
+    end_s = end_sec * sr
+    fade_s = max(fade_sec * sr, 1.0)
+
+    control_x = np.array(
+        [0.0, max(0.0, start_s - fade_s), start_s, end_s, min(float(n_samples), end_s + fade_s), float(n_samples)],
+        dtype=np.float64,
+    )
+    control_y = np.array([1.0, 1.0, target, target, 1.0, 1.0], dtype=np.float64)
+    order = np.argsort(control_x, kind="stable")
+    control_x, control_y = control_x[order], control_y[order]
+
+    x = np.arange(n_samples, dtype=np.float64)
+    return np.interp(x, control_x, control_y).astype(np.float32)
+
+
 def pan_stereo(signal: np.ndarray, pan: float) -> np.ndarray:
     """Constant-power pan. `pan` is -1 (hard left) .. +1 (hard right), 0 = center.
     Used for vocal doubles/harmonies named e.g. '... dx.wav' / '... sx.wav',

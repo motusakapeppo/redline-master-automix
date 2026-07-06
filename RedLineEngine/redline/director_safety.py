@@ -8,6 +8,7 @@ instead of rejecting the whole suggestion outright."""
 from __future__ import annotations
 
 from .llm_classifier import BUS_CATEGORIES
+from .naming import SECTION_HINTS
 
 # Known DSP parameters an LLM might plausibly suggest (Director Mode), and
 # the safe range each is clamped to — these mirror the guardrails already
@@ -77,3 +78,109 @@ def clamp_params(suggestion: dict) -> tuple[dict, list[str]]:
         clamped[key] = clamped_value
 
     return clamped, corrections
+
+
+EQ_TYPES = ("bell", "high_shelf")
+MAX_EQ_ADJUSTMENTS = 4
+FREQ_RANGE_HZ = (20.0, 20000.0)
+
+
+def _section_type(name: str) -> str | None:
+    """"chorus_1" -> "chorus", "verse_3" -> "verse", "intro" -> "intro"."""
+    for section_type in list(SECTION_HINTS.keys()) + ["intro"]:
+        if name.startswith(section_type):
+            return section_type
+    return None
+
+
+def _mentioned_section_type(user_text: str) -> str | None:
+    """Which section type (if any) the user's own text names -- reuses
+    naming.py's existing SECTION_HINTS keyword lists (chorus/verse/bridge)
+    instead of a second, separately-maintained keyword list."""
+    lowered = user_text.lower()
+    for section_type, keywords in SECTION_HINTS.items():
+        if any(kw in lowered for kw in keywords):
+            return section_type
+    return None
+
+
+def validate_dsp_automation(
+    suggestion: dict, structure_map: list[dict], total_duration_sec: float, user_text: str | None = None
+) -> dict | None:
+    """Validates a Module 2 (NLP-to-DSP) LLM suggestion against the known
+    song structure. Returns None if the suggestion is too malformed to act
+    on at all (missing target_section, no valid eq_adjustments) -- callers
+    must treat that as "make no change" rather than guessing.
+
+    Critically, `time_range` is never taken from the LLM's own JSON --
+    it's looked up directly from `structure_map` (or the full song for
+    "global"). An LLM inventing a plausible-looking [45.0, 75.0] that
+    doesn't actually match any real section boundary is exactly the kind
+    of hallucination range-clamping alone can't catch, since the numbers
+    themselves are "in range"; this sidesteps the problem entirely by
+    trusting the measured structure, not the model's echo of it.
+
+    If `user_text` is given, also cross-checks the section *type* the user
+    actually named (chorus/verse/bridge, via naming.py's SECTION_HINTS)
+    against the model's chosen target_section -- confirmed necessary in
+    practice: asked to fix "the verse", the model picked "chorus_1"
+    instead, a wrong-section mistake plain range-clamping can't catch since
+    chorus_1 is a perfectly valid, in-range section name. Applying a change
+    to the wrong section is worse than doing nothing, so a mismatch here
+    rejects the whole suggestion rather than silently "correcting" it."""
+    if not isinstance(suggestion, dict):
+        return None
+
+    target_section = suggestion.get("target_section")
+    if target_section == "global":
+        time_range = (0.0, float(total_duration_sec))
+    elif isinstance(target_section, str):
+        match = next((s for s in structure_map if s["name"] == target_section), None)
+        if match is None:
+            return None  # hallucinated a section name that doesn't exist
+        if user_text is not None:
+            mentioned = _mentioned_section_type(user_text)
+            chosen = _section_type(target_section)
+            if mentioned is not None and chosen is not None and mentioned != chosen:
+                return None  # e.g. user said "verse", model picked a chorus section
+        time_range = (float(match["start"]), float(match["end"]))
+    else:
+        return None
+
+    raw_updates = suggestion.get("dsp_updates")
+    if not isinstance(raw_updates, dict):
+        return None
+
+    eq_adjustments = []
+    for adj in raw_updates.get("eq_adjustments", []) or []:
+        if not isinstance(adj, dict):
+            continue
+        eq_type = adj.get("type")
+        if eq_type not in EQ_TYPES:
+            continue
+        try:
+            freq = float(adj["freq"])
+            gain_db = float(adj["gain_db"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        freq = max(FREQ_RANGE_HZ[0], min(FREQ_RANGE_HZ[1], freq))
+        lo, hi = PARAM_RANGES["eq_gain_db"]
+        gain_db = max(lo, min(hi, gain_db))
+        eq_adjustments.append({"type": eq_type, "freq": freq, "gain_db": gain_db})
+        if len(eq_adjustments) >= MAX_EQ_ADJUSTMENTS:
+            break
+
+    if not eq_adjustments:
+        return None  # nothing safe/valid survived -- treat as no-op, not a partial automation
+
+    feedback = suggestion.get("ui_feedback_message")
+    if not isinstance(feedback, str):
+        feedback = ""
+
+    return {
+        "target_section": target_section,
+        "time_range": time_range,
+        "eq_adjustments": eq_adjustments,
+        "ui_feedback_message": feedback[:300],
+    }
