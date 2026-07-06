@@ -313,7 +313,7 @@ input[type="range"] {
   accent-color: var(--accent);
 }
 
-input[type="text"], select {
+input[type="text"], select, textarea {
   width: 100%;
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -321,6 +321,11 @@ input[type="text"], select {
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 13px;
+}
+
+textarea {
+  font-family: inherit;
+  resize: vertical;
 }
 
 select { width: auto; }

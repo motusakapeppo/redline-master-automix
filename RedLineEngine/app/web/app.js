@@ -151,6 +151,7 @@ async function startRun() {
   setAssistantLabel("al lavoro...");
 
   const prefs = {
+    creative_brief: document.getElementById("creative_brief").value,
     aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
     warmth: parseFloat(document.getElementById("warmth").value),
     vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),

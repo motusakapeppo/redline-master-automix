@@ -21,6 +21,13 @@ PARAM_RANGES: dict[str, tuple[float, float]] = {
     "compressor_threshold_db": (-40.0, 0.0),
     "reverb_send": (0.0, 1.0),
     "pan": (-1.0, 1.0),
+    # Wizard knobs an LLM may nudge from a free-text creative brief
+    # (llm_classifier.interpret_creative_brief) -- same ranges the wizard's
+    # own sliders already enforce, so a brief can never push these further
+    # than a human using the sliders directly already could.
+    "aggressiveness": (1.0, 5.0),
+    "warmth": (-1.0, 1.0),
+    "vocal_prominence": (-1.0, 1.0),
 }
 
 def validate_classification(suggestion: dict, allowed_names: set[str] | None = None) -> dict:

@@ -201,10 +201,35 @@ class Api:
                 f"{analysis.mix_lufs:.1f} LUFS  |  Crest {analysis.mix_crest:.1f}"
             )
 
+            aggressiveness = float(prefs.get("aggressiveness", 3))
+            warmth = float(prefs.get("warmth", 0.0))
+            vocal_prominence = float(prefs.get("vocal_prominence", 0.0))
+
+            creative_brief = (prefs.get("creative_brief") or "").strip()
+            if creative_brief:
+                from redline.llm_classifier import interpret_creative_brief, is_available
+                from redline.director_safety import clamp_params
+
+                if is_available():
+                    self._narrate(f"Interpreto la richiesta: \"{creative_brief}\"...")
+                    raw_adjustments = interpret_creative_brief(creative_brief)
+                    adjustments, corrections = clamp_params(raw_adjustments)
+                    if adjustments:
+                        aggressiveness = adjustments.get("aggressiveness", aggressiveness)
+                        warmth = adjustments.get("warmth", warmth)
+                        vocal_prominence = adjustments.get("vocal_prominence", vocal_prominence)
+                        self._narrate(
+                            "Richiesta applicata: " + ", ".join(f"{k}={v}" for k, v in adjustments.items())
+                        )
+                    if corrections:
+                        self._narrate("Nota: " + "; ".join(corrections))
+                else:
+                    self._narrate("Richiesta libera ignorata: modello LLM locale non disponibile.")
+
             mix_prefs = MixPreferences(
-                aggressiveness=int(prefs.get("aggressiveness", 3)),
-                warmth=float(prefs.get("warmth", 0.0)),
-                vocal_prominence=float(prefs.get("vocal_prominence", 0.0)),
+                aggressiveness=int(round(aggressiveness)),
+                warmth=warmth,
+                vocal_prominence=vocal_prominence,
                 genre_override=prefs.get("genre_override") or None,
                 do_mastering=bool(prefs.get("do_mastering", True)),
             )

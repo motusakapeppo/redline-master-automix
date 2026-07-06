@@ -47,6 +47,11 @@ window.addEventListener('error', function(e) {
       <h1>Come vuoi il mix?</h1>
 
       <div class="field">
+        <label>Note libere (facoltativo) — scrivi in linguaggio semplice cosa vorresti diverso</label>
+        <textarea id="creative_brief" rows="3" placeholder="es. vorrei un suono più caldo, quasi da vinile, e la voce un po' più protagonista — lascia vuoto per usare solo le impostazioni qui sotto"></textarea>
+      </div>
+
+      <div class="field">
         <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
         <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
                oninput="document.getElementById('aggressiveness-val').textContent = this.value">

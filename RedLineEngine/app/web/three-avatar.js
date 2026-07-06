@@ -166,24 +166,21 @@ function init(canvasId) {
 // ─── Skull Geometry ─────────────────────────────────────────────────────────
 
 const SKULL_MODEL_URL = 'assets/skull.glb';
-const SKULL_MATERIAL_COLOR = '#C8C8D0'; // matches the RedLine silver/bone palette used elsewhere (earrings, piercings)
+// A faint warm-bone tint multiplied over the source asset's own painted
+// texture -- not a flat override. The original material was being replaced
+// entirely with one flat silver color, which is why the model rendered as
+// a nearly featureless white shape: it discarded the asset's actual
+// texture map (shading, cracks, tonal variation) instead of keeping it.
+// Cool silver-grey rather than a warm bone tone -- the source texture's own
+// warm/khaki base color read as off-palette against the rest of the UI
+// (black/red/silver). This multiplies toward that cooler, more metallic
+// range while still preserving the texture's own shading/detail/variation.
+const SKULL_TINT = '#AEB4C2';
 
 function buildSkull(onReady) {
   const group = new THREE.Group();
   skull = group;
   scene.add(skull);
-
-  // Restyle every mesh in the loaded model with a single consistent
-  // material (RedLine silver/bone, matte-metallic) instead of whatever
-  // the source asset shipped with -- keeps it visually coherent with the
-  // rest of the UI (earrings, piercing) rather than looking like a
-  // dropped-in stock asset.
-  const skullMaterial = new THREE.MeshStandardMaterial({
-    color: SKULL_MATERIAL_COLOR,
-    metalness: 0.5,
-    roughness: 0.4,
-    envMapIntensity: 1.1,
-  });
 
   new GLTFLoader().load(
     SKULL_MODEL_URL,
@@ -191,7 +188,20 @@ function buildSkull(onReady) {
       const model = gltf.scene;
       model.traverse((child) => {
         if (child.isMesh) {
-          child.material = skullMaterial;
+          const sourceMap = child.material && child.material.map ? child.material.map : null;
+          if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
+          // Rebuilt as MeshStandardMaterial (the source used
+          // KHR_materials_unlit, flat/shadeless) so it actually responds
+          // to the rim/key/fill lighting already set up in the scene,
+          // while keeping the real texture map for genuine surface detail
+          // and color variation instead of one uniform flat tone.
+          child.material = new THREE.MeshStandardMaterial({
+            map: sourceMap,
+            color: SKULL_TINT,
+            metalness: 0.15,
+            roughness: 0.65,
+            envMapIntensity: 1.0,
+          });
         }
       });
 

@@ -38,3 +38,13 @@ def test_clamp_params_leaves_in_range_values_untouched():
     clamped, corrections = clamp_params({"pan": 0.3, "compressor_ratio": 4.0})
     assert clamped == {"pan": 0.3, "compressor_ratio": 4.0}
     assert corrections == []
+
+
+def test_clamp_params_clamps_creative_brief_knobs():
+    # These are the 3 wizard-facing knobs interpret_creative_brief() is
+    # allowed to nudge -- an over-eager LLM interpretation ("make it sound
+    # like a monster") must never push them past what the wizard's own
+    # sliders already allow.
+    clamped, corrections = clamp_params({"aggressiveness": 9, "warmth": 5.0, "vocal_prominence": -3.0})
+    assert clamped == {"aggressiveness": 5.0, "warmth": 1.0, "vocal_prominence": -1.0}
+    assert len(corrections) == 3
