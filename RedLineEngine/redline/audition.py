@@ -11,21 +11,25 @@ import numpy as np
 import sounddevice as sd
 
 
+TARGET_PEAK = 0.85  # -1.4dBFS — loud enough to hear over desktop speakers,
+                     # but leaves headroom so a DSP spike can't clip.
+
+
 class AudioDriver:
     def __init__(self) -> None:
-        # WASAPI is the more stable/lower-latency host API on Windows; if
-        # this particular sounddevice/PortAudio build doesn't expose it,
-        # fall back silently to whatever the system default already is --
-        # this is a preference, not a requirement.
-        try:
-            sd.default.hostapi = "WASAPI"
-        except (ValueError, AttributeError):
-            pass
+        # WASAPI would be lower-latency, but on many Windows systems it
+        # only supports 48000 Hz while the engine may produce 44100 Hz
+        # audio — the resulting "Invalid sample rate" error silences the
+        # Neural Monitor entirely. Stick with the system default (MME),
+        # which handles sample rate conversion transparently.
+        pass
 
     def play_chunk(self, audio_array: np.ndarray, sr: int, fade_ms: float = 50) -> None:
         """Blocking playback with anti-click safety: peak-normalizes so a
         DSP bug can never blast the user's speakers, and fades the edges
-        in/out so a hard cut doesn't produce an audible pop."""
+        in/out so a hard cut doesn't produce an audible pop. Also applies a
+        gentle makeup gain so quiet signals (e.g. a -18dBFS mix) are audible
+        without requiring the user to max out their system volume."""
         if audio_array is None or len(audio_array) == 0:
             return
 
@@ -33,7 +37,14 @@ class AudioDriver:
 
         peak = np.max(np.abs(audio_array))
         if peak > 1.0:
+            # Safety clamp: a DSP bug must never blast the speakers.
             audio_array = audio_array / peak
+        elif peak > 0.0 and peak < TARGET_PEAK:
+            # Makeup gain: quiet signals (typical mix at -18dBFS) are boosted
+            # to a comfortable listening level so the user can actually hear
+            # the A/B comparison without cranking their system volume.
+            gain = TARGET_PEAK / peak
+            audio_array = audio_array * gain
 
         fade_samples = int((fade_ms / 1000.0) * sr)
         if len(audio_array) > fade_samples * 2 > 0:
