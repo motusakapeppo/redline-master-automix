@@ -58,53 +58,55 @@ html, body {
 
 .assistant-svg { width: 100%; height: auto; }
 
-.assistant-head {
-  fill: #2a2020;
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
+/* Minimal wireframe/blueprint style: no fill, thin uniform strokes, only
+   the piercings/mouth carry the red accent — reads as a precision
+   instrument readout rather than an illustrated cartoon face. */
 
-.assistant-ear {
-  fill: #2a2020;
-  stroke: var(--border);
+.assistant-head {
+  fill: none;
+  stroke: #555;
   stroke-width: 1;
 }
 
 .assistant-piercing {
   fill: none;
-  stroke: #c9c9c9;
-  stroke-width: 1.5;
+  stroke: #888;
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.3s ease-out;
 }
 
 .assistant-piercing-hoop {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 2;
+  stroke-width: 1.25;
+  transition: stroke 0.15s ease, filter 0.15s ease;
+}
+
+.assistant-piercing-hoop.hot {
+  stroke: #ff2a4d;
+  filter: drop-shadow(0 0 4px #ff2a4d);
 }
 
 .assistant-eye {
-  fill: var(--text);
+  stroke: #999;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transform-box: fill-box;
   transform-origin: center;
   animation: assistant-blink 4.5s ease-in-out infinite;
 }
 
 @keyframes assistant-blink {
   0%, 92%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.1); }
-}
-
-.assistant-brow {
-  fill: none;
-  stroke: #c9c9c9;
-  stroke-width: 2;
-  stroke-linecap: round;
-  transition: d 0.3s ease;
+  95% { transform: scaleY(0.15); }
 }
 
 .assistant-mouth {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 2.5;
+  stroke-width: 1.25;
   stroke-linecap: round;
   transition: d 0.15s ease;
 }
@@ -114,8 +116,8 @@ html, body {
 }
 
 @keyframes assistant-talk {
-  0%, 100% { d: path("M62,118 Q80,124 98,118"); }
-  50% { d: path("M64,116 Q80,132 96,116"); }
+  0%, 100% { d: path("M64,112 L96,112"); }
+  50% { d: path("M68,110 Q80,120 92,110"); }
 }
 
 .assistant-label {
@@ -348,12 +350,47 @@ select { width: auto; }
   100% { transform: scale(1); }
 }
 
+.module-qc { position: relative; overflow: hidden; }
+
+.qc-canvas {
+  position: absolute;
+  top: 24px;
+  left: 6px;
+  width: calc(100% - 12px);
+  height: 40px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.eq-hover-marker {
+  stroke: #fff;
+  stroke-width: 1;
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
+}
+
+.eq-hover-marker.hidden { opacity: 0; }
+
+.rack.glitch {
+  animation: rack-glitch 0.25s ease;
+}
+
+@keyframes rack-glitch {
+  0% { transform: translate(0, 0); filter: none; }
+  20% { transform: translate(-2px, 1px); filter: hue-rotate(-8deg); }
+  40% { transform: translate(2px, -1px); filter: hue-rotate(8deg); }
+  60% { transform: translate(-1px, 0); filter: none; }
+  100% { transform: translate(0, 0); filter: none; }
+}
+
 .headphones {
   font-size: 30px;
   text-align: center;
   padding: 6px 0;
   opacity: 0.35;
   transition: opacity 0.3s ease, transform 0.3s ease;
+  position: relative;
+  z-index: 1;
 }
 
 .headphones.active {

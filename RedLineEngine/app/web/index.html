@@ -12,33 +12,38 @@
   <span class="brand-name">RedLine Engine</span>
 </div>
 
-<!-- First-pass animated assistant: bald, single hoop earring (viewer-right
-     ear), three small hoops (viewer-left ear), nose ring (left nostril).
-     Built with SVG/CSS since it's what's actually available here (no Rive
-     editor access) — meant as a starting point, not a final design. -->
+<!-- Second-pass animated assistant: minimal wireframe line-art, not a filled
+     cartoon face — single hoop earring (viewer-right ear), three small rings
+     (viewer-left ear), nose ring (left nostril). No Rive editor access here,
+     so this is still SVG/CSS, aiming for a precision-instrument look
+     (thin consistent strokes, no fill, black/red only) rather than a final
+     illustration — redo freely if it's still not right. -->
 <div id="assistant" class="assistant">
   <svg viewBox="0 0 160 160" class="assistant-svg">
-    <ellipse cx="80" cy="88" rx="46" ry="52" class="assistant-head" />
-    <!-- left ear (viewer's left): three small hoops -->
-    <ellipse cx="35" cy="90" rx="7" ry="14" class="assistant-ear" />
-    <circle cx="33" cy="80" r="3" class="assistant-piercing" />
-    <circle cx="33" cy="90" r="3" class="assistant-piercing" />
-    <circle cx="33" cy="100" r="3" class="assistant-piercing" />
+    <!-- face: a single thin-stroke silhouette, no fill -->
+    <path d="M80,20 C110,20 128,46 128,84 C128,118 108,140 80,140 C52,140 32,118 32,84 C32,46 50,20 80,20 Z"
+          class="assistant-head" />
+
+    <!-- left ear (viewer's left): three thin rings — rotate to show real
+         bus/compressor gain reduction (interpolated dB -> degrees) -->
+    <circle id="assistant-piercing-1" cx="31" cy="74" r="2.6" class="assistant-piercing" />
+    <circle id="assistant-piercing-2" cx="30" cy="84" r="2.6" class="assistant-piercing" />
+    <circle id="assistant-piercing-3" cx="31" cy="94" r="2.6" class="assistant-piercing" />
+
     <!-- right ear (viewer's right): single hoop earring -->
-    <ellipse cx="125" cy="90" rx="7" ry="14" class="assistant-ear" />
-    <circle cx="127" cy="98" r="5" class="assistant-piercing-hoop" />
-    <!-- nose ring, left nostril -->
-    <circle cx="70" cy="112" r="3.5" class="assistant-piercing-hoop" />
-    <!-- eyes -->
+    <circle cx="129" cy="86" r="4.5" class="assistant-piercing-hoop" />
+
+    <!-- nose ring, left nostril — flashes hot red on real de-esser hits -->
+    <circle id="assistant-nose" cx="72" cy="108" r="3" class="assistant-piercing-hoop" />
+
+    <!-- eyes: minimal thin dashes, collapse to a dot on blink -->
     <g id="assistant-eyes">
-      <ellipse cx="62" cy="80" rx="6" ry="7" class="assistant-eye" />
-      <ellipse cx="98" cy="80" rx="6" ry="7" class="assistant-eye" />
+      <line x1="56" y1="76" x2="68" y2="76" class="assistant-eye" />
+      <line x1="92" y1="76" x2="104" y2="76" class="assistant-eye" />
     </g>
-    <!-- eyebrows -->
-    <path d="M53,66 Q62,60 71,66" class="assistant-brow" />
-    <path d="M89,66 Q98,60 107,66" class="assistant-brow" />
-    <!-- mouth -->
-    <path id="assistant-mouth" d="M62,118 Q80,124 98,118" class="assistant-mouth" />
+
+    <!-- mouth: one clean line -->
+    <path id="assistant-mouth" d="M64,112 L96,112" class="assistant-mouth" />
   </svg>
   <div class="assistant-label" id="assistant-label">pronto</div>
 </div>
@@ -99,6 +104,7 @@
       <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
         <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
         <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
+        <line id="eq-hover-marker" x1="0" y1="0" x2="0" y2="90" class="eq-hover-marker hidden" />
       </svg>
       <div class="module-detail" id="eq-detail">in attesa...</div>
     </div>
@@ -115,8 +121,9 @@
       <div class="module-detail" id="deess-detail">in attesa...</div>
     </div>
 
-    <div class="module">
+    <div class="module module-qc">
       <div class="module-title">Ascolto / QC</div>
+      <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
       <div class="headphones" id="headphones">&#127911;</div>
       <div class="module-detail" id="qc-detail">in attesa...</div>
     </div>
