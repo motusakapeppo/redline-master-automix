@@ -21,7 +21,7 @@ import os
 import re
 
 MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "qwen2.5-1.5b-instruct-q4_0.gguf"
 )
 
 BUS_CATEGORIES = ("Drum Bus", "Bass Bus", "Music Bus", "Main Vox", "Backing Vox")

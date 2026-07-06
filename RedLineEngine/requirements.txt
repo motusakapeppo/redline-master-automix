@@ -9,3 +9,4 @@ torch
 demucs
 noisereduce
 huggingface_hub
+llama-cpp-python==0.3.2

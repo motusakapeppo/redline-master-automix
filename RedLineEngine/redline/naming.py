@@ -69,6 +69,7 @@ class StemDescriptor:
     pan: float = 0.0             # -1 (hard left/sx) .. +1 (hard right/dx)
     section: str | None = None   # chorus | verse | bridge | None
     register: str | None = None  # falsetto | low | mid | special | None
+    role_confidence: float = 1.0  # 1.0 = a role hint matched the name; lower = "other" by default, no real signal
 
 
 def parse_stem(path_like: str) -> StemDescriptor:
@@ -76,12 +77,19 @@ def parse_stem(path_like: str) -> StemDescriptor:
 
     if _contains_any(text, BASS_ROLE_HINTS):
         role = "bass"
+        role_confidence = 1.0
     elif _contains_any(text, DRUM_ROLE_HINTS):
         role = "drums"
+        role_confidence = 1.0
     elif _contains_any(text, VOCAL_ROLE_HINTS):
         role = "vocal"
+        role_confidence = 1.0
     else:
+        # No naming hint at all -- role defaults to "other" with low
+        # confidence, which is exactly the signal the LLM advisory fallback
+        # (llm_classifier.py, gated by ENABLE_LLM_ADVISORY) looks for.
         role = "other"
+        role_confidence = 0.3
 
     layer = "double" if _contains_any(text, DOUBLE_HINTS) else "primary"
     pan = _pan_from_name(text) if layer == "double" else 0.0
@@ -99,4 +107,5 @@ def parse_stem(path_like: str) -> StemDescriptor:
         pan=pan,
         section=section,
         register=register,
+        role_confidence=role_confidence,
     )

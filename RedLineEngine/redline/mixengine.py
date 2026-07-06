@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+import librosa
 import numpy as np
 from pedalboard import (
     Pedalboard,
@@ -69,6 +70,7 @@ from .dsp_utils import (
 )
 from . import config
 from .naming import parse_stem, StemDescriptor
+from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
 from .resonance import find_resonance
 from .alignment import align_to_reference
@@ -396,6 +398,48 @@ def render_mix(
     reverb_bus = ReverbBusSystem(sr, room_size_overrides=room_size_overrides)
 
     descriptors = {name: parse_stem(name) for name in stems.names()}
+
+    # --- LLM advisory (Fase 4, S4): naming.py already handles the common
+    # case (real-world sessions name their takes). This only runs for stems
+    # it genuinely couldn't place (role "other", low role_confidence) --
+    # never as a second opinion on names the heuristic was already sure of.
+    if config.is_enabled("ENABLE_LLM_ADVISORY"):
+        ambiguous = {name: d for name, d in descriptors.items() if d.role == "other" and d.role_confidence < 0.5}
+        if ambiguous:
+            from .llm_classifier import classify_ambiguous_stems, is_available
+            from .director_safety import validate_classification
+
+            if is_available():
+                stem_infos = []
+                for name in ambiguous:
+                    audio = stems.tracks[name]
+                    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+                    centroid = float(np.mean(librosa.feature.spectral_centroid(y=mono.astype(np.float32), sr=sr)))
+                    crest = crest_factor(mono)
+                    spectral_hint = "basso" if centroid < 300 else ("medio" if centroid < 2500 else "alto")
+                    transient_hint = "percussivo" if crest > 8.0 else "sostenuto"
+                    stem_infos.append({"name": name, "spectral_hint": spectral_hint, "transient_hint": transient_hint})
+
+                on_step(f"LLM advisory: {len(stem_infos)} stem ambigui, consulto il modello locale...")
+                raw_suggestions = classify_ambiguous_stems(stem_infos)
+                suggestions = validate_classification(raw_suggestions)
+
+                bus_to_role = {
+                    "Drum Bus": "drums", "Bass Bus": "bass",
+                    "Main Vox": "vocal", "Backing Vox": "vocal", "Music Bus": "other",
+                }
+                for name, category in suggestions.items():
+                    new_role = bus_to_role.get(category, "other")
+                    if new_role != "other":
+                        d = descriptors[name]
+                        on_step(f"LLM advisory: '{name}' riclassificato come {category} -> {new_role}")
+                        on_event({"type": "llm_reclassification", "stem": name, "category": category, "role": new_role})
+                        descriptors[name] = StemDescriptor(
+                            raw_name=d.raw_name, role=new_role, layer=d.layer, pan=d.pan,
+                            section=d.section, register=d.register, role_confidence=0.6,
+                        )
+            else:
+                on_step("LLM advisory: modello locale non disponibile, mantengo la classificazione euristica")
 
     # --- Role validation: don't trust a "bass" file name blindly if the
     # actual audio has no real sub content (a mislabeled or midrange-heavy
