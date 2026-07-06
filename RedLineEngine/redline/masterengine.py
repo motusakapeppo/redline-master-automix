@@ -11,8 +11,10 @@ import pyloudnorm as pyln
 from pedalboard import Pedalboard, Limiter, Gain, HighpassFilter, HighShelfFilter, Compressor
 from scipy.signal import butter, sosfiltfilt
 
+from . import config
 from .analyze import AnalysisResult
 from .dsp_utils import to_mid_side, from_mid_side
+from .ltas import match_ltas
 from .qc import run_qc
 
 StepCallback = Callable[[str], None]
@@ -129,6 +131,8 @@ def render_master(
     platform: str = "auto",
     on_step: StepCallback = _noop,
     on_event: EventCallback = _noop_event,
+    reference: np.ndarray | None = None,
+    reference_sr: int | None = None,
 ) -> np.ndarray:
     meter = pyln.Meter(sr)
     mono_ref = mixed.mean(axis=1) if mixed.ndim == 2 else mixed
@@ -155,6 +159,12 @@ def render_master(
     clipped = _soft_clip(glued, CLIP_CEILING_DB)
 
     polished = _mid_side_polish(clipped, sr, on_step, on_event)
+
+    if reference is not None and config.is_enabled("ENABLE_LTAS_MATCHING"):
+        on_step("Matchering FIR: clono l'impronta spettrale della reference track...")
+        polished, ltas_report = match_ltas(polished, sr, reference, reference_sr or sr)
+        on_event({"type": "ltas_match", **ltas_report})
+        on_step(f"LTAS: delta applicato entro +/-{ltas_report['max_delta_db']}dB, FIR a {ltas_report['fir_taps']} tap")
 
     on_step(f"Limiting finale a {TRUE_PEAK_CEILING_DB}dB true-peak ceiling")
     on_event({"type": "limiter", "ceiling_db": TRUE_PEAK_CEILING_DB})
