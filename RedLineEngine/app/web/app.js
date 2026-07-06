@@ -1,6 +1,46 @@
 let selectedInput = null;
 let selectedOutput = null;
 
+// --- QC canvas "breathing" waveform: a proxy for "the machine is listening"
+// — activity spikes on every real step/event and decays, driving the wave's
+// amplitude, instead of a canned idle loop with no relation to what's happening.
+let qcActivityLevel = 0;
+let qcCanvasAnimationStarted = false;
+
+function bumpActivity() {
+  qcActivityLevel = 1.0;
+  startQcCanvasLoop();
+}
+
+function startQcCanvasLoop() {
+  if (qcCanvasAnimationStarted) return;
+  qcCanvasAnimationStarted = true;
+  const canvas = document.getElementById("qc-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  let phase = 0;
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    qcActivityLevel *= 0.94; // decay
+    const amplitude = 2 + qcActivityLevel * (h / 2 - 3);
+    ctx.beginPath();
+    ctx.strokeStyle = "#ff003f";
+    ctx.lineWidth = 1.5;
+    for (let x = 0; x <= w; x += 2) {
+      const y = h / 2 + Math.sin(x * 0.15 + phase) * amplitude * Math.sin(x * 0.02 + phase * 0.3);
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    phase += 0.15 + qcActivityLevel * 0.1;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
 function showScreen(id) {
   document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
   document.getElementById(id).classList.add("active");
@@ -219,6 +259,7 @@ function addEventChip(text) {
 }
 
 function onEvent(evt) {
+  bumpActivity();
   switch (evt.type) {
     case "bus_eq_band":
       eqBands[`bus_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
