@@ -183,6 +183,70 @@ function syncAssistantToBpm(bpm) {
   assistant.style.animationDuration = `${(beatSeconds * 2).toFixed(3)}s`;
 }
 
+// --- Fase 5: local LLM advisory UX. Local CPU inference can take tens of
+// seconds; these three functions exist so that wait reads as "the machine
+// is thinking" rather than a frozen UI: a slow dark-red halo on the
+// assistant, a live streaming console of the model's raw output, and a
+// 60fps cylon sweep bar that keeps moving independently of the DSP/LLM
+// thread to prove the UI thread itself hasn't hung.
+let cylonAnimationId = null;
+
+function startDeepScan(stemCount) {
+  const assistant = document.getElementById("assistant");
+  if (assistant) assistant.classList.add("deep-scan");
+  setAssistantLabel("deep scan...");
+
+  const console_ = document.getElementById("llm-console");
+  if (console_) {
+    console_.textContent = "";
+    console_.classList.add("active");
+  }
+
+  const bar = document.getElementById("cylon-bar");
+  if (bar) bar.classList.add("active");
+  startCylonLoop();
+
+  addEventChip(`\u{1F9E0} LLM advisory: analizzo ${stemCount} stem ambigui...`);
+}
+
+function appendLlmToken(text) {
+  const console_ = document.getElementById("llm-console");
+  if (!console_) return;
+  console_.textContent += text;
+  console_.scrollTop = console_.scrollHeight;
+}
+
+function stopDeepScan() {
+  const assistant = document.getElementById("assistant");
+  if (assistant) assistant.classList.remove("deep-scan");
+  setAssistantLabel("");
+
+  const bar = document.getElementById("cylon-bar");
+  if (bar) bar.classList.remove("active");
+  if (cylonAnimationId !== null) {
+    cancelAnimationFrame(cylonAnimationId);
+    cylonAnimationId = null;
+  }
+}
+
+function startCylonLoop() {
+  if (cylonAnimationId !== null) return; // already running
+  const eye = document.getElementById("cylon-bar-eye");
+  const bar = document.getElementById("cylon-bar");
+  if (!eye || !bar) return;
+
+  function sweep(timestamp) {
+    const period = 1400; // ms for a full left-right-left cycle
+    const t = (timestamp % period) / period;
+    // triangle wave 0..1..0 so the eye reverses direction at each edge
+    const phase = t < 0.5 ? t * 2 : 2 - t * 2;
+    const travel = bar.clientWidth - eye.clientWidth;
+    eye.style.transform = `translateX(${(phase * travel).toFixed(1)}px)`;
+    cylonAnimationId = requestAnimationFrame(sweep);
+  }
+  cylonAnimationId = requestAnimationFrame(sweep);
+}
+
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
   const resultEl = document.getElementById("result");
@@ -404,6 +468,30 @@ function onEvent(evt) {
 
     case "reverb_bus_render":
       addEventChip(`\u{1F3DB}\u{FE0F} Bus riverbero renderizzati: ${evt.buses.join(", ")}`);
+      break;
+
+    case "ltas_match":
+      addEventChip(`\u{1F3A7} Matchering FIR: delta entro ±${evt.max_delta_db}dB (${evt.fir_taps} tap)`);
+      break;
+
+    case "rt60_calibration":
+      addEventChip(`\u{1F3DB}\u{FE0F} RT60 dalla reference: ${evt.rt60_seconds}s`);
+      break;
+
+    case "llm_advisory_start":
+      startDeepScan(evt.stem_count);
+      break;
+
+    case "llm_token":
+      appendLlmToken(evt.text);
+      break;
+
+    case "llm_advisory_done":
+      stopDeepScan();
+      break;
+
+    case "llm_reclassification":
+      addEventChip(`\u{1F9E0} ${evt.stem}: LLM -> ${evt.category} (${evt.role})`);
       break;
 
     case "done":

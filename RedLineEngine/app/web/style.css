@@ -128,6 +128,64 @@ html, body {
   letter-spacing: 0.05em;
 }
 
+/* "Deep Neural Scan" state: the LLM is actively thinking (40-60s of local
+   CPU inference). A slow dark-red pulsing halo around the head is the only
+   signal the user needs — it says "the machine is working" without a
+   progress bar promising a duration nobody can predict. */
+.assistant.deep-scan .assistant-head {
+  animation: assistant-scan-halo 1.8s ease-in-out infinite;
+}
+
+@keyframes assistant-scan-halo {
+  0%, 100% { filter: drop-shadow(0 0 2px #4a000d); stroke: #555; }
+  50% { filter: drop-shadow(0 0 10px #8a0020); stroke: #a33; }
+}
+
+/* Streaming reasoning console: raw model tokens appended live, monospace,
+   dim by default so it doesn't compete with the main log — this exists so
+   the wait feels like watching the machine think rather than a frozen UI. */
+.llm-console {
+  display: none;
+  background: #0d0000;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-family: "Consolas", monospace;
+  font-size: 11px;
+  color: #c96;
+  max-height: 90px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.llm-console.active { display: block; }
+
+/* Cylon activity bar: a thin strip sweeping back and forth at 60fps under
+   the console, confirming the UI thread is alive while the DSP/LLM thread
+   works in the background — independent of any Python-side timing. */
+.cylon-bar {
+  display: none;
+  position: relative;
+  height: 3px;
+  margin-top: 6px;
+  background: #1a0000;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cylon-bar.active { display: block; }
+
+.cylon-bar-eye {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
 .screen {
   padding: 24px 32px 32px;
   height: calc(100% - 48px);
