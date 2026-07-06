@@ -45,7 +45,17 @@ def _run() -> None:
         min_size=(720, 560),
         background_color="#0A0A0A",
     )
-    api.window = window
+    # Deliberately a private attribute (leading underscore): pywebview's own
+    # js_api introspection (webview/util.py's inject_pywebview/get_functions)
+    # walks every *public* attribute of the Api instance to build the JS
+    # bridge, recursively descending into non-callable objects. `window` is
+    # a pywebview Window wrapping the raw WinForms/.NET WebView2 control,
+    # and walking into its `.native` COM object hits a genuine infinite
+    # loop (window.native.AccessibilityObject.Bounds.Empty.Empty.Empty...)
+    # once external UI Automation software (observed: NVIDIA Overlay, AVG)
+    # has touched the window's accessibility tree. Prefixing with `_` takes
+    # it out of pywebview's introspected surface entirely.
+    api._window = window
 
     # A blank/black window is not the same failure as a Python exception --
     # this writes a timestamped marker the moment WebView2 actually finishes

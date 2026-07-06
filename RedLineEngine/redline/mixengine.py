@@ -43,6 +43,7 @@ from typing import Callable
 
 import librosa
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 from pedalboard import (
     Pedalboard,
     HighpassFilter,

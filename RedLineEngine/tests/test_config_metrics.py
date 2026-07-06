@@ -5,10 +5,16 @@ from redline import config
 from redline.metrics import Metrics
 
 
-def test_all_flags_off_by_default():
+def test_all_flags_off_by_default(monkeypatch, tmp_path):
+    # Isolated from the real .flags.json -- a machine that ran the CI
+    # auto-enable script (ci_check.py) would otherwise have every flag set
+    # to true locally, which tests the CI script's behavior, not the code's
+    # actual default. This checks config.DEFAULTS itself.
+    monkeypatch.setattr(config, "_FLAGS_PATH", str(tmp_path / "nonexistent.flags.json"))
     config.reload()
     for flag in config.DEFAULTS:
         assert config.is_enabled(flag) is False
+    config.reload()  # leave global state clean for other tests
 
 
 def test_env_var_override(monkeypatch):

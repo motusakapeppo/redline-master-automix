@@ -64,18 +64,30 @@ function init(canvasId) {
     }
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0A0A0A');
+    // Transparent background -- no solid fill means no visible "box" behind
+    // the skull; it reads as a cutout sitting directly on the page instead
+    // of a rendered rectangle.
+    scene.background = null;
     scene.fog = new THREE.Fog('#0A0A0A', 5, 8);
 
     camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 10);
-    camera.position.set(0, 0.3, 3.8);
+    // z must clear PARTICLE_OUTER (4.0) -- at 3.8 the camera sat *inside*
+    // the particle shell, with additive-blended particles between the lens
+    // and the skull (and behind it) washing the whole frame into a single
+    // blown-out bloom blob with no visible geometry. 4.8 clears the shell
+    // with margin while staying mostly ahead of the fog's near falloff (5).
+    camera.position.set(0, 0.3, 4.8);
     camera.lookAt(0, 0, 0);
 
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0);
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    // Was 1.2 + strong bloom -- blew every material out to solid white with
+    // no visible skull detail (eye sockets, teeth, jaw all disappeared into
+    // the glow). Pulled both way down.
+    renderer.toneMappingExposure = 0.75;
 
     // Environment map
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
@@ -99,50 +111,26 @@ function init(canvasId) {
     fillLight.position.set(0, -1, 2);
     scene.add(fillLight);
 
-    // Composer
+    // Composer -- bloom + vignette dropped for now. UnrealBloomPass composites
+    // additively and reliably breaks canvas alpha transparency (the whole
+    // point of the transparent-background change above), and combined with
+    // 5000 additive-blended particles it was blowing every material out to
+    // solid white -- no skull detail (eye sockets, teeth, jaw) was visible,
+    // just a bright blob. Plain render+output keeps the actual geometry
+    // visible; bloom can come back later, tuned much lower, once alpha
+    // compositing through it is verified to actually work in this Three
+    // version.
     composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-
-    const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(canvas.clientWidth, canvas.clientHeight),
-      0.6, 0.4, 0.1
-    );
-    composer.addPass(bloomPass);
-
-    // Vignette shader
-    const vignettePass = new ShaderPass({
-      uniforms: {
-        tDiffuse: { value: null },
-        offset: { value: 0.4 },
-        darkness: { value: 0.6 },
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float offset;
-        uniform float darkness;
-        varying vec2 vUv;
-        uniform sampler2D tDiffuse;
-        void main() {
-          vec4 texel = texture2D(tDiffuse, vUv);
-          vec2 uv = (vUv - vec2(0.5)) * vec2(offset);
-          gl_FragColor = vec4(mix(texel.rgb, vec3(0.0), dot(uv, uv) * darkness), texel.a);
-        }
-      `,
-    });
-    composer.addPass(vignettePass);
     composer.addPass(new OutputPass());
 
     buildSkull();
     buildRing();
-    buildRingGlowParticles();
     buildEarrings();
-    buildParticles();
+    // buildRingGlowParticles() / buildParticles() dropped per direct
+    // feedback: with a transparent background the particle clouds read as
+    // visual clutter, not atmosphere -- the skull + reactive ring carry the
+    // design on their own.
 
     clock = new THREE.Clock();
     animate();

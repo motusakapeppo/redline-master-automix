@@ -50,7 +50,7 @@ def _sanitize_for_json(data):
 
 class Api:
     def __init__(self) -> None:
-        self.window: webview.Window | None = None
+        self._window: webview.Window | None = None
         # One gate per Api instance is fine -- only one render_pipeline call
         # runs at a time from this UI, so there's never a second checkpoint
         # racing the first for the same gate.
@@ -95,9 +95,9 @@ class Api:
                 if now - last_js_time < _JS_THROTTLE_S:
                     continue
                 last_js_time = now
-                if self.window is not None:
+                if self._window is not None:
                     try:
-                        self.window.evaluate_js(js)
+                        self._window.evaluate_js(js)
                     except Exception:
                         pass  # window may be closing — swallow silently
 
@@ -165,13 +165,13 @@ class Api:
         self.director_gate.approve()
 
     def pick_input_path(self) -> str | None:
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
             return None
         return result[0]
 
     def pick_input_file(self) -> str | None:
-        result = self.window.create_file_dialog(
+        result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
             allow_multiple=False,
             file_types=('Audio files', '*.wav;*.mp3;*.flac;*.aiff;*.ogg;*.m4a'),
@@ -181,7 +181,7 @@ class Api:
         return result[0]
 
     def pick_output_dir(self) -> str | None:
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
             return None
         return result[0]
