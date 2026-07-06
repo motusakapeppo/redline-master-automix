@@ -18,8 +18,9 @@
 
     <div id="screen-input" class="screen active">
       <h1>Carica il tuo progetto</h1>
-      <p class="hint">Seleziona la cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file già mixato.</p>
+      <p class="hint">Seleziona una cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file audio già mixato.</p>
       <button class="btn btn-primary" onclick="chooseInput()">Scegli cartella o file...</button>
+      <button class="btn btn-primary" onclick="chooseFile()">Scegli file audio...</button>
       <div id="input-path" class="path-display"></div>
       <button id="btn-next" class="btn btn-accent" onclick="goToScreen('screen-wizard')" disabled>Avanti</button>
     </div>

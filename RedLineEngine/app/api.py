@@ -111,6 +111,16 @@ class Api:
             return None
         return result[0]
 
+    def pick_input_file(self) -> str | None:
+        result = self.window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=False,
+            file_types=('Audio files', '*.wav;*.mp3;*.flac;*.aiff;*.ogg;*.m4a'),
+        )
+        if not result:
+            return None
+        return result[0]
+
     def pick_output_dir(self) -> str | None:
         result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:

@@ -158,6 +158,15 @@ async function chooseInput() {
   }
 }
 
+async function chooseFile() {
+  const path = await window.pywebview.api.pick_input_file();
+  if (path) {
+    selectedInput = path;
+    document.getElementById("input-path").textContent = path;
+    document.getElementById("btn-next").disabled = false;
+  }
+}
+
 async function startRun() {
   selectedOutput = await window.pywebview.api.pick_output_dir();
   if (!selectedOutput) return;

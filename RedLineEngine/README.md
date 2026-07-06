@@ -39,7 +39,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
 - `redline/director.py` — Director Mode: `threading.Event`-based gate that pauses `render_mix` for GUI approval mid-pipeline
 - `redline/audition.py` — Neural Monitor: sounddevice/PortAudio playback with peak-safety normalization + anti-click fades, and `extract_smart_chunk()` (finds the loudest window instead of comparing arbitrary/silent audio)
-- `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state/live A/B audition) alongside a conversational terminal panel
+- `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state/live A/B audition) alongside a conversational terminal panel. Supports both folder (multitrack stems) and single-file audio selection via native OS dialogs.
 
 ## Reference document
 
