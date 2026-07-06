@@ -402,6 +402,10 @@ function onEvent(evt) {
       addEventChip(`\u{2601}\u{FE0F} ${evt.stem}: riverbero lungo ${Math.round(evt.mix * 100)}%`);
       break;
 
+    case "reverb_bus_render":
+      addEventChip(`\u{1F3DB}\u{FE0F} Bus riverbero renderizzati: ${evt.buses.join(", ")}`);
+      break;
+
     case "done":
       setAssistantLabel("fatto!");
       break;

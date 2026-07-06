@@ -51,7 +51,6 @@ from pedalboard import (
     PeakFilter,
     Compressor,
     Gain,
-    Reverb,
 )
 
 from .input_loader import Stems
@@ -78,6 +77,7 @@ from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
 from .elastic_align import elastic_align
+from .reverbbus import ReverbBusSystem, ROOM, PLATE, HALL
 from .depth import (
     classify_stem_depth,
     FOREGROUND,
@@ -300,13 +300,6 @@ def _process_double_stem(
     return out
 
 
-def _reverb_send(signal: np.ndarray, sr: int, mix: float) -> np.ndarray:
-    """A long, diffuse reverb blended in at `mix` — used to make falsettos
-    feel like a distant cloud rather than individually-placed singers."""
-    wet = Pedalboard([Reverb(room_size=0.9, damping=0.3, wet_level=1.0, dry_level=0.0, width=1.0)])(signal.T, sr).T
-    return signal * (1.0 - mix) + wet * mix
-
-
 def render_mix(
     stems: Stems,
     analysis: AnalysisResult,
@@ -316,6 +309,7 @@ def render_mix(
 ) -> np.ndarray:
     sr = stems.sample_rate
     n = stems.num_samples()
+    reverb_bus = ReverbBusSystem(sr)
 
     descriptors = {name: parse_stem(name) for name in stems.names()}
 
@@ -402,13 +396,13 @@ def render_mix(
                     Compressor(threshold_db=BACKGROUND_COMP_THRESHOLD_DB, ratio=BACKGROUND_COMP_RATIO, attack_ms=BACKGROUND_COMP_ATTACK_MS, release_ms=150.0),
                 ])
                 processed[name] = board(processed[name].T, sr).T
-                processed[name] = _reverb_send(processed[name], sr, BACKGROUND_REVERB_SEND)
+                reverb_bus.send(processed[name], HALL, BACKGROUND_REVERB_SEND)
             elif depth == MIDGROUND:
                 # Split the difference: milder LPF/reverb, no strong dynamic
                 # push either way — these stems already sit ambiguously.
                 on_step(f"  '{name}': centro (taglio sopra {MIDGROUND_LOWPASS_HZ / 1000:.0f}kHz, riverbero {MIDGROUND_REVERB_SEND * 100:.0f}%)")
                 processed[name] = Pedalboard([LowpassFilter(cutoff_frequency_hz=MIDGROUND_LOWPASS_HZ)])(processed[name].T, sr).T
-                processed[name] = _reverb_send(processed[name], sr, MIDGROUND_REVERB_SEND)
+                reverb_bus.send(processed[name], PLATE, MIDGROUND_REVERB_SEND)
             else:
                 # Foreground: no cut, a touch of "air" shelf instead, and a
                 # slower compressor attack so it doesn't squash the transients
@@ -476,9 +470,9 @@ def render_mix(
             out = pan_stereo(out, hard_pan)
 
             if recipe.reverb_send > 0.0:
-                out = _reverb_send(out, sr, recipe.reverb_send)
-                on_step(f"  '{name}': inviata al riverbero lungo ({recipe.reverb_send * 100:.0f}%) per un effetto diffuso")
-                on_event({"type": "reverb_send", "stem": name, "mix": recipe.reverb_send})
+                reverb_bus.send(out, HALL, recipe.reverb_send)
+                on_step(f"  '{name}': inviata al bus Hall condiviso ({recipe.reverb_send * 100:.0f}%) per un effetto diffuso")
+                on_event({"type": "reverb_send", "stem": name, "mix": recipe.reverb_send, "bus": HALL})
 
             register_buses.setdefault(register, np.zeros((n, 2), dtype=np.float32))
             register_buses[register] += out
@@ -597,6 +591,11 @@ def render_mix(
         mix_bus += backing_vocals_bus
     if parallel_bus is not None:
         mix_bus += parallel_bus * PARALLEL_BUS_MIX
+
+    reverb_out = reverb_bus.render(on_step=on_step)
+    if reverb_out is not None:
+        mix_bus += reverb_out
+        on_event({"type": "reverb_bus_render", "buses": [b for b, s in reverb_bus._sums.items() if s is not None]})
 
     on_step(f"Applico EQ di bus per genere '{analysis.genre.name}' (tilt calore: {prefs.warmth:+.1f})")
     genre_bands = _scaled_bands(analysis.genre.bus_eq, prefs.warmth)
