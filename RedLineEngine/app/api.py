@@ -111,6 +111,12 @@ class Api:
             self._js_queue.put(None)
             self._js_worker = None
 
+    def system_ready(self) -> None:
+        """Emit a system_ready event so the UI knows the Python bridge is
+        fully initialized and the window has finished loading. Called from
+        main.py's _on_loaded callback."""
+        self._emit({"type": "system_ready"})
+
     def _narrate(self, msg: str) -> None:
         self._js_queue.put(f"onStep({json.dumps(str(msg))})")
 

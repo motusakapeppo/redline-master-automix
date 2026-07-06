@@ -60,6 +60,8 @@ def _run() -> None:
             f"Page loaded OK at {datetime.datetime.now().isoformat()}\nurl={index_uri}\n",
             encoding="utf-8",
         )
+        # Signal the UI that the Python bridge is fully initialized
+        api.system_ready()
 
     window.events.loaded += _on_loaded
 

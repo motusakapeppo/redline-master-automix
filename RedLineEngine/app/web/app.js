@@ -770,6 +770,26 @@ function onEvent(evt) {
       setAssistantLabel("fatto!");
       break;
 
+    case "system_ready": {
+      setAssistantLabel("pronto");
+      addEventChip("\u2705 Sistema pronto — bridge Python attivo");
+      const piercing = document.getElementById("piercing-nose");
+      if (piercing && typeof gsap !== "undefined") {
+        gsap.to(piercing, {
+          fill: "#FF003F",
+          scale: 1.5,
+          duration: 0.3,
+          repeat: 3,
+          yoyo: true,
+          ease: "power2.inOut",
+          onComplete: () => {
+            gsap.to(piercing, { fill: "#E0E0E0", scale: 1, duration: 0.5 });
+          },
+        });
+      }
+      break;
+    }
+
     default:
       break;
   }
