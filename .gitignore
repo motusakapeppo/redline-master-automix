@@ -38,3 +38,7 @@ RedLineEngine/*.spec.bak
 # Measured spectral reference profiles (derived from the user's own
 # reference tracks — see redline/profile_targets.py)
 RedLineEngine/redline/targets/target_*.json
+
+# Machine-local feature flag overrides (see redline/config.py) — never shared
+RedLineEngine/.flags.json
+.flags.json
