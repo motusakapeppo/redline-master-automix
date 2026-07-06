@@ -1,15 +1,14 @@
-# RedLine — automatic mix + mastering engine
+# RedLine Engine
 
-Status snapshot as of **2026-07-06**. This file is kept up to date as the project moves — treat it as the current state of things, not a static intro.
+> **Automatic mixing & mastering engine** — DSP pipeline for multitrack audio with pywebview desktop GUI and reactive avatar. Pipeline DSP per mixing/mastering automatico con GUI desktop e avatar animato in tempo reale.
+
+**Full documentation → [`RedLineEngine/README.md`](RedLineEngine/README.md)** (bilingual EN/IT).
+
+This root README is a high-level overview. The detailed README inside `RedLineEngine/` covers architecture, every DSP module, the vocal chain design, safety guardrails, the verification suite (4 tests with expected output), troubleshooting, and complete Italian translation.
 
 ## What this is
 
 A tool that takes vocal + instrumental stems (or full multitrack stems, or a single already-mixed file) from a real song and produces an automatic mix and, optionally, an automatic master — detecting genre/BPM/key on its own, asking a few simple questions about the sound you want, and explaining what it's doing as it works, in an app you double-click (no DAW, no VST, no CLI required).
-
-Two things live in this repo:
-
-- **`RedLineEngine/`** — the active project.
-- **`AutoMixerVST/`** — the original JUCE VST3/AU plugin attempt. **Dormant.** It had its core mastering logic silently disconnected from the actual audio (computed EQ/dynamics per genre that never touched the signal) — full findings are in project memory. Real VST/DAW integration will come back as a later phase, built on top of the RedLineEngine engine instead of restarting from this code.
 
 ## Current state of RedLineEngine
 
