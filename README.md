@@ -28,9 +28,13 @@ RedLineEngine/
 │   ├── api.py                    # Python↔JS bridge (file picker, pipeline control, events)
 │   └── web/                      # Frontend (HTML/CSS/JS)
 │       ├── index.html            # Two-column layout
-│       ├── app.js                # GSAP animations, avatar reactions, event handling
+│       ├── app.js                # GSAP UI animations, avatar event wiring
+│       ├── three-avatar.js       # 3D rigged skull avatar (Three.js, AnimationMixer)
 │       ├── style.css             # Dark industrial theme
-│       └── vendor/gsap.min.js    # GreenSock Animation Platform
+│       ├── assets/               # skull.glb + staged instrument/prop models (not all wired up)
+│       └── vendor/               # Self-hosted, fully offline (no CDN dependency)
+│           ├── gsap.min.js       # GreenSock Animation Platform
+│           └── three/            # Three.js core + GLTFLoader + postprocessing modules
 ├── redline/                      # Core DSP engine
 │   ├── naming.py                 # Regex stem role/pan/section detection
 │   ├── analyze.py                # pYIN pitch, VAD-gated analysis, genre detection
@@ -116,6 +120,12 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — real dry/wet A/B playback of the master bus glue compression through your speakers (`redline/audition.py`). Toggled live from the GUI switch |
 | `ENABLE_DIRECTOR_MODE` | off | Pauses `render_mix` after stem role/register recognition and waits for GUI approval (`redline/director.py`) before any DSP runs |
 
+### Creative Brief (free-text → LLM interpretation)
+
+The wizard screen has a free-text field at the top: "describe in plain, non-technical language what you'd like different about the mix" (e.g. *"I'd like it to sound warmer, almost like vinyl, and the vocal a bit more upfront"*). Left blank, it means exactly that — no special requests, use the sliders below as-is.
+
+If filled in, `app/api.py` passes the text to `redline/llm_classifier.interpret_creative_brief()`, which prompts the local model to translate it into small nudges on exactly the **3 existing wizard knobs** — `aggressiveness`, `warmth`, `vocal_prominence` — never raw DSP parameters. Every value still passes through `redline/director_safety.clamp_params()` (same ranges as the sliders themselves) before it can reach `MixPreferences`, so an over-eager interpretation ("make it sound like a monster") can only nudge within the range a human moving the sliders could already reach — it can never exceed it. Falls back to the slider values untouched if the brief is blank, the local model isn't available, or its response doesn't parse as valid JSON.
+
 ### Architecture
 
 #### Core DSP (`redline/`)
@@ -161,17 +171,28 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
 
 #### Avatar System
 
-The avatar is a minimalist SVG wireframe face with real-time reactive animations:
+The avatar is a real 3D rigged character (`app/web/assets/skull.glb`, a CC0 asset), rendered with a self-hosted, fully offline copy of Three.js (`app/web/vendor/three/` — no CDN dependency, matters for the packaged exe) and driven by `app/web/three-avatar.js`. It replaced an earlier flat SVG wireframe design.
 
-| Body Part | Trigger | Animation |
-|---|---|---|
-| **Glasses** | LLM inference ("deep scan") | Tint + glow effect, scanning light sweep |
-| **Nose piercing** | De-esser firing | Red flash (#FF003F), 300ms pulse |
-| **Nose piercing** | System ready (power-on) | 3 pulses of red glow (scale 1.5, yoyo), then settles to silver (#E0E0E0) |
-| **Earrings** | Compressor hit | Jingle animation (swing + scale), extra kick from glue compression |
-| **Headphones** | "Listening" moments (denoise, LTAS, QC) | Fade in (opacity 0→1) |
-| **Head** | Idle | Autonomous random look-around (GSAP 3D head turns), breathing motion |
-| **Head** | BPM detected | Headbang synchronized to tempo |
+The model ships with baked animation clips played through a `THREE.AnimationMixer` — real skeletal animation, not faked bone-rotation math:
+
+| Clip | Trigger |
+|---|---|
+| `Idle` | Default state, loops continuously |
+| `Bite_Front` | De-esser firing (a quick "snap") |
+| `Bite_InPlace` (looping) | LLM inference ("deep scan") |
+| `HitRecieve` | Strong glue compression hit |
+| `Dance` | Pipeline completion |
+| `Yes` / `No` | Director Mode approve / reject |
+
+On top of the clip playback, the render loop adds:
+- **Natural intermittent glances** — a hold/turn state machine (not a constant slow spin, which was an actual bug: a leftover `rotation.y +=` accumulator from a since-removed reactive ring). Holds still for 1.5–5s, then snaps a smoothstep-eased glance (0.6–1.1s) to a new random angle, the way a real head moves rather than a lighthouse beacon.
+- **Eye-glow markers** (small emissive red spheres, position-derived from the model's own bounding box) that flash on de-esser hits.
+- **Material**: the model's own painted texture is kept (not discarded for a flat color) and tinted a cool silver-grey to match the black/red/silver theme, rendered with a transparent background (no visible rectangle behind it) and no bloom post-processing (bloom reliably broke canvas alpha and blew every material to solid white).
+
+Several more assets are staged in `app/web/assets/` for planned features, not yet wired up:
+- `headphones.glb`, `vinyl.glb` — a "headphones pop on" moment for Neural Monitor toggle/listening states, vinyl to represent playback/the final result
+- `cassette.glb`, `music_note.glb` — likely pairing for a Neural Monitor on/off interaction (e.g. a cassette or speaker appearing when Live A/B is toggled)
+- `guitar.glb`, `bass_guitar.glb`, `piano.glb`, `kazoo.glb` — the avatar "playing" the instrument matching whichever stem is currently being processed (guitar for guitar stems, the 4-string model for bass, piano for piano, kazoo for any wind instrument), cycling through all of them for a single combined instrumental stem
 
 ### Vocal Chain Design
 
@@ -405,17 +426,17 @@ Actively developed. See `.omo/` for planning notes and commit history for progre
 
 **Symptom:** The desktop shortcut opens a black window that never renders the UI.
 
-**Root cause:** **NVIDIA Overlay** (or similar UI-Automation-hooking overlays — Discord overlay, RTSS, Xbox Game Bar) intercepts the new pywebview window and triggers an infinite recursion inside the .NET/COM bridge. Confirmed by killing the NVIDIA Overlay process and watching the app load normally within seconds.
+**Root cause (confirmed, fixed):** `app/api.py`'s `Api` class stored the raw pywebview `Window` object as a **public** attribute (`self.window`). pywebview's own `js_api` introspection (`webview/util.py`'s `inject_pywebview` → `get_functions`) recursively walks *every public attribute* of the `Api` instance to build the `window.pywebview.api` bridge exposed to JS. Walking into `self.window` descends into the WinForms/.NET WebView2 control's `.native` COM object, and once external UI-Automation software has touched that window's accessibility tree (NVIDIA Overlay and, separately, AVG were both observed triggering it), that COM graph contains a genuinely infinite chain — `window.native.AccessibilityObject.Bounds.Empty.Empty.Empty...` — which pywebview's reflection walker has no cycle detection for. The resulting `RecursionError` spam starves the WebView2 message loop badly enough that the page never finishes loading, and the window just stays on its background color forever, with no visible exception to the user.
 
-**Diagnosis:**
+Killing the overlay process was an earlier (incorrect) workaround that happened to "fix" it by coincidence — the real fix doesn't depend on what overlay software is or isn't running.
+
+**Fix (applied):** Renamed `Api.window` → `Api._window` in both `app/api.py` and `app/main.py`. pywebview's walker explicitly skips any attribute name starting with `_`, so the window object is simply never introspected — no COM graph is ever walked, regardless of what UI-Automation tooling is active. Verified by reproducing the failure reliably beforehand (`last_load.log` never written, console flooded with the recursion error), then confirming clean, repeatable page loads immediately after the rename.
+
+**Diagnosis (if it ever recurs):**
 1. Check `%LOCALAPPDATA%\RedLineEngine\last_load.log` — if missing or stale, the page never loaded
-2. If the file is fresh but the window is black, the cause is different (CSS/JS issue)
-3. Set `REDLINE_DEBUG_GUI=1` to open Chrome DevTools alongside the window
-
-**Fix:**
-- Disable the in-game/in-app overlay for the relevant software
-- Exclude `RedLineEngine.exe` from the overlay
-- Or kill the overlay process before launching
+2. Check `%LOCALAPPDATA%\RedLineEngine\startup_error.log` for a Python-level exception
+3. Set `REDLINE_DEBUG_GUI=1` to open Chrome DevTools alongside the window and inspect the console directly
+4. If it's this same bug again, it means something added a new public attribute on `Api` pointing at the `window` object (or another object that eventually references it) — audit `app/api.py` for any `self.<name> = window` and rename with a leading underscore
 
 #### Neural Monitor no audio
 
@@ -464,9 +485,13 @@ RedLineEngine/
 │   ├── api.py                    # Ponte Python↔JS (file picker, controllo pipeline, eventi)
 │   └── web/                      # Frontend (HTML/CSS/JS)
 │       ├── index.html            # Layout a due colonne
-│       ├── app.js                # Animazioni GSAP, reazioni avatar, gestione eventi
+│       ├── app.js                # Animazioni GSAP UI, wiring eventi avatar
+│       ├── three-avatar.js       # Avatar 3D con rig (Three.js, AnimationMixer)
 │       ├── style.css             # Tema scuro industriale
-│       └── vendor/gsap.min.js    # GreenSock Animation Platform
+│       ├── assets/               # skull.glb + modelli strumenti/props predisposti (non tutti collegati)
+│       └── vendor/               # Self-hosted, completamente offline (nessuna dipendenza CDN)
+│           ├── gsap.min.js       # GreenSock Animation Platform
+│           └── three/            # Core Three.js + GLTFLoader + moduli postprocessing
 ├── redline/                      # Motore DSP core
 │   ├── naming.py                 # Riconoscimento ruolo/pan/sezione via regex
 │   ├── analyze.py                # Pitch pYIN, analisi VAD-gated, rilevamento genere
@@ -552,6 +577,12 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — ascolto A/B dry/wet in tempo reale della glue compression del master bus attraverso le casse (`redline/audition.py`). Attivabile live dall'interruttore GUI |
 | `ENABLE_DIRECTOR_MODE` | off | Mette in pausa `render_mix` dopo il riconoscimento ruolo/registro e aspetta approvazione GUI (`redline/director.py`) prima di qualsiasi elaborazione DSP |
 
+### Note Libere (testo libero → interpretazione LLM)
+
+La schermata del wizard ha un campo di testo libero in alto: "descrivi in linguaggio semplice, non tecnico, cosa vorresti diverso nel mix" (es. *"vorrei un suono più caldo, quasi da vinile, e la voce un po' più protagonista"*). Lasciato vuoto, significa esattamente questo — nessuna richiesta speciale, usa gli slider sotto così come sono.
+
+Se compilato, `app/api.py` passa il testo a `redline/llm_classifier.interpret_creative_brief()`, che chiede al modello locale di tradurlo in piccoli aggiustamenti su esattamente **i 3 knob del wizard già esistenti** — `aggressiveness`, `warmth`, `vocal_prominence` — mai parametri DSP grezzi. Ogni valore passa comunque attraverso `redline/director_safety.clamp_params()` (stessi range degli slider stessi) prima di poter raggiungere `MixPreferences`, quindi un'interpretazione troppo entusiasta ("fallo suonare come un mostro") può solo spingere entro il range che un umano che muove gli slider potrebbe già raggiungere — non può mai superarlo. Ricade sui valori degli slider intatti se la richiesta è vuota, il modello locale non è disponibile, o la sua risposta non si analizza come JSON valido.
+
 ### Architettura
 
 #### DSP Core (`redline/`)
@@ -597,17 +628,28 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
 
 #### Sistema Avatar
 
-L'avatar è un wireframe SVG minimalista con animazioni reattive in tempo reale:
+L'avatar è un personaggio 3D reale con rig (`app/web/assets/skull.glb`, un asset CC0), renderizzato con una copia di Three.js self-hosted e completamente offline (`app/web/vendor/three/` — nessuna dipendenza da CDN, importante per l'exe pacchettizzato) e pilotato da `app/web/three-avatar.js`. Ha sostituito un precedente design SVG piatto in wireframe.
 
-| Parte del Corpo | Innesco | Animazione |
-|---|---|---|
-| **Occhiali** | Inferenza LLM ("deep scan") | Colorazione + bagliore, scansione luminosa |
-| **Piercing naso** | De-esser in azione | Flash rosso (#FF003F), impulso 300ms |
-| **Piercing naso** | Sistema pronto (accensione) | 3 impulsi di bagliore rosso (scala 1.5, yoyo), poi si stabilizza su argento (#E0E0E0) |
-| **Orecchini** | Colpo di compressore | Tintinnio (oscillazione + scala), extra kick dalla glue compression |
-| **Cuffie** | Momenti di "ascolto" (denoise, LTAS, QC) | Fade in (opacità 0→1) |
-| **Testa** | Inattività | Sguardo autonomo casuale (giri 3D GSAP), movimento di respirazione |
-| **Testa** | BPM rilevato | Headbang sincronizzato al tempo |
+Il modello include clip di animazione già pronte, riprodotte tramite un `THREE.AnimationMixer` — animazione scheletrica reale, non matematica di rotazione ossea finta:
+
+| Clip | Innesco |
+|---|---|
+| `Idle` | Stato di default, in loop continuo |
+| `Bite_Front` | De-esser in azione (uno "scatto" rapido) |
+| `Bite_InPlace` (in loop) | Inferenza LLM ("deep scan") |
+| `HitRecieve` | Colpo forte di glue compression |
+| `Dance` | Completamento della pipeline |
+| `Yes` / `No` | Approvazione / rifiuto Director Mode |
+
+Oltre alla riproduzione delle clip, il ciclo di rendering aggiunge:
+- **Sguardi naturali e intermittenti** — una macchina a stati hold/turn (non una rotazione lenta e costante, che era un bug reale: un accumulatore `rotation.y +=` residuo di un anello reattivo poi rimosso). Resta fermo per 1.5–5s, poi scatta uno sguardo con easing smoothstep (0.6–1.1s) verso un nuovo angolo casuale, come si muove davvero una testa umana invece di un faro rotante.
+- **Marker di bagliore agli occhi** (piccole sfere emissive rosse, posizionate in base al bounding box del modello stesso) che lampeggiano sui colpi del de-esser.
+- **Materiale**: la texture dipinta originale del modello viene mantenuta (non scartata per un colore piatto) e tinta di un grigio-argento freddo per abbinarsi al tema nero/rosso/argento, renderizzata con sfondo trasparente (nessun rettangolo visibile dietro) e senza post-processing bloom (il bloom rompeva in modo affidabile la trasparenza del canvas e bruciava ogni materiale a bianco pieno).
+
+Nella cartella `app/web/assets/` sono predisposti altri asset per funzionalità pianificate, non ancora collegate:
+- `headphones.glb`, `vinyl.glb` — un momento "cuffie che spuntano" per il toggle/ascolto del Neural Monitor, vinile per rappresentare la riproduzione/il risultato finale
+- `cassette.glb`, `music_note.glb` — probabile abbinamento per un'interazione on/off del Neural Monitor (es. una cassetta o un altoparlante che compare quando si attiva il Live A/B)
+- `guitar.glb`, `bass_guitar.glb`, `piano.glb`, `kazoo.glb` — l'avatar che "suona" lo strumento corrispondente allo stem in elaborazione (chitarra per stem di chitarra, il modello a 4 corde per il basso, piano per il piano, kazoo per qualsiasi fiato), a rotazione per un singolo stem strumentale combinato
 
 ### Progettazione della Catena Vocale
 
@@ -841,17 +883,17 @@ In sviluppo attivo. Vedi `.omo/` per note di pianificazione e la cronologia dei 
 
 **Sintomo:** La scorciatoia desktop apre una finestra nera che non renderizza mai la UI.
 
-**Causa:** **NVIDIA Overlay** (o overlay simili che agganciano l'UI Automation — Discord overlay, RTSS, Xbox Game Bar) intercetta la nuova finestra pywebview e innesca una ricorsione infinita nel bridge .NET/COM. Confermato killando il processo NVIDIA Overlay e vedendo l'app caricarsi normalmente in secondi.
+**Causa reale (confermata, risolta):** La classe `Api` in `app/api.py` salvava l'oggetto `Window` di pywebview come attributo **pubblico** (`self.window`). Il meccanismo di introspezione `js_api` di pywebview stesso (`webview/util.py`, `inject_pywebview` → `get_functions`) cammina ricorsivamente *ogni attributo pubblico* dell'istanza `Api` per costruire il bridge `window.pywebview.api` esposto a JS. Camminando dentro `self.window` si finisce nell'oggetto COM `.native` del controllo WinForms/.NET WebView2, e una volta che un software di UI Automation esterno ha "toccato" l'albero di accessibilità di quella finestra (osservato sia con NVIDIA Overlay che, separatamente, con AVG), quel grafo COM contiene una catena genuinamente infinita — `window.native.AccessibilityObject.Bounds.Empty.Empty.Empty...` — per cui il walker di riflessione di pywebview non ha alcun rilevamento di cicli. Il conseguente spam di `RecursionError` affama il message loop di WebView2 al punto che la pagina non finisce mai di caricarsi, e la finestra resta bloccata sul colore di sfondo per sempre, senza nessuna eccezione visibile all'utente.
 
-**Diagnosi:**
+Uccidere il processo overlay era un workaround precedente (sbagliato) che sembrava "risolvere" il problema per coincidenza — la vera soluzione non dipende da quale software di overlay sia o meno in esecuzione.
+
+**Soluzione (applicata):** Rinominato `Api.window` → `Api._window` sia in `app/api.py` che in `app/main.py`. Il walker di pywebview salta esplicitamente ogni nome di attributo che inizia con `_`, quindi l'oggetto finestra non viene mai introspezionato — nessun grafo COM viene mai attraversato, indipendentemente da quale tooling di UI Automation sia attivo. Verificato riproducendo il fallimento in modo affidabile prima della fix (`last_load.log` mai scritto, console inondata dall'errore di ricorsione), poi confermando caricamenti puliti e ripetibili della pagina immediatamente dopo la rinomina.
+
+**Diagnosi (se mai si ripresentasse):**
 1. Controlla `%LOCALAPPDATA%\RedLineEngine\last_load.log` — se mancante o vecchio, la pagina non è mai stata caricata
-2. Se il file è fresco ma la finestra è nera, la causa è diversa (problema CSS/JS)
-3. Imposta `REDLINE_DEBUG_GUI=1` per aprire Chrome DevTools insieme alla finestra
-
-**Soluzione:**
-- Disabilita l'overlay in-game/in-app per il software rilevante
-- Escludi `RedLineEngine.exe` dall'overlay
-- O kill il processo overlay prima di avviare
+2. Controlla `%LOCALAPPDATA%\RedLineEngine\startup_error.log` per un'eccezione Python
+3. Imposta `REDLINE_DEBUG_GUI=1` per aprire Chrome DevTools insieme alla finestra e ispezionare direttamente la console
+4. Se è di nuovo lo stesso bug, significa che è stato aggiunto un nuovo attributo pubblico su `Api` che punta all'oggetto `window` (o a un altro oggetto che alla fine lo referenzia) — controlla `app/api.py` per ogni `self.<nome> = window` e rinominalo con un underscore iniziale
 
 #### Neural Monitor senza audio
 
