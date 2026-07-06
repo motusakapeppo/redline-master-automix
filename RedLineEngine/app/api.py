@@ -9,6 +9,7 @@ import json
 import os
 import traceback
 
+import numpy as np
 import soundfile as sf
 import webview
 
@@ -19,13 +20,36 @@ from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
 
 
+def _sanitize_for_json(data):
+    """The engine hands back real numpy scalars everywhere (LUFS, true peak,
+    band ratios, etc. from librosa/scipy/pyloudnorm) — json.dumps chokes on
+    numpy's own float32/float64/int64 types ("Object of type float32 is not
+    JSON serializable"), which crashed every render right after the QC step
+    tried to report its (numpy-typed) measurements. Recursively coerces
+    numpy scalars/arrays to native Python types before anything is
+    JSON-encoded for the webview bridge."""
+    if isinstance(data, dict):
+        return {k: _sanitize_for_json(v) for k, v in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_sanitize_for_json(v) for v in data]
+    if isinstance(data, np.ndarray):
+        return _sanitize_for_json(data.tolist())
+    if isinstance(data, np.floating):
+        return float(data)
+    if isinstance(data, np.integer):
+        return int(data)
+    if isinstance(data, np.bool_):
+        return bool(data)
+    return data
+
+
 class Api:
     def __init__(self) -> None:
         self.window: webview.Window | None = None
 
     def _narrate(self, msg: str) -> None:
         if self.window is not None:
-            self.window.evaluate_js(f"onStep({json.dumps(msg)})")
+            self.window.evaluate_js(f"onStep({json.dumps(str(msg))})")
 
     def _emit(self, evt: dict) -> None:
         """Structured, real-valued event (an actual EQ freq/gain, a real
@@ -33,7 +57,7 @@ class Api:
         corresponding animated module reacting to these exact numbers,
         instead of a generic canned animation loop."""
         if self.window is not None:
-            self.window.evaluate_js(f"onEvent({json.dumps(evt)})")
+            self.window.evaluate_js(f"onEvent({json.dumps(_sanitize_for_json(evt))})")
 
     def pick_input_path(self) -> str | None:
         result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
@@ -92,7 +116,7 @@ class Api:
                 self._narrate(f"Master salvato: {master_path}")
 
             self._narrate("Fatto.")
-            return {
+            return _sanitize_for_json({
                 "ok": True,
                 "mix_path": mix_path,
                 "master_path": master_path,
@@ -100,7 +124,7 @@ class Api:
                 "key": analysis.key_name,
                 "genre": analysis.genre.name,
                 "lufs": analysis.mix_lufs,
-            }
+            })
         except Exception as exc:
             traceback.print_exc()
             self._narrate(f"Errore: {exc}")

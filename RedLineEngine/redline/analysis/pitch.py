@@ -7,7 +7,21 @@ clearly-low take read as f0=500Hz and get mis-routed to the falsetto bus.
 pYIN runs the candidate pitches through an HMM that models voicing and
 octave-transition probabilities, so it doesn't jump octaves frame to frame.
 
-A spectral cross-check (high_frequency_ratio) is exposed so the register
+Two more layers of hardening on top of that, both applied only to the
+*analysis* copy — the real audio going through the mix is untouched:
+
+1. Voice-activity isolation ("ghost array"): a take with a couple of
+   ad-libs in an otherwise-silent 3-minute file has its pitch estimate
+   diluted/dominated by silence and room noise if analyzed whole. This
+   extracts just the active segments (librosa.effects.split) and
+   concatenates them before estimating pitch — pure signal, no dead air.
+2. A strict analysis-only band-pass (80-1000Hz): confines the pitch
+   search to where a human voice fundamental actually lives, blind to
+   mains hum (~50/60Hz) and to high harmonics that YIN-family algorithms
+   can lock onto instead of the true fundamental.
+
+A spectral cross-check (high_frequency_ratio, on the *original* signal —
+harmonic content, not the band-limited copy) is exposed so the register
 classifier can catch any octave error that still slips through: a genuine
 falsetto has a lot of energy up high, so a "high f0" with little HF energy
 is almost certainly a sub-harmonic mis-read and can be down-ranked.
@@ -23,6 +37,38 @@ from .loudness import to_mono
 
 _PITCH_SR = 22050  # vocal fundamentals sit well under this; keeps pYIN fast
 _MAX_ANALYSIS_SECONDS = 25.0  # a stable median f0 doesn't need the whole song
+_VAD_TOP_DB = 40.0  # librosa.effects.split threshold below peak
+_PITCH_BAND_HZ = (80.0, 1000.0)  # analysis-only band-pass: human voice fundamental range
+
+
+def _isolate_voiced_segments(mono: np.ndarray, sr: int, top_db: float = _VAD_TOP_DB) -> np.ndarray:
+    """Concatenates only the energetically-active regions (VAD via
+    librosa.effects.split), so a take that's mostly silence/room noise
+    between a couple of ad-libs doesn't get its pitch/energy estimate
+    diluted by averaging in all that dead air."""
+    if mono.size < sr // 4:
+        return mono
+    try:
+        intervals = librosa.effects.split(mono, top_db=top_db)
+    except Exception:
+        return mono
+    if intervals.size == 0:
+        return mono
+    segments = [mono[start:end] for start, end in intervals]
+    concatenated = np.concatenate(segments)
+    return concatenated if concatenated.size > 0 else mono
+
+
+def _band_limit(mono: np.ndarray, sr: int, band_hz: tuple[float, float]) -> np.ndarray:
+    """Analysis-only band-pass so the pitch search can't lock onto mains hum
+    or high harmonics outside the human voice fundamental range."""
+    nyquist = sr / 2.0
+    low_n = max(band_hz[0] / nyquist, 1e-5)
+    high_n = min(band_hz[1] / nyquist, 0.999)
+    if low_n >= high_n:
+        return mono
+    sos = butter(4, [low_n, high_n], btype="bandpass", output="sos")
+    return sosfiltfilt(sos, mono.astype(np.float64)).astype(np.float32)
 
 
 def _prep_mono(signal: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
@@ -30,20 +76,16 @@ def _prep_mono(signal: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
     if sr > _PITCH_SR:
         mono = librosa.resample(mono, orig_sr=sr, target_sr=_PITCH_SR)
         sr = _PITCH_SR
-    # Analyze the loudest contiguous window (skips leading/trailing silence
-    # that would otherwise dilute the median with unvoiced frames).
+
+    mono = _isolate_voiced_segments(mono, sr)
+
+    # A stable median f0 doesn't need more than ~25s of concentrated,
+    # already-silence-free signal — cap it for speed on long takes.
     max_samples = int(_MAX_ANALYSIS_SECONDS * sr)
     if mono.size > max_samples:
-        block = max(1, sr // 2)
-        n_blocks = mono.size // block
-        energy = np.array([np.sum(mono[i * block:(i + 1) * block] ** 2) for i in range(n_blocks)])
-        window_blocks = max(1, max_samples // block)
-        if n_blocks > window_blocks:
-            csum = np.cumsum(energy)
-            windowed = csum[window_blocks:] - csum[:-window_blocks]
-            start_block = int(np.argmax(windowed))
-            start = start_block * block
-            mono = mono[start:start + max_samples]
+        mono = mono[:max_samples]
+
+    mono = _band_limit(mono, sr, _PITCH_BAND_HZ)
     return mono, sr
 
 
