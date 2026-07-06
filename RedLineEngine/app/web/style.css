@@ -18,11 +18,38 @@ html, body {
   overflow: hidden;
 }
 
+/* Two-column stage: the main workflow on the left, the avatar + its
+   conversational terminal fixed on the right -- the avatar is always
+   visible no matter which screen is active, since it's the one constant
+   "collaborator" presence across the whole session. */
+#app-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  height: 100vh;
+}
+
+#main-stage {
+  overflow-y: auto;
+  padding: 0 24px 24px;
+  position: relative;
+}
+
+#avatar-panel {
+  background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg) 100%);
+  border-left: 1px solid #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 16px 24px 0;
+  padding: 16px 0 0;
 }
 
 .brand-mark {
@@ -42,21 +69,39 @@ html, body {
 }
 
 .assistant {
-  position: fixed;
-  top: 10px;
-  right: 20px;
-  width: 88px;
+  width: 160px;
   text-align: center;
-  z-index: 50;
-  animation: assistant-bob 3.2s ease-in-out infinite;
-}
-
-@keyframes assistant-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
+  flex: none;
 }
 
 .assistant-svg { width: 100%; height: auto; }
+
+#avatar-head { transform-box: fill-box; transform-origin: center; }
+#assistant-eyes { transform-box: fill-box; transform-origin: center; }
+
+/* Headphones: hidden by default, GSAP/CSS fades them in while the engine
+   is actively "listening" (stem analysis, LTAS reference matching, the
+   final QC listen-back pulse). */
+.headphones-svg {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.headphones-svg.active {
+  opacity: 1;
+  animation: headphone-bob 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes headphone-bob {
+  from { transform: translateY(0); }
+  to { transform: translateY(-2px); }
+}
+
+.headphones-band, .headphones-cup {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
 
 /* Minimal wireframe/blueprint style: no fill, thin uniform strokes, only
    the piercings/mouth carry the red accent — reads as a precision
@@ -186,20 +231,18 @@ html, body {
   box-shadow: 0 0 8px var(--accent);
 }
 
+/* #main-stage itself owns the scrolling; screens are just content blocks
+   that fade/slide in via GSAP (see showScreen() in app.js) -- the opacity/
+   transform here are just the non-animated fallback if GSAP didn't load. */
 .screen {
-  padding: 24px 32px 32px;
-  height: calc(100% - 48px);
-  overflow-y: auto;
+  padding: 8px 0 32px;
   display: none;
   opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.35s ease, transform 0.35s ease;
 }
 
 .screen.active {
   display: block;
   opacity: 1;
-  transform: translateY(0);
 }
 
 h1 {
@@ -441,24 +484,18 @@ select { width: auto; }
   100% { transform: translate(0, 0); filter: none; }
 }
 
-.headphones {
-  font-size: 30px;
-  text-align: center;
-  padding: 6px 0;
-  opacity: 0.35;
-  transition: opacity 0.3s ease, transform 0.3s ease;
-  position: relative;
-  z-index: 1;
-}
 
-.headphones.active {
-  opacity: 1;
-  animation: headphone-bob 0.6s ease-in-out infinite alternate;
-}
-
-@keyframes headphone-bob {
-  from { transform: translateY(0); }
-  to { transform: translateY(-3px); }
+/* Terminal panel: the avatar's "voice" -- narration reads as a running
+   conversation (short, present-tense lines) rather than a raw system log,
+   so the wait feels like standing next to a collaborator, not staring at
+   a console. */
+.terminal-box {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 16px;
 }
 
 .event-feed {

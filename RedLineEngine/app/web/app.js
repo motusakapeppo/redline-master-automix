@@ -1,6 +1,23 @@
 let selectedInput = null;
 let selectedOutput = null;
 
+// --- Avatar idle breathing: GSAP handles this (falls back to nothing if
+// the vendored gsap.min.js is somehow missing -- the avatar just stays
+// still rather than the page erroring out). Once a real BPM is known
+// (syncAssistantToBpm), this tween is killed and replaced with a
+// beat-synced headbang -- the breathing is just what it does before the
+// engine has anything to groove to yet.
+let avatarIdleTween = null;
+if (typeof gsap !== "undefined") {
+  avatarIdleTween = gsap.to("#avatar-head", {
+    y: 3,
+    duration: 2.5,
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut",
+  });
+}
+
 // --- QC canvas "breathing" waveform: a proxy for "the machine is listening"
 // — activity spikes on every real step/event and decays, driving the wave's
 // amplitude, instead of a canned idle loop with no relation to what's happening.
@@ -42,8 +59,32 @@ function startQcCanvasLoop() {
 }
 
 function showScreen(id) {
-  document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
+  const current = document.querySelector(".screen.active");
+  const next = document.getElementById(id);
+  if (current === next) return;
+
+  if (typeof gsap === "undefined") {
+    // GSAP failed to load (vendored file missing/corrupt) -- the screen
+    // switch itself must never depend on it, only the transition's polish does.
+    document.querySelectorAll(".screen").forEach((el) => el.classList.remove("active"));
+    next.classList.add("active");
+    return;
+  }
+
+  if (current) {
+    gsap.to(current, {
+      opacity: 0, x: -16, duration: 0.25, ease: "power1.in",
+      onComplete: () => current.classList.remove("active"),
+    });
+  }
+  next.classList.add("active");
+  gsap.fromTo(next, { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.35, delay: current ? 0.15 : 0, ease: "power2.out" });
+}
+
+// Alias -- the HTML markup calls this name directly for clarity ("go to
+// the next screen"), same cinematic transition either way.
+function goToScreen(id) {
+  showScreen(id);
 }
 
 async function chooseInput() {
@@ -168,6 +209,27 @@ function reactToCompression(ratio, releaseMs) {
   }
 }
 
+function reactToGlueCompression(ratio) {
+  // The harder the master bus glue squeezes, the more the avatar squints --
+  // a felt sense of "how much am I pushing this mix", not just a number in
+  // a meter. Ratio ~1.2:1 (barely touching it) to ~4:1 (leaning on it hard).
+  const squint = Math.min(0.6, Math.max(0, (ratio - 1.2) / 3.0));
+  const eyeScale = 1 - squint * 0.7;
+  const target = { scaleY: eyeScale };
+  if (typeof gsap !== "undefined") {
+    gsap.to("#assistant-eyes", { ...target, duration: 0.3, ease: "power1.out" });
+  } else {
+    const eyes = document.getElementById("assistant-eyes");
+    if (eyes) eyes.style.transform = `scaleY(${eyeScale})`;
+  }
+}
+
+function setListening(on) {
+  const hp = document.getElementById("headphones");
+  if (!hp) return;
+  hp.classList.toggle("active", on);
+}
+
 function reactToDeesser() {
   const nose = document.getElementById("assistant-nose");
   if (!nose) return;
@@ -176,11 +238,22 @@ function reactToDeesser() {
 }
 
 function syncAssistantToBpm(bpm) {
-  if (!bpm || bpm <= 0) return;
-  const assistant = document.getElementById("assistant");
-  if (!assistant) return;
+  if (!bpm || bpm <= 0 || typeof gsap === "undefined") return;
   const beatSeconds = 60.0 / bpm;
-  assistant.style.animationDuration = `${(beatSeconds * 2).toFixed(3)}s`;
+
+  if (avatarIdleTween) {
+    avatarIdleTween.kill();
+    avatarIdleTween = null;
+  }
+  // Subtle headbang locked to the real tempo -- a light nod, not a bobblehead.
+  gsap.to("#avatar-head", {
+    y: 4,
+    rotation: 2,
+    duration: beatSeconds / 2,
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut",
+  });
 }
 
 // --- Fase 5: local LLM advisory UX. Local CPU inference can take tens of
@@ -351,6 +424,12 @@ function onEvent(evt) {
       const label = evt.stem ? evt.stem : "bus";
       flashDetail("comp-detail", `${label}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
       reactToCompression(ratio, evt.release_ms);
+      if (!evt.stem) {
+        // No per-stem name on the event -- this is a bus-level compressor,
+        // exactly the "how hard is the glue squeezing" moment the squint
+        // reaction exists for.
+        reactToGlueCompression(ratio);
+      }
       break;
     }
 
@@ -376,6 +455,8 @@ function onEvent(evt) {
 
     case "denoise":
       addEventChip(`\u{1F9FC} ${evt.stem}: riduzione rumore`);
+      setListening(true);
+      setTimeout(() => setListening(false), 1200);
       break;
 
     case "elastic_align":
@@ -447,6 +528,7 @@ function onEvent(evt) {
 
     case "multiband_compressor":
       addEventChip(`\u{1F39B}\u{FE0F} Multibanda: <${evt.low_hz}Hz / ${evt.low_hz}-${evt.high_hz}Hz / >${evt.high_hz}Hz`);
+      reactToGlueCompression(evt.recipes.mid.ratio);
       break;
 
     case "vocal_space":
@@ -472,10 +554,14 @@ function onEvent(evt) {
 
     case "ltas_match":
       addEventChip(`\u{1F3A7} Matchering FIR: delta entro ±${evt.max_delta_db}dB (${evt.fir_taps} tap)`);
+      setListening(true);
+      setTimeout(() => setListening(false), 2000);
       break;
 
     case "rt60_calibration":
       addEventChip(`\u{1F3DB}\u{FE0F} RT60 dalla reference: ${evt.rt60_seconds}s`);
+      setListening(true);
+      setTimeout(() => setListening(false), 2000);
       break;
 
     case "llm_advisory_start":

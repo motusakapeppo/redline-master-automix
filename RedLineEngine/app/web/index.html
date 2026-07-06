@@ -4,139 +4,149 @@
 <meta charset="UTF-8" />
 <title>RedLine Engine</title>
 <link rel="stylesheet" href="style.css" />
+<script src="vendor/gsap.min.js"></script>
 </head>
 <body>
 
-<div class="brand">
-  <span class="brand-mark"></span>
-  <span class="brand-name">RedLine Engine</span>
-</div>
+<div id="app-grid">
 
-<!-- Second-pass animated assistant: minimal wireframe line-art, not a filled
-     cartoon face — single hoop earring (viewer-right ear), three small rings
-     (viewer-left ear), nose ring (left nostril). No Rive editor access here,
-     so this is still SVG/CSS, aiming for a precision-instrument look
-     (thin consistent strokes, no fill, black/red only) rather than a final
-     illustration — redo freely if it's still not right. -->
-<div id="assistant" class="assistant">
-  <svg viewBox="0 0 160 160" class="assistant-svg">
-    <!-- face: a single thin-stroke silhouette, no fill -->
-    <path d="M80,20 C110,20 128,46 128,84 C128,118 108,140 80,140 C52,140 32,118 32,84 C32,46 50,20 80,20 Z"
-          class="assistant-head" />
+  <div id="main-stage">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">RedLine Engine</span>
+    </div>
 
-    <!-- left ear (viewer's left): three thin rings — rotate to show real
-         bus/compressor gain reduction (interpolated dB -> degrees) -->
-    <circle id="assistant-piercing-1" cx="31" cy="74" r="2.6" class="assistant-piercing" />
-    <circle id="assistant-piercing-2" cx="30" cy="84" r="2.6" class="assistant-piercing" />
-    <circle id="assistant-piercing-3" cx="31" cy="94" r="2.6" class="assistant-piercing" />
+    <div id="screen-input" class="screen active">
+      <h1>Carica il tuo progetto</h1>
+      <p class="hint">Seleziona la cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file già mixato.</p>
+      <button class="btn btn-primary" onclick="chooseInput()">Scegli cartella o file...</button>
+      <div id="input-path" class="path-display"></div>
+      <button id="btn-next" class="btn btn-accent" onclick="goToScreen('screen-wizard')" disabled>Avanti</button>
+    </div>
 
-    <!-- right ear (viewer's right): single hoop earring -->
-    <circle cx="129" cy="86" r="4.5" class="assistant-piercing-hoop" />
+    <div id="screen-wizard" class="screen">
+      <h1>Come vuoi il mix?</h1>
 
-    <!-- nose ring, left nostril — flashes hot red on real de-esser hits -->
-    <circle id="assistant-nose" cx="72" cy="108" r="3" class="assistant-piercing-hoop" />
+      <div class="field">
+        <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
+        <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
+               oninput="document.getElementById('aggressiveness-val').textContent = this.value">
+      </div>
 
-    <!-- eyes: minimal thin dashes, collapse to a dot on blink -->
-    <g id="assistant-eyes">
-      <line x1="56" y1="76" x2="68" y2="76" class="assistant-eye" />
-      <line x1="92" y1="76" x2="104" y2="76" class="assistant-eye" />
-    </g>
+      <div class="field">
+        <label>Calore (freddo/brillante &larr;&rarr; caldo)</label>
+        <input type="range" id="warmth" min="-1" max="1" value="0" step="0.1">
+      </div>
 
-    <!-- mouth: one clean line -->
-    <path id="assistant-mouth" d="M64,112 L96,112" class="assistant-mouth" />
-  </svg>
-  <div class="assistant-label" id="assistant-label">pronto</div>
-</div>
+      <div class="field">
+        <label>Presenza voce (indietro &larr;&rarr; protagonista)</label>
+        <input type="range" id="vocal_prominence" min="-1" max="1" value="0" step="0.1">
+      </div>
 
-<div id="screen-input" class="screen active">
-  <h1>Carica il tuo progetto</h1>
-  <p class="hint">Seleziona la cartella con gli stem (voce + strumentale, o stem multipli), oppure un singolo file già mixato.</p>
-  <button class="btn btn-primary" onclick="chooseInput()">Scegli cartella o file...</button>
-  <div id="input-path" class="path-display"></div>
-  <button id="btn-next" class="btn btn-accent" onclick="showScreen('screen-wizard')" disabled>Avanti</button>
-</div>
+      <div class="field">
+        <label>Genere di riferimento (opzionale, lascia vuoto per usare quello rilevato)</label>
+        <input type="text" id="genre_override" placeholder="es. Hip-Hop, Pop / Rock...">
+      </div>
 
-<div id="screen-wizard" class="screen">
-  <h1>Come vuoi il mix?</h1>
+      <div class="field field-row">
+        <label><input type="checkbox" id="do_mastering" checked> Esegui anche il mastering</label>
+        <select id="platform">
+          <option value="auto">Piattaforma: auto</option>
+          <option value="spotify">Spotify (-14 LUFS)</option>
+          <option value="apple">Apple Music (-16 LUFS)</option>
+          <option value="youtube">YouTube (-13 LUFS)</option>
+          <option value="club">Club/EDM (-9 LUFS)</option>
+        </select>
+      </div>
 
-  <div class="field">
-    <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
-    <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
-           oninput="document.getElementById('aggressiveness-val').textContent = this.value">
+      <button class="btn btn-accent" onclick="startRun()">Avvia mix + mastering</button>
+    </div>
+
+    <div id="screen-progress" class="screen">
+      <h1>Al lavoro...</h1>
+      <div id="spinner" class="spinner"><div class="spinner-ring"></div></div>
+
+      <div class="rack">
+        <div class="module">
+          <div class="module-title">EQ</div>
+          <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
+            <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
+            <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
+            <line id="eq-hover-marker" x1="0" y1="0" x2="0" y2="90" class="eq-hover-marker hidden" />
+          </svg>
+          <div class="module-detail" id="eq-detail">in attesa...</div>
+        </div>
+
+        <div class="module">
+          <div class="module-title">Compressore</div>
+          <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
+          <div class="module-detail" id="comp-detail">in attesa...</div>
+        </div>
+
+        <div class="module">
+          <div class="module-title">De-esser</div>
+          <div class="deess-dial" id="deess-dial">&mdash;</div>
+          <div class="module-detail" id="deess-detail">in attesa...</div>
+        </div>
+
+        <div class="module module-qc">
+          <div class="module-title">Ascolto / QC</div>
+          <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
+          <div class="module-detail" id="qc-detail">in attesa...</div>
+        </div>
+      </div>
+
+      <div id="result" class="hidden"></div>
+    </div>
   </div>
 
-  <div class="field">
-    <label>Calore (freddo/brillante &larr;&rarr; caldo)</label>
-    <input type="range" id="warmth" min="-1" max="1" value="0" step="0.1">
-  </div>
+  <div id="avatar-panel">
+    <!-- Layered SVG avatar: each moving part is its own <g>/<circle> with a
+         stable ID so JS can drive it independently from real DSP values
+         (glue GR -> squint, BPM -> headbang, de-esser hit -> nose flash,
+         analysis/LTAS running -> headphones fade in). Wireframe line-art,
+         no fill except the red accent details, per the RedLine style. -->
+    <div id="assistant" class="assistant">
+      <svg viewBox="0 0 160 160" class="assistant-svg">
+        <g id="avatar-head">
+          <path d="M80,20 C110,20 128,46 128,84 C128,118 108,140 80,140 C52,140 32,118 32,84 C32,46 50,20 80,20 Z"
+                class="assistant-head" />
 
-  <div class="field">
-    <label>Presenza voce (indietro &larr;&rarr; protagonista)</label>
-    <input type="range" id="vocal_prominence" min="-1" max="1" value="0" step="0.1">
-  </div>
+          <!-- headphones: hidden by default, faded in while the engine is
+               actively "listening" (stem analysis, LTAS reference matching) -->
+          <g id="headphones" class="headphones-svg">
+            <path d="M40,70 A40,40 0 0 1 120,70" class="headphones-band" />
+            <rect x="28" y="66" width="12" height="26" rx="4" class="headphones-cup" />
+            <rect x="120" y="66" width="12" height="26" rx="4" class="headphones-cup" />
+          </g>
 
-  <div class="field">
-    <label>Genere di riferimento (opzionale, lascia vuoto per usare quello rilevato)</label>
-    <input type="text" id="genre_override" placeholder="es. Hip-Hop, Pop / Rock...">
-  </div>
+          <circle id="assistant-piercing-1" cx="31" cy="74" r="2.6" class="assistant-piercing" />
+          <circle id="assistant-piercing-2" cx="30" cy="84" r="2.6" class="assistant-piercing" />
+          <circle id="assistant-piercing-3" cx="31" cy="94" r="2.6" class="assistant-piercing" />
 
-  <div class="field field-row">
-    <label><input type="checkbox" id="do_mastering" checked> Esegui anche il mastering</label>
-    <select id="platform">
-      <option value="auto">Piattaforma: auto</option>
-      <option value="spotify">Spotify (-14 LUFS)</option>
-      <option value="apple">Apple Music (-16 LUFS)</option>
-      <option value="youtube">YouTube (-13 LUFS)</option>
-      <option value="club">Club/EDM (-9 LUFS)</option>
-    </select>
-  </div>
+          <circle cx="129" cy="86" r="4.5" class="assistant-piercing-hoop" />
 
-  <button class="btn btn-accent" onclick="startRun()">Avvia mix + mastering</button>
-</div>
+          <circle id="assistant-nose" cx="72" cy="108" r="3" class="assistant-piercing-hoop" />
 
-<div id="screen-progress" class="screen">
-  <h1>Al lavoro...</h1>
-  <div id="spinner" class="spinner"><div class="spinner-ring"></div></div>
+          <g id="assistant-eyes">
+            <line id="eye-left" x1="56" y1="76" x2="68" y2="76" class="assistant-eye" />
+            <line id="eye-right" x1="92" y1="76" x2="104" y2="76" class="assistant-eye" />
+          </g>
 
-  <div class="rack">
-    <div class="module">
-      <div class="module-title">EQ</div>
-      <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
-        <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
-        <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
-        <line id="eq-hover-marker" x1="0" y1="0" x2="0" y2="90" class="eq-hover-marker hidden" />
+          <path id="assistant-mouth" d="M64,112 L96,112" class="assistant-mouth" />
+        </g>
       </svg>
-      <div class="module-detail" id="eq-detail">in attesa...</div>
+      <div class="assistant-label" id="assistant-label">pronto</div>
     </div>
 
-    <div class="module">
-      <div class="module-title">Compressore</div>
-      <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
-      <div class="module-detail" id="comp-detail">in attesa...</div>
-    </div>
-
-    <div class="module">
-      <div class="module-title">De-esser</div>
-      <div class="deess-dial" id="deess-dial">&mdash;</div>
-      <div class="module-detail" id="deess-detail">in attesa...</div>
-    </div>
-
-    <div class="module module-qc">
-      <div class="module-title">Ascolto / QC</div>
-      <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
-      <div class="headphones" id="headphones">&#127911;</div>
-      <div class="module-detail" id="qc-detail">in attesa...</div>
+    <div id="terminal-box" class="terminal-box">
+      <div id="event-feed" class="event-feed"></div>
+      <div id="log" class="log"></div>
+      <div id="llm-console" class="llm-console"></div>
+      <div id="cylon-bar" class="cylon-bar"><div class="cylon-bar-eye" id="cylon-bar-eye"></div></div>
     </div>
   </div>
 
-  <div id="event-feed" class="event-feed"></div>
-
-  <div id="log" class="log"></div>
-
-  <div id="llm-console" class="llm-console"></div>
-  <div id="cylon-bar" class="cylon-bar"><div class="cylon-bar-eye" id="cylon-bar-eye"></div></div>
-
-  <div id="result" class="hidden"></div>
 </div>
 
 <script src="app.js"></script>
