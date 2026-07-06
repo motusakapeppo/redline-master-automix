@@ -29,7 +29,7 @@ from .dsp_utils import envelope_follower
 # the take's timing was too different from the lead to trust a correction —
 # skip that window rather than risk the robotic "flutter" artifact of
 # over-warping a bad match.
-MAX_SAFE_WARP_FRACTION = 0.18
+MAX_SAFE_WARP_FRACTION = 0.05
 
 _ENVELOPE_BLOCK = 1024  # ~23ms at 44.1kHz — fine enough to catch syllable-level drift
 _WINDOW_SECONDS = 0.4
@@ -70,15 +70,30 @@ def _dtw_time_map(double_mono: np.ndarray, lead_mono: np.ndarray, sr: int) -> np
     return frame_map * _ENVELOPE_BLOCK  # back to sample indices at `sr`
 
 
-def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int) -> ElasticAlignResult:
+def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, name: str = "") -> ElasticAlignResult:
     """Time-warps `double_signal` window by window to track `lead_signal`'s
     syllable timing, skipping any window whose required warp exceeds
     MAX_SAFE_WARP_FRACTION. Assumes the two signals are already roughly
     aligned (e.g. by alignment.align_to_reference) — this corrects the
-    remaining local drift, not gross timing offsets."""
+    remaining local drift, not gross timing offsets.
+
+    MAIN/LEAD GUARD: if the stem name contains MAIN or LEAD, or if the
+    "lead" signal has less than 60% of the double's RMS energy (caller
+    likely swapped the arguments), bail out and return the double unchanged.
+    """
+    # Name-based guard: Main/Lead vocals are the grid, never warped
+    if "MAIN" in name.upper() or "LEAD" in name.upper():
+        return ElasticAlignResult(audio=double_signal, windows_total=0, windows_stretched=0, windows_skipped_unsafe=0)
+
     mono_double = double_signal.mean(axis=1) if double_signal.ndim == 2 else double_signal
     mono_lead = lead_signal.mean(axis=1) if lead_signal.ndim == 2 else lead_signal
     n = min(mono_double.shape[0], mono_lead.shape[0])
+
+    # Energy-based guard: lead should have comparable or higher energy than double
+    rms_double = float(np.sqrt(np.mean(mono_double.astype(np.float64) ** 2))) if n > 0 else 0.0
+    rms_lead = float(np.sqrt(np.mean(mono_lead.astype(np.float64) ** 2))) if n > 0 else 0.0
+    if rms_double > 0 and rms_lead < 0.6 * rms_double:
+        return ElasticAlignResult(audio=double_signal, windows_total=0, windows_stretched=0, windows_skipped_unsafe=0)
     if n < sr * 2:
         return ElasticAlignResult(audio=double_signal, windows_total=0, windows_stretched=0, windows_skipped_unsafe=0)
 

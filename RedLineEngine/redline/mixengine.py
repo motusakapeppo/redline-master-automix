@@ -150,6 +150,21 @@ BASS_SPLIT_HZ = 120.0
 BASS_EXCITER_DRIVE = 0.4
 BASS_EXCITER_MIX = 0.25
 
+# Makeup gain constants — each compressor stage gets a compensating Gain
+# after it so the output level stays roughly where it was pre-compression.
+# Values are standard starting points for each compressor type/role; the
+# exact GR depends on the signal, but these prevent the cumulative level
+# drop that would otherwise happen across 4+ serial compression stages.
+_VOCAL_PEAK_MAKEUP_DB = 2.5
+_VOCAL_LEVELER_MAKEUP_DB = 4.0
+_DRUM_GLUE_MAKEUP_DB = 3.0
+_VOCAL_COMP_MAKEUP_DB = 4.0
+_BASS_COMP_MAKEUP_DB = 3.0
+_DRUMS_COMP_MAKEUP_DB = 3.0
+_OTHER_COMP_MAKEUP_DB = 4.0
+_DOUBLE_COMP_MAKEUP_DB = 4.0
+_BV_GLUE_MAKEUP_DB = 3.0
+
 
 def _describe(d: StemDescriptor) -> str:
     bits = [d.role]
@@ -268,13 +283,16 @@ def _process_stem(
         on_event({"type": "compressor", "stem": name, "stage": "peak_catcher", **peak_catcher})
         on_event({"type": "compressor", "stem": name, "stage": "leveler", **leveler})
         board_fx.append(Compressor(**peak_catcher))
+        board_fx.append(Gain(gain_db=_VOCAL_PEAK_MAKEUP_DB))
         board_fx.append(Compressor(**leveler))
+        board_fx.append(Gain(gain_db=_VOCAL_LEVELER_MAKEUP_DB))
     elif role == "drums" and blueprint_chains:
         # Bus-glue-style settings (slow attack lets the transient through,
         # gentle ratio) — the saturation/"dirt" happens after, post-board.
         drum_comp = dict(threshold_db=-16.0, ratio=3.0, attack_ms=30.0, release_ms=120.0)
         on_event({"type": "compressor", "stem": name, **drum_comp})
         board_fx.append(Compressor(**drum_comp))
+        board_fx.append(Gain(gain_db=_DRUM_GLUE_MAKEUP_DB))
     else:
         role_comp = {
             "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
@@ -284,6 +302,13 @@ def _process_stem(
         }[role]
         on_event({"type": "compressor", "stem": name, **role_comp})
         board_fx.append(Compressor(**role_comp))
+        _role_makeup = {
+            "vocal": _VOCAL_COMP_MAKEUP_DB,
+            "bass": _BASS_COMP_MAKEUP_DB,
+            "drums": _DRUMS_COMP_MAKEUP_DB,
+            "other": _OTHER_COMP_MAKEUP_DB,
+        }[role]
+        board_fx.append(Gain(gain_db=_role_makeup))
 
     board = Pedalboard(board_fx)
     out = board(audio.T, sr).T
@@ -354,6 +379,7 @@ def _process_double_stem(
             release_ms=recipe.comp_release_ms,
         )
     )
+    board_fx.append(Gain(gain_db=_DOUBLE_COMP_MAKEUP_DB))
     on_event({"type": "vocal_stack_register", "stem": name, "register": register, "comp_ratio": recipe.comp_ratio})
 
     out = Pedalboard(board_fx)(audio.T, sr).T
@@ -513,7 +539,7 @@ def render_mix(
                 # consonant creates smearing that a single global delay can't
                 # fix. Safety-netted — a window whose required warp is too
                 # large to trust is left alone rather than force-stretched.
-                elastic = elastic_align(aligned, lead_reference_dry, sr)
+                elastic = elastic_align(aligned, lead_reference_dry, sr, name=name)
                 if elastic.windows_stretched > 0:
                     on_step(
                         f"  '{name}': allineamento elastico sillabico "
@@ -578,13 +604,16 @@ def render_mix(
     # takes are simultaneously active (alternate lines/ad-libs across
     # sections), summing them raises the level unpredictably. Power-
     # preserving compensation (1/sqrt(active_count)) instead of a fixed pad.
+    # Only level doubles/adlibs, NOT Main/Lead vocals.
     if len(lead_names) > 1:
-        lead_tracks = {name: processed[name] for name in lead_names}
-        gain_curves = concurrent_take_gain_curves(lead_tracks, sr)
-        on_step(f"Compensazione livello prese vocali multiple ({len(lead_names)} prese Main simultanee possibili)")
-        on_event({"type": "concurrent_take_leveling", "stems": lead_names})
-        for name in lead_names:
-            processed[name] = apply_gain_curve(processed[name], gain_curves[name])
+        levelable = [n for n in lead_names if "MAIN" not in n.upper() and "LEAD" not in n.upper()]
+        if levelable:
+            level_tracks = {name: processed[name] for name in levelable}
+            gain_curves = concurrent_take_gain_curves(level_tracks, sr)
+            on_step(f"Compensazione livello prese vocali multiple ({len(levelable)} prese)")
+            on_event({"type": "concurrent_take_leveling", "stems": levelable})
+            for name in levelable:
+                processed[name] = apply_gain_curve(processed[name], gain_curves[name])
 
     # --- Space: a short send-style reverb + BPM-synced delay on the lead
     # vocal (genre/aggressiveness-informed amount), a subtle room send on
@@ -643,7 +672,10 @@ def render_mix(
         for sub in register_buses.values():
             backing_vocals_bus += sub
         backing_vocals_bus = Pedalboard(
-            [Compressor(threshold_db=-18.0, ratio=BACKING_VOCALS_GLUE_RATIO, attack_ms=10.0, release_ms=150.0)]
+            [
+                Compressor(threshold_db=-18.0, ratio=BACKING_VOCALS_GLUE_RATIO, attack_ms=10.0, release_ms=150.0),
+                Gain(gain_db=_BV_GLUE_MAKEUP_DB),
+            ]
         )(backing_vocals_bus.T, sr).T
         on_step(f"Bus voci di supporto: {len(register_buses)} sub-bus per registro ({', '.join(register_buses.keys())}), colla finale {BACKING_VOCALS_GLUE_RATIO:.1f}:1")
         on_event({"type": "backing_vocals_bus", "registers": list(register_buses.keys())})
@@ -740,15 +772,39 @@ def render_mix(
         on_step(f"Bus parallelo (New York compression) su voce+batteria, mix {PARALLEL_BUS_MIX * 100:.0f}%")
         on_event({"type": "parallel_bus", "mix": PARALLEL_BUS_MIX, "sources": parallel_source_names})
 
+    # --- Vocal_Main bus: sum all lead vocal takes into one bus so the
+    # mix_bus sees a single vocal entity instead of N individual tracks.
+    # This makes gain-staging and downstream processing (parallel bus,
+    # master bus) treat the lead vocal as one coherent element.
+    vocal_main_bus = None
+    if lead_names:
+        vocal_main_bus = np.zeros((n, 2), dtype=np.float32)
+        for name in lead_names:
+            vocal_main_bus += processed[name]
+        on_step(f"Bus Vocal_Main: {len(lead_names)} tracce lead sommate")
+        on_event({"type": "vocal_main_bus", "stems": lead_names})
+
+    # --- Vocal_Doubles bus: alias for the backing vocals bus, named
+    # symmetrically with Vocal_Main so the mix bus routing is clear.
+    # Doubles are scaled to 55% of Main level so the lead keeps presence.
+    vocal_doubles_bus = backing_vocals_bus  # already summed + glued
+    if vocal_doubles_bus is not None:
+        vocal_doubles_bus = vocal_doubles_bus * 0.55
+        on_step("Bus Vocal_Doubles: volume ridotto al 55% della Main")
+
     mix_bus = np.zeros((n, 2), dtype=np.float32)
     for name, audio in processed.items():
         if name in other_names:
             continue  # folded into the Mid/Side-processed music_bus instead
+        if name in lead_names:
+            continue  # folded into vocal_main_bus instead
         mix_bus += audio
     if music_bus is not None:
         mix_bus += music_bus
-    if backing_vocals_bus is not None:
-        mix_bus += backing_vocals_bus
+    if vocal_main_bus is not None:
+        mix_bus += vocal_main_bus
+    if vocal_doubles_bus is not None:
+        mix_bus += vocal_doubles_bus * _DOUBLES_VOLUME_SCALE
     if parallel_bus is not None:
         mix_bus += parallel_bus * PARALLEL_BUS_MIX
 
