@@ -5,6 +5,14 @@
 <title>RedLine Engine</title>
 <link rel="stylesheet" href="style.css" />
 <script src="vendor/gsap.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -111,19 +119,32 @@
   </div>
 
   <div id="avatar-panel">
-    <!-- Layered SVG avatar: each moving part is its own <g>/<circle> with a
-         stable ID so JS can drive it independently from real DSP values
-         (glue GR -> squint, BPM -> headbang, de-esser hit -> nose flash,
-         analysis/LTAS running -> headphones fade in). Wireframe line-art,
-         no fill except the red accent details, per the RedLine style. -->
     <div id="assistant" class="assistant">
-      <svg id="avatar-svg" viewBox="0 0 200 250" class="assistant-svg">
-        <!-- motus_base.png as SVG image behind the wireframe, same
-             opacity/positioning as the old CSS background approach but
-             now inside the SVG viewport so it scales with the vector. -->
-        <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="250" opacity="0.25" preserveAspectRatio="xMidYMid slice" />
+      <canvas id="fx-canvas" class="fx-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
+      <svg id="avatar-svg" viewBox="0 0 200 320" class="assistant-svg">
+        <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="320" opacity="0.15" preserveAspectRatio="xMidYMid slice" />
 
         <defs>
+          <!-- SKIN: radial gradient, light from upper-left -->
+          <radialGradient id="skinGrad" cx="35%" cy="30%" r="65%">
+            <stop offset="0%" stop-color="#2E2E2E" />
+            <stop offset="50%" stop-color="#1A1A1A" />
+            <stop offset="100%" stop-color="#0A0A0A" />
+          </radialGradient>
+
+          <!-- LIPS -->
+          <linearGradient id="lipGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#3A1A1A" />
+            <stop offset="100%" stop-color="#1A0A0A" />
+          </linearGradient>
+
+          <!-- HAIR -->
+          <radialGradient id="hairGrad" cx="50%" cy="20%" r="60%">
+            <stop offset="0%" stop-color="#222" />
+            <stop offset="100%" stop-color="#050505" />
+          </radialGradient>
+
+          <!-- GLOW FILTER (keep existing) -->
           <filter id="redline-glow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge>
@@ -131,45 +152,193 @@
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+
+          <!-- IRIS GRADIENT -->
+          <radialGradient id="irisGrad" cx="40%" cy="35%" r="50%">
+            <stop offset="0%" stop-color="#FF003F" />
+            <stop offset="60%" stop-color="#8A001A" />
+            <stop offset="100%" stop-color="#2A0008" />
+          </radialGradient>
+
+          <!-- LENS REFLECTION -->
+          <linearGradient id="lensReflect" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="rgba(255,255,255,0.15)" />
+            <stop offset="50%" stop-color="rgba(255,255,255,0)" />
+            <stop offset="100%" stop-color="rgba(255,255,255,0.05)" />
+          </linearGradient>
         </defs>
 
+        <!-- HAIR BACK (behind head) -->
+        <g id="hair-back">
+          <path d="M55 85 Q50 60 70 45 Q100 30 130 45 Q150 60 145 85 Q155 70 160 90 Q165 120 160 150 L155 155 Q150 140 140 135 Q130 150 100 155 Q70 150 60 135 Q50 140 45 155 L40 150 Q35 120 40 90 Q45 70 55 85Z" fill="url(#hairGrad)" />
+          <!-- Hair strands on sides -->
+          <path d="M55 85 Q45 100 42 130 Q40 145 45 155" fill="none" stroke="#1A1A1A" stroke-width="2" />
+          <path d="M145 85 Q155 100 158 130 Q160 145 155 155" fill="none" stroke="#1A1A1A" stroke-width="2" />
+          <!-- Bangs/fringe -->
+          <path d="M65 50 Q75 65 70 80 Q80 70 90 55 Q100 50 110 55 Q120 70 130 80 Q125 65 135 50" fill="url(#hairGrad)" opacity="0.8" />
+        </g>
+
+        <!-- NECK + BODY -->
+        <g id="neck-body">
+          <!-- Neck -->
+          <path d="M85 185 Q80 200 82 220 L118 220 Q120 200 115 185Z" fill="url(#skinGrad)" />
+          <!-- Neck shadow left -->
+          <path d="M85 185 Q80 200 82 220 L90 220 Q88 200 90 185Z" fill="#050505" opacity="0.4" />
+          <!-- Shoulders -->
+          <path d="M82 220 Q60 225 40 240 Q30 250 25 270 L175 270 Q170 250 160 240 Q140 225 118 220Z" fill="url(#skinGrad)" />
+          <!-- Collarbone hint -->
+          <path d="M85 240 Q100 245 115 240" fill="none" stroke="#1A1A1A" stroke-width="0.8" opacity="0.5" />
+          <!-- Clothing/jacket collar -->
+          <path d="M40 255 Q60 245 82 230 L118 230 Q140 245 160 255 L165 270 L35 270Z" fill="#0D0D0D" />
+          <path d="M40 255 Q60 245 82 230 L118 230 Q140 245 160 255" fill="none" stroke="#1A1A1A" stroke-width="1" />
+        </g>
+
+        <!-- HEAD BASE -->
         <g id="avatar-head">
-          <path d="M55 110 L75 165 L100 185 L125 165 L145 110" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.9" />
+          <!-- Skull base with skin gradient -->
+          <path d="M55 100 Q50 60 70 45 Q100 30 130 45 Q150 60 145 100 L140 130 Q138 150 125 170 Q110 185 100 188 Q90 185 75 170 Q62 150 60 130Z" fill="url(#skinGrad)" />
 
-          <path d="M50 90 Q100 15 150 90" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6" />
+          <!-- Forehead highlight -->
+          <path d="M70 55 Q100 40 130 55 Q135 70 130 85 Q100 80 70 85 Q65 70 70 55Z" fill="rgba(255,255,255,0.04)" />
 
-          <!-- Glasses: lenses tint dark red + glow while the local LLM is
-               actively classifying ambiguous stems -- a "hacker scanning"
-               read instead of the old whole-head halo. -->
+          <!-- Cheekbone left -->
+          <path d="M55 110 Q50 120 55 130 Q60 125 62 115Z" fill="rgba(255,255,255,0.03)" />
+          <!-- Cheekbone right -->
+          <path d="M145 110 Q150 120 145 130 Q140 125 138 115Z" fill="rgba(255,255,255,0.03)" />
+
+          <!-- Jaw shadow left -->
+          <path d="M60 130 Q55 150 75 170 Q70 155 65 135Z" fill="#050505" opacity="0.3" />
+          <!-- Jaw shadow right -->
+          <path d="M140 130 Q145 150 125 170 Q130 155 135 135Z" fill="#050505" opacity="0.3" />
+
+          <!-- NOSE -->
+          <!-- Nose bridge -->
+          <path id="nose-bridge" d="M98 85 Q97 110 96 130 Q100 135 104 130 Q103 110 102 85Z" fill="url(#skinGrad)" />
+          <!-- Nose bridge highlight -->
+          <path d="M99 88 Q98 110 98 128" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
+          <!-- Nose tip -->
+          <ellipse id="nose-tip" cx="100" cy="133" rx="5" ry="3.5" fill="#1E1E1E" />
+          <!-- Nose tip highlight -->
+          <ellipse cx="99" cy="132" rx="2" ry="1.5" fill="rgba(255,255,255,0.06)" />
+          <!-- Nostrils -->
+          <path d="M94 135 Q97 137 99 135" fill="none" stroke="#333" stroke-width="0.8" />
+          <path d="M106 135 Q103 137 101 135" fill="none" stroke="#333" stroke-width="0.8" />
+
+          <!-- EYEBROWS -->
+          <path id="eyebrow-left" d="M62 78 Q72 73 85 77" fill="none" stroke="#444" stroke-width="2" stroke-linecap="round" />
+          <path id="eyebrow-right" d="M115 77 Q128 73 138 78" fill="none" stroke="#444" stroke-width="2" stroke-linecap="round" />
+
+          <!-- EYES -->
+          <!-- Left eye socket shadow -->
+          <ellipse cx="74" cy="90" rx="12" ry="8" fill="#080808" opacity="0.5" />
+          <!-- Right eye socket shadow -->
+          <ellipse cx="126" cy="90" rx="12" ry="8" fill="#080808" opacity="0.5" />
+
+          <!-- Left eye -->
+          <g id="eye-left">
+            <!-- Upper eyelid -->
+            <path id="eyelid-left" d="M62 90 Q74 80 86 90" fill="none" stroke="#555" stroke-width="1.8" stroke-linecap="round" />
+            <!-- Eyelid crease -->
+            <path d="M64 86 Q74 78 84 86" fill="none" stroke="#333" stroke-width="0.6" opacity="0.5" />
+            <!-- Lower eyelid -->
+            <path d="M62 90 Q74 96 86 90" fill="none" stroke="#444" stroke-width="1" stroke-linecap="round" />
+            <!-- Iris -->
+            <circle id="iris-left" cx="74" cy="90" r="4" fill="url(#irisGrad)" />
+            <!-- Pupil -->
+            <circle cx="74" cy="90" r="2" fill="#000" />
+            <!-- Eye reflection -->
+            <circle cx="73" cy="89" r="1.2" fill="rgba(255,255,255,0.3)" />
+          </g>
+
+          <!-- Right eye -->
+          <g id="eye-right">
+            <!-- Upper eyelid -->
+            <path id="eyelid-right" d="M114 90 Q126 80 138 90" fill="none" stroke="#555" stroke-width="1.8" stroke-linecap="round" />
+            <!-- Eyelid crease -->
+            <path d="M116 86 Q126 78 136 86" fill="none" stroke="#333" stroke-width="0.6" opacity="0.5" />
+            <!-- Lower eyelid -->
+            <path d="M114 90 Q126 96 138 90" fill="none" stroke="#444" stroke-width="1" stroke-linecap="round" />
+            <!-- Iris -->
+            <circle id="iris-right" cx="126" cy="90" r="4" fill="url(#irisGrad)" />
+            <!-- Pupil -->
+            <circle cx="126" cy="90" r="2" fill="#000" />
+            <!-- Eye reflection -->
+            <circle cx="125" cy="89" r="1.2" fill="rgba(255,255,255,0.3)" />
+          </g>
+
+          <!-- Under-eye bags/shadow (subtle) -->
+          <path d="M64 94 Q74 98 84 94" fill="none" stroke="#111" stroke-width="0.5" opacity="0.3" />
+          <path d="M116 94 Q126 98 136 94" fill="none" stroke="#111" stroke-width="0.5" opacity="0.3" />
+
+          <!-- MOUTH -->
+          <g id="mouth">
+            <!-- Upper lip -->
+            <path id="upper-lip" d="M88 155 Q92 150 100 152 Q108 150 112 155 Q106 156 100 155 Q94 156 88 155Z" fill="url(#lipGrad)" />
+            <!-- Lower lip -->
+            <path id="lower-lip" d="M88 155 Q92 162 100 163 Q108 162 112 155 Q106 157 100 156 Q94 157 88 155Z" fill="url(#lipGrad)" />
+            <!-- Lip line -->
+            <path d="M88 155 Q94 153 100 154 Q106 153 112 155" fill="none" stroke="#1A0505" stroke-width="0.8" />
+            <!-- Lower lip highlight -->
+            <path d="M92 158 Q100 161 108 158" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" />
+          </g>
+
+          <!-- Chin shadow -->
+          <path d="M90 168 Q100 175 110 168 Q105 180 100 182 Q95 180 90 168Z" fill="#080808" opacity="0.4" />
+
+          <!-- GLASSES (keep existing style, enhanced) -->
           <g id="glasses">
-            <rect id="lens-left" x="55" y="85" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#FFFFFF" stroke-width="2" />
-            <rect id="lens-right" x="107" y="85" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#FFFFFF" stroke-width="2" />
-            <line x1="93" y1="95" x2="107" y2="95" stroke="#FFFFFF" stroke-width="2" />
-            <line x1="60" y1="105" x2="75" y2="90" stroke="#FFFFFF" stroke-width="1" opacity="0.3" />
-            <line x1="112" y1="105" x2="127" y2="90" stroke="#FFFFFF" stroke-width="1" opacity="0.3" />
+            <!-- Left lens -->
+            <rect id="lens-left" x="55" y="82" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#666" stroke-width="1.5" />
+            <!-- Left lens reflection -->
+            <rect x="56" y="83" width="36" height="26" rx="3" fill="url(#lensReflect)" />
+            <!-- Right lens -->
+            <rect id="lens-right" x="107" y="82" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#666" stroke-width="1.5" />
+            <!-- Right lens reflection -->
+            <rect x="108" y="83" width="36" height="26" rx="3" fill="url(#lensReflect)" />
+            <!-- Bridge -->
+            <line x1="93" y1="92" x2="107" y2="92" stroke="#666" stroke-width="1.5" />
+            <!-- Temple arms -->
+            <line x1="55" y1="90" x2="48" y2="88" stroke="#666" stroke-width="1.5" stroke-linecap="round" />
+            <line x1="145" y1="90" x2="152" y2="88" stroke="#666" stroke-width="1.5" stroke-linecap="round" />
+            <!-- Nose pads -->
+            <ellipse cx="96" cy="100" rx="1.5" ry="2.5" fill="#444" />
+            <ellipse cx="104" cy="100" rx="1.5" ry="2.5" fill="#444" />
           </g>
 
-          <!-- Headphones kept as a separate overlay layer (band+cups), faded
-               in during "listening" moments (denoise/LTAS/RT60/QC) -- drawn
-               around the glasses/head silhouette above. -->
-          <g id="headphones" class="headphones-svg">
-            <path d="M46,88 C46,15 154,15 154,88" class="headphones-band" />
-            <ellipse cx="45" cy="98" rx="11" ry="26" class="headphones-cup" />
-            <ellipse cx="155" cy="98" rx="11" ry="26" class="headphones-cup" />
-          </g>
+          <!-- NOSE PIERCING -->
+          <circle id="piercing-nose" cx="110" cy="135" r="2.5" fill="#E0E0E0" filter="url(#redline-glow)" />
 
-          <path d="M100 95 L100 135 L108 140" fill="none" stroke="#555555" stroke-width="1.5" />
-
-          <circle id="piercing-nose" cx="110" cy="138" r="2" fill="#E0E0E0" />
-
+          <!-- EARRINGS -->
           <g id="earring-left" class="svg-earring" style="transform-origin: 50px 138px;">
-            <path d="M50 100 Q40 115 52 135" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.7" />
-            <circle cx="50" cy="138" r="4.5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
+            <!-- Earring chain -->
+            <path d="M50 100 Q40 115 52 135" fill="none" stroke="#666" stroke-width="1" opacity="0.5" />
+            <!-- Earring hoop -->
+            <circle cx="50" cy="138" r="5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
+            <!-- Earring highlight -->
+            <circle cx="48" cy="136" r="1.5" fill="rgba(255,255,255,0.2)" />
           </g>
 
           <g id="earring-right" class="svg-earring" style="transform-origin: 150px 138px;">
-            <path d="M150 100 Q160 115 148 135" fill="none" stroke="#FFFFFF" stroke-width="1.5" opacity="0.7" />
-            <circle cx="150" cy="138" r="4.5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
+            <!-- Earring chain -->
+            <path d="M150 100 Q160 115 148 135" fill="none" stroke="#666" stroke-width="1" opacity="0.5" />
+            <!-- Earring hoop -->
+            <circle cx="150" cy="138" r="5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
+            <!-- Earring highlight -->
+            <circle cx="148" cy="136" r="1.5" fill="rgba(255,255,255,0.2)" />
+          </g>
+
+          <!-- HEADPHONES (keep existing style) -->
+          <g id="headphones" class="headphones-svg">
+            <!-- Band -->
+            <path d="M46 88 C46 15 154 15 154 88" class="headphones-band" fill="none" stroke="#FF003F" stroke-width="2" />
+            <!-- Left cup -->
+            <ellipse cx="45" cy="98" rx="12" ry="28" class="headphones-cup" fill="none" stroke="#FF003F" stroke-width="1.5" />
+            <!-- Left cup padding -->
+            <ellipse cx="45" cy="98" rx="8" ry="22" fill="rgba(255,0,63,0.05)" />
+            <!-- Right cup -->
+            <ellipse cx="155" cy="98" rx="12" ry="28" class="headphones-cup" fill="none" stroke="#FF003F" stroke-width="1.5" />
+            <!-- Right cup padding -->
+            <ellipse cx="155" cy="98" rx="8" ry="22" fill="rgba(255,0,63,0.05)" />
           </g>
         </g>
       </svg>
@@ -192,5 +361,6 @@
 </div>
 
 <script src="app.js"></script>
+<script type="module" src="three-avatar.js"></script>
 </body>
 </html>

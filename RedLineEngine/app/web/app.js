@@ -1,82 +1,51 @@
 let selectedInput = null;
 let selectedOutput = null;
 
-// --- Avatar idle breathing: GSAP handles this (falls back to nothing if
-// the vendored gsap.min.js is somehow missing -- the avatar just stays
-// still rather than the page erroring out). Once a real BPM is known
-// (syncAssistantToBpm), this tween is killed and replaced with a
-// beat-synced headbang -- the breathing is just what it does before the
-// engine has anything to groove to yet.
-let avatarIdleTween = null;
-let earringSwayTween = null;
-
 function startIdleBreathing() {
-  if (typeof gsap === "undefined") return;
-  if (avatarIdleTween) avatarIdleTween.kill();
-  if (earringSwayTween) earringSwayTween.kill();
-  avatarIdleTween = gsap.to("#avatar-head", {
-    y: 2,
-    duration: 3,
-    repeat: -1,
-    yoyo: true,
-    ease: "sine.inOut",
-  });
-  // The earrings hang off the head and lag slightly behind its motion --
-  // real jewelry doesn't move in perfect lockstep with the body, it trails
-  // a beat behind from inertia.
-  earringSwayTween = gsap.to(".svg-earring", {
-    rotation: 5,
-    duration: 3,
-    repeat: -1,
-    yoyo: true,
-    ease: "sine.inOut",
-    delay: 0.5,
-  });
+  if (window.avatarAPI) window.avatarAPI.setActivity(0.3);
 }
 startIdleBreathing();
 
-// --- Idle "look around": autonomous, randomly-timed head turns on a
-// virtual Z-axis (rotationX/rotationY + #avatar-panel's CSS perspective)
-// so the avatar reads as present and alive between real DSP events, not
-// frozen staring straight ahead. Purely cosmetic -- never driven by real
-// data, this is the one animation that's allowed to just be alive on its
-// own, same as a person waiting in a room glances around without a reason.
-function randomLookAround() {
-  if (typeof gsap === "undefined") return;
-  const rotY = gsap.utils.random(-25, 25);
-  const rotX = gsap.utils.random(-10, 10);
-  const turnSpeed = gsap.utils.random(0.8, 1.5);
-  const holdStare = gsap.utils.random(1.0, 3.5);
-  const nextLookDelay = gsap.utils.random(2.0, 7.0);
+function startBlinkCycle() {
+  // Three.js handles blink animation
+}
+startBlinkCycle();
 
-  gsap.to("#avatar-head", {
-    rotationY: rotY,
-    rotationX: rotX,
-    duration: turnSpeed,
-    ease: "power2.inOut",
-    onUpdate: function () {
-      // Centrifugal detail: a brisk head turn gives the earrings a little
-      // extra kick in the opposite direction, on top of their own
-      // independent sway tween.
-      gsap.to(".svg-earring", {
-        rotation: -rotY * 0.2,
-        duration: 0.5,
-        overwrite: "auto",
-      });
-    },
-    onComplete: () => {
-      gsap.to("#avatar-head", {
-        rotationY: 0,
-        rotationX: 0,
-        duration: turnSpeed,
-        ease: "power2.inOut",
-        delay: holdStare,
-        onComplete: () => {
-          gsap.delayedCall(nextLookDelay, randomLookAround);
-        },
-      });
-    },
-  });
+function startEyeSaccades() {
+  // Three.js handles eye animation
+}
+startEyeSaccades();
+
+function setBrowExpression(level) {
+  // Three.js handles expressions
+}
+
+function expressSurprise() {
+  // Three.js handles expressions
+}
+
+function expressConcentrate() {
+  // Three.js handles expressions
+}
+
+function expressRelax() {
+  // Three.js handles expressions
+}
+
+function expressFlinch(intensity) {
+  // Three.js handles expressions
+}
+
+function animateMouth(openAmount) {
+  // Three.js handles mouth animation
+}
+
+function startLipSync(text) {
+  // Three.js handles lip sync
+}
+
+function randomLookAround() {
+  // Three.js handles idle animation
 }
 randomLookAround();
 
@@ -201,7 +170,7 @@ function onStep(msg) {
   line.textContent = msg;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
-  animateAssistantTalking();
+  if (window.avatarAPI) window.avatarAPI.onStep(msg);
   bumpActivity();
   wireInteractiveLine(line, msg);
 }
@@ -247,14 +216,6 @@ function triggerGlitch() {
   rack.classList.add("glitch");
 }
 
-function animateAssistantTalking() {
-  const mouth = document.getElementById("assistant-mouth");
-  if (!mouth) return;
-  mouth.classList.remove("talking");
-  void mouth.offsetWidth; // restart animation
-  mouth.classList.add("talking");
-}
-
 function setAssistantLabel(text) {
   const label = document.getElementById("assistant-label");
   if (label) label.textContent = text;
@@ -263,53 +224,18 @@ function setAssistantLabel(text) {
 // --- Reactions driven by real DSP values, not a canned loop ---
 
 function reactToCompression(ratio, releaseMs) {
-  // Per-stem compression -- a smaller, quicker jewelry jingle than the
-  // master-bus glue reaction (reactToGlueCompression), on the earrings
-  // only. Ballistic return over the compressor's own real release time.
-  if (typeof gsap === "undefined") return;
-  const degrees = Math.min(20, Math.max(0, (ratio - 1) * 2));
-  const releaseSeconds = Math.max(0.15, Math.min(2.0, (releaseMs || 150) / 1000));
-  gsap.to(".svg-earring", {
-    rotation: degrees,
-    duration: 0.08,
-    overwrite: "auto",
-    onComplete: () => {
-      gsap.to(".svg-earring", { rotation: 0, duration: releaseSeconds, ease: "power1.out" });
-    },
-  });
+  if (window.avatarAPI) window.avatarAPI.onCompression(ratio, releaseMs);
 }
 
 function reactToGlueCompression(ratio) {
-  // The harder the master bus glue squeezes, the more the whole linework
-  // "vibrates" and thickens -- as if the electrical signal itself were
-  // saturating the graphic -- plus the earrings take a physical hit.
-  // Ratio ~1.2:1 (barely touching it) to ~4:1 (leaning on it hard) mapped
-  // to a 0..6 "pressure" proxy (a real GR-in-dB reading isn't available yet).
-  const pressure = Math.min(6, Math.max(0, (ratio - 1.2) * 2));
-  const strokeWidth = 2 + pressure * 0.3;
-
-  if (typeof gsap === "undefined") return;
-
-  gsap.to("#earring-left", {
-    rotation: 15 + pressure * 2,
-    duration: 0.2,
-    ease: "power2.out",
-    yoyo: true,
-    repeat: 1,
-  });
-  gsap.to("#avatar-head path[stroke='#FFFFFF']", {
-    strokeWidth,
-    duration: 0.1,
-    yoyo: true,
-    repeat: 1,
-    ease: "power2.out",
-  });
+  if (window.avatarAPI) window.avatarAPI.onGlueCompression(ratio);
 }
 
 function setListening(on) {
   const hp = document.getElementById("headphones");
   if (!hp) return;
   hp.classList.toggle("active", on);
+  if (window.avatarAPI) window.avatarAPI.onListening(on);
 }
 
 // --- Neural Monitor (Live Audition): lets the user hear a real before/after
@@ -326,83 +252,22 @@ function toggleAudition() {
 // onto the avatar so the A/B comparison reads as one continuous moment,
 // not a silent pause.
 function setAuditionState(state) {
-  if (typeof gsap === "undefined") return;
-  const avatar = document.getElementById("avatar-head");
-  if (!avatar) return;
-
+  if (window.avatarAPI) window.avatarAPI.onAuditionState(state);
   if (state === "BEFORE") {
-    gsap.to("#avatar-head path", { stroke: "#FFAA00", duration: 0.3 });
-    gsap.to(avatar, { scale: 1.05, duration: 0.3 });
     setAssistantLabel("ascolto: grezzo");
   } else if (state === "AFTER") {
-    gsap.to("#avatar-head path", { stroke: "#FF003F", duration: 0.3 });
-    gsap.killTweensOf(avatar);
-    gsap.to(avatar, { y: 10, yoyo: true, repeat: -1, duration: 0.4 });
     setAssistantLabel("ascolto: mixato");
   } else {
-    gsap.killTweensOf(avatar);
-    gsap.to("#avatar-head path", { stroke: "#1A1A1A", duration: 0.5 });
-    gsap.to(avatar, { scale: 1, duration: 0.5 });
     setAssistantLabel("pronto");
-    startIdleBreathing();
   }
 }
 
 function reactToDeesser() {
-  // The nose piercing "overheats" for an instant -- flashes red and
-  // dilates slightly -- then settles back to its silver metallic material.
-  const piercing = document.getElementById("piercing-nose");
-  if (!piercing) return;
-
-  if (typeof gsap === "undefined") {
-    piercing.style.fill = "#FF003F";
-    setTimeout(() => { piercing.style.fill = ""; }, 150);
-    return;
-  }
-
-  gsap.to(piercing, {
-    fill: "#FF003F",
-    scale: 1.2,
-    transformOrigin: "center",
-    duration: 0.05,
-    yoyo: true,
-    repeat: 1,
-    onComplete: () => {
-      piercing.style.fill = "";
-    },
-  });
+  if (window.avatarAPI) window.avatarAPI.onDeesser();
 }
 
 function syncAssistantToBpm(bpm) {
-  if (!bpm || bpm <= 0 || typeof gsap === "undefined") return;
-  const beatSeconds = 60.0 / bpm;
-
-  if (avatarIdleTween) {
-    avatarIdleTween.kill();
-    avatarIdleTween = null;
-  }
-  if (earringSwayTween) {
-    earringSwayTween.kill();
-    earringSwayTween = null;
-  }
-  // Subtle headbang locked to the real tempo -- a light nod, not a
-  // bobblehead -- with the earrings swinging along at the same tempo.
-  gsap.to("#avatar-head", {
-    y: 4,
-    rotation: 2,
-    duration: beatSeconds / 2,
-    repeat: -1,
-    yoyo: true,
-    ease: "sine.inOut",
-  });
-  gsap.to(".svg-earring", {
-    rotation: 6,
-    duration: beatSeconds / 2,
-    repeat: -1,
-    yoyo: true,
-    ease: "sine.inOut",
-    delay: beatSeconds / 4,
-  });
+  if (window.avatarAPI) window.avatarAPI.onBpm(bpm);
 }
 
 // --- Fase 5: local LLM advisory UX. Local CPU inference can take tens of
@@ -414,22 +279,18 @@ function syncAssistantToBpm(bpm) {
 let cylonAnimationId = null;
 
 function startDeepScan(stemCount) {
+  if (window.avatarAPI) window.avatarAPI.onDeepScan(stemCount);
   const assistant = document.getElementById("assistant");
   if (assistant) assistant.classList.add("deep-scan");
-  const bg = document.getElementById("avatar-bg");
-  if (bg) bg.setAttribute("opacity", "0.12");
   setAssistantLabel("deep scan...");
-
   const console_ = document.getElementById("llm-console");
   if (console_) {
     console_.textContent = "";
     console_.classList.add("active");
   }
-
   const bar = document.getElementById("cylon-bar");
   if (bar) bar.classList.add("active");
   startCylonLoop();
-
   addEventChip(`\u{1F9E0} LLM advisory: analizzo ${stemCount} stem ambigui...`);
 }
 
@@ -441,12 +302,10 @@ function appendLlmToken(text) {
 }
 
 function stopDeepScan() {
+  if (window.avatarAPI) window.avatarAPI.onDeepScanDone();
   const assistant = document.getElementById("assistant");
   if (assistant) assistant.classList.remove("deep-scan");
-  const bg = document.getElementById("avatar-bg");
-  if (bg) bg.setAttribute("opacity", "0.25");
   setAssistantLabel("");
-
   const bar = document.getElementById("cylon-bar");
   if (bar) bar.classList.remove("active");
   if (cylonAnimationId !== null) {
@@ -677,6 +536,8 @@ function onEvent(evt) {
       break;
 
     case "qc_report": {
+      if (window.avatarAPI) window.avatarAPI.onListening(true);
+      setTimeout(() => { if (window.avatarAPI) window.avatarAPI.onListening(false); }, 2500);
       const hp = document.getElementById("headphones");
       hp.classList.add("active");
       setTimeout(() => hp.classList.remove("active"), 2500);
@@ -767,30 +628,31 @@ function onEvent(evt) {
       break;
 
     case "done":
+      if (window.avatarAPI) window.avatarAPI.onDone();
       setAssistantLabel("fatto!");
       break;
 
     case "system_ready": {
+      if (window.avatarAPI) window.avatarAPI.onSystemReady();
       setAssistantLabel("pronto");
       addEventChip("\u2705 Sistema pronto — bridge Python attivo");
-      const piercing = document.getElementById("piercing-nose");
-      if (piercing && typeof gsap !== "undefined") {
-        gsap.to(piercing, {
-          fill: "#FF003F",
-          scale: 1.5,
-          duration: 0.3,
-          repeat: 3,
-          yoyo: true,
-          ease: "power2.inOut",
-          onComplete: () => {
-            gsap.to(piercing, { fill: "#E0E0E0", scale: 1, duration: 0.5 });
-          },
-        });
-      }
       break;
     }
 
     default:
       break;
+  }
+}
+
+// Initialize Three.js avatar when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initThreeAvatar);
+} else {
+  initThreeAvatar();
+}
+
+function initThreeAvatar() {
+  if (window.avatarAPI && document.getElementById('fx-canvas')) {
+    window.avatarAPI.init('fx-canvas');
   }
 }
