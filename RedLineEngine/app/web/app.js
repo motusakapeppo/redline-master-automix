@@ -65,6 +65,41 @@ function setAssistantLabel(text) {
   if (label) label.textContent = text;
 }
 
+// --- Reactions driven by real DSP values, not a canned loop ---
+
+function reactToCompression(ratio, releaseMs) {
+  // Interpolates the real ratio (roughly 1..12) to a rotation in degrees,
+  // holds it, then releases back to zero over the compressor's own real
+  // release time — a "ballistic" return, not a fixed animation duration.
+  const degrees = Math.min(90, Math.max(0, (ratio - 1) * 9));
+  const releaseSeconds = Math.max(0.15, Math.min(2.0, (releaseMs || 150) / 1000));
+  for (const id of ["assistant-piercing-1", "assistant-piercing-2", "assistant-piercing-3"]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.style.transitionDuration = "0.08s";
+    el.style.transform = `rotate(${degrees}deg)`;
+    setTimeout(() => {
+      el.style.transitionDuration = `${releaseSeconds}s`;
+      el.style.transform = "rotate(0deg)";
+    }, 90);
+  }
+}
+
+function reactToDeesser() {
+  const nose = document.getElementById("assistant-nose");
+  if (!nose) return;
+  nose.classList.add("hot");
+  setTimeout(() => nose.classList.remove("hot"), 220);
+}
+
+function syncAssistantToBpm(bpm) {
+  if (!bpm || bpm <= 0) return;
+  const assistant = document.getElementById("assistant");
+  if (!assistant) return;
+  const beatSeconds = 60.0 / bpm;
+  assistant.style.animationDuration = `${(beatSeconds * 2).toFixed(3)}s`;
+}
+
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
   const resultEl = document.getElementById("result");
@@ -167,6 +202,7 @@ function onEvent(evt) {
       fill.style.width = `${pct}%`;
       const label = evt.stem ? evt.stem : "bus";
       flashDetail("comp-detail", `${label}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+      reactToCompression(ratio, evt.release_ms);
       break;
     }
 
@@ -182,6 +218,7 @@ function onEvent(evt) {
       void dial.offsetWidth; // restart animation
       dial.classList.add("pulse");
       flashDetail("deess-detail", `${evt.stem}: banda ${evt.low_hz.toFixed(0)}-${evt.high_hz.toFixed(0)}Hz`);
+      reactToDeesser();
       break;
     }
 
@@ -195,6 +232,10 @@ function onEvent(evt) {
 
     case "elastic_align":
       addEventChip(`\u{1F9F5} ${evt.stem}: allineamento elastico ${evt.windows_stretched}/${evt.windows_total}`);
+      break;
+
+    case "depth_stage":
+      addEventChip(`${evt.depth === "background" ? "\u{1F30C}" : "\u{1F3AF}"} ${evt.stem}: ${evt.depth === "background" ? "sfondo" : "primo piano"}`);
       break;
 
     case "role_correction":
@@ -259,6 +300,7 @@ function onEvent(evt) {
 
     case "vocal_space":
       addEventChip(`\u{1F30C} Spazio voce: riverbero+delay ${Math.round(evt.mix * 100)}%`);
+      syncAssistantToBpm(evt.bpm);
       break;
 
     case "concurrent_take_leveling":

@@ -45,6 +45,7 @@ import numpy as np
 from pedalboard import (
     Pedalboard,
     HighpassFilter,
+    LowpassFilter,
     LowShelfFilter,
     HighShelfFilter,
     PeakFilter,
@@ -77,6 +78,7 @@ from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
 from .elastic_align import elastic_align
+from .depth import classify_stem_depth, BACKGROUND, BACKGROUND_LOWPASS_HZ, BACKGROUND_REVERB_SEND
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -363,6 +365,21 @@ def render_mix(
             continue  # handled below, register by register
         on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
         processed[name] = _process_stem(name, audio, sr, d, on_step, on_event)
+
+        if d.role == "other":
+            # Z-axis depth staging: percussive/rhythmic material (high crest
+            # + high spectral flux) stays dry and full-range in front; sustained/
+            # harmonic material (pads, arps) gets HF rolloff + heavy reverb —
+            # air absorbs highs over distance, so this reads as "far away"
+            # through EQ/reverb alone, without spending level/headroom on it.
+            depth = classify_stem_depth(processed[name], sr)
+            on_event({"type": "depth_stage", "stem": name, "depth": depth})
+            if depth == BACKGROUND:
+                on_step(f"  '{name}': sfondo (taglio alti sopra {BACKGROUND_LOWPASS_HZ / 1000:.0f}kHz, riverbero {BACKGROUND_REVERB_SEND * 100:.0f}%)")
+                processed[name] = Pedalboard([LowpassFilter(cutoff_frequency_hz=BACKGROUND_LOWPASS_HZ)])(processed[name].T, sr).T
+                processed[name] = _reverb_send(processed[name], sr, BACKGROUND_REVERB_SEND)
+            else:
+                on_step(f"  '{name}': primo piano (secco, full-range)")
 
     # --- Concurrent-take level compensation: when several lead ("Main")
     # takes are simultaneously active (alternate lines/ad-libs across
