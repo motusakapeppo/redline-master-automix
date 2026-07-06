@@ -14,6 +14,7 @@ import soundfile as sf
 import webview
 
 from redline import config
+from redline.director import DirectorGate
 from redline.input_loader import load_auto
 from redline.analyze import analyze
 from redline.wizard import MixPreferences
@@ -47,6 +48,10 @@ def _sanitize_for_json(data):
 class Api:
     def __init__(self) -> None:
         self.window: webview.Window | None = None
+        # One gate per Api instance is fine -- only one render_pipeline call
+        # runs at a time from this UI, so there's never a second checkpoint
+        # racing the first for the same gate.
+        self.director_gate = DirectorGate()
 
     def _narrate(self, msg: str) -> None:
         if self.window is not None:
@@ -94,6 +99,12 @@ class Api:
             traceback.print_exc()
             self._narrate(f"Neural Monitor: errore driver audio ({exc})")
 
+    def approve_director_checkpoint(self) -> None:
+        """Called by the GUI's "ENGAGE"/approve button -- unblocks whichever
+        render_mix() checkpoint is currently paused waiting for it. Safe to
+        call even if nothing is currently waiting (just a no-op set())."""
+        self.director_gate.approve()
+
     def pick_input_path(self) -> str | None:
         result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
@@ -130,7 +141,10 @@ class Api:
             )
 
             self._narrate("Avvio il mix...")
-            mixed = render_mix(stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit)
+            mixed = render_mix(
+                stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
+                director_gate=self.director_gate,
+            )
 
             mix_path = os.path.join(out_dir, "mix.wav")
             sf.write(mix_path, mixed, stems.sample_rate)

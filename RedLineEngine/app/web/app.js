@@ -483,6 +483,35 @@ function openOutput() {
   window.pywebview.api.open_folder(selectedOutput);
 }
 
+// --- Director Mode: the pipeline is genuinely paused on a Python thread
+// (threading.Event) waiting for this exact button click -- nothing here is
+// simulated, approveDirectorCheckpoint() really does unblock render_mix().
+function showDirectorCheckpoint(evt) {
+  const panel = document.getElementById("director-panel");
+  const list = document.getElementById("director-stems");
+  if (!panel || !list) return;
+
+  const roleIcons = { vocal: "\u{1F3A4}", bass: "\u{1F3B8}", drums: "\u{1F941}", other: "\u{1F3B9}" };
+  list.innerHTML = evt.stems
+    .map((s) => {
+      const icon = roleIcons[s.role] || "\u{2753}";
+      const detail = [s.role, s.layer !== "primary" ? s.layer : null, s.register].filter(Boolean).join(" / ");
+      return `<div class="director-stem-row">${icon} <strong>${s.name}</strong> &mdash; ${detail}</div>`;
+    })
+    .join("");
+
+  panel.classList.remove("hidden");
+  setAssistantLabel("in attesa di conferma");
+}
+
+function approveDirectorCheckpoint() {
+  const panel = document.getElementById("director-panel");
+  if (panel) panel.classList.add("hidden");
+  if (window.pywebview) {
+    window.pywebview.api.approve_director_checkpoint();
+  }
+}
+
 // --- Animated "studio rack": every visual here reacts to a real value the
 // engine just computed (an actual EQ freq/gain, a real compressor ratio, a
 // real de-esser band, a real QC measurement) — not a generic looping
@@ -718,6 +747,10 @@ function onEvent(evt) {
 
     case "llm_reclassification":
       addEventChip(`\u{1F9E0} ${evt.stem}: LLM -> ${evt.category} (${evt.role})`);
+      break;
+
+    case "director_checkpoint":
+      showDirectorCheckpoint(evt);
       break;
 
     case "done":

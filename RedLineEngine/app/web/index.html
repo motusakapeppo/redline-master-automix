@@ -96,6 +96,15 @@
         </div>
       </div>
 
+      <!-- Director Mode checkpoint: appears only when the pipeline is
+           actually paused waiting for approval (director_checkpoint event),
+           hidden the rest of the time. -->
+      <div id="director-panel" class="director-panel hidden">
+        <h3>Director Mode: conferma la classificazione</h3>
+        <div id="director-stems" class="director-stems"></div>
+        <button class="btn btn-accent" onclick="approveDirectorCheckpoint()">ENGAGE</button>
+      </div>
+
       <div id="result" class="hidden"></div>
     </div>
   </div>

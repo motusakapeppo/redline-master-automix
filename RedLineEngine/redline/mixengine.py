@@ -379,6 +379,7 @@ def render_mix(
     on_event: EventCallback = _noop_event,
     reference: np.ndarray | None = None,
     reference_sr: int | None = None,
+    director_gate=None,
 ) -> np.ndarray:
     sr = stems.sample_rate
     n = stems.num_samples()
@@ -472,6 +473,21 @@ def render_mix(
         "Stem riconosciuti: "
         + ", ".join(f"{name} -> {_describe(d)}" for name, d in descriptors.items())
     )
+
+    # --- Director Mode checkpoint: the naming/Z-axis heuristic has now
+    # committed to a role for every stem, and nothing has been processed
+    # yet -- this is the one point where a wrong classification is still
+    # cheap to catch and fix by hand, before any DSP chain runs on it.
+    if director_gate is not None and config.is_enabled("ENABLE_DIRECTOR_MODE"):
+        on_step("Director Mode: in attesa di conferma sulla classificazione degli stem...")
+        stem_summary = [
+            {"name": name, "role": d.role, "layer": d.layer, "register": d.register}
+            for name, d in descriptors.items()
+        ]
+        approved = director_gate.request_approval(
+            "stem_classification", {"stems": stem_summary}, on_event, timeout=None
+        )
+        on_step("Director Mode: approvato, proseguo." if approved else "Director Mode: timeout, proseguo comunque.")
 
     lead_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "primary"]
     double_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "double"]
