@@ -17,6 +17,8 @@ tmp_ret = collect_all('pyloudnorm')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('redline')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('webview')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 # llama_cpp ships its own native llama.cpp shared library (llama.dll/libllama)
 # next to the Python bindings -- collect_all is what actually pulls that
