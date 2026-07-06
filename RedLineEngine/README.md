@@ -21,7 +21,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 | `ENABLE_RT60_CALIBRATION` | off | Auto-tunes Room/Plate reverb bus decay from a reference track's onset/decay (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | Local LLM (llama.cpp, `redline/llm_classifier.py`) fallback for low-confidence stem naming, validated through `redline/director_safety.py` |
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — real dry/wet A/B playback of the master bus glue compression through real speakers (`redline/audition.py`). Toggled live from the GUI switch (runtime-only, via `config.set_override`), not from `.flags.json` |
-| `ENABLE_DIRECTOR_MODE` | off | *(planned)* human-in-the-loop pause between pipeline stages |
+| `ENABLE_DIRECTOR_MODE` | off | Pauses `render_mix` after stem role/register recognition and waits for GUI approval (`redline/director.py`'s `threading.Event`-based gate) before any DSP runs |
 
 ## Architecture
 
@@ -37,6 +37,7 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/metrics.py` — in-memory per-stage timing (`[METRIC] stage: Xs`)
 - `redline/llm_classifier.py` — offline local LLM (`models/qwen2.5-1.5b-instruct-q4_0.gguf` via llama-cpp-python), advisory-only fallback for stems `naming.py` couldn't confidently place, streams tokens for the GUI console
 - `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
+- `redline/director.py` — Director Mode: `threading.Event`-based gate that pauses `render_mix` for GUI approval mid-pipeline
 - `redline/audition.py` — Neural Monitor: sounddevice/PortAudio playback with peak-safety normalization + anti-click fades, and `extract_smart_chunk()` (finds the loudest window instead of comparing arbitrary/silent audio)
 - `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state/live A/B audition) alongside a conversational terminal panel
 
@@ -53,18 +54,32 @@ should trace back to this doc rather than inventing new numbers.
 ## Status
 
 Actively developed. See `.omo/` for planning notes and commit history for
-progress. Landed behind flags so far: Fase 2 blueprint DSP chains, Fase 2
-RT60 reverb calibration, Fase 3 LTAS spectral matching, Fase 4 LLM advisory
-(verified end-to-end against the real bundled model, including a real bug
-caught and fixed where the model echoed the wrong stem name), Fase 5 GUI
-(two-column layout, GSAP avatar with 3D shading/metallic jewelry/deep-scan
-halo/streaming console/cylon bar/Neural Monitor live A/B audition). Fase 6
+progress. Landed behind flags so far: Fase 0 Director Mode (human-in-the-loop
+approval checkpoint, verified end-to-end across threads), Fase 2 blueprint
+DSP chains, Fase 2 RT60 reverb calibration, Fase 3 LTAS spectral matching,
+Fase 4 LLM advisory (verified end-to-end against the real bundled model,
+including a real bug caught and fixed where the model echoed the wrong
+stem name), Fase 5 GUI (two-column layout, GSAP avatar — a minimalist
+line-art "stencil" design with glasses that tint/glow during LLM inference
+— streaming console, cylon bar, Neural Monitor live A/B audition). Fase 6
 PyInstaller packaging built and launch-tested on this machine multiple
 times (`llama_cpp`, `pywebview`, `sounddevice` + the bundled model all
 confirmed present and working in the frozen exe); still needs a
 clean-machine test on hardware that never had Python installed.
 
-If the desktop shortcut (`Avvia RedLine Engine.vbs`) ever opens a blank/black
-window, delete `%LOCALAPPDATA%\RedLineEngine\webview` (WebView2's storage
-folder can get stuck/locked between runs) and relaunch — `main.py` already
-uses a dedicated storage path specifically to guard against this.
+**Known external conflict, not a bug in this app:** if the desktop shortcut
+(`Avvia RedLine Engine.vbs`) opens a black/blank window that never renders,
+it's very likely **NVIDIA Overlay** (or a similar UI-Automation-hooking
+overlay — Discord overlay, RTSS, Xbox Game Bar) intercepting the new window
+and triggering an infinite recursion inside pywebview's .NET/COM bridge
+(`RecursionError` walking `window.native.AccessibilityObject.Bounds.Empty...`),
+which starves the WebView2 message loop badly enough that the page never
+finishes loading. Confirmed by killing the NVIDIA Overlay process and
+watching the app load normally within seconds. Fix: disable the in-game/
+in-app overlay for the relevant software, or exclude `RedLineEngine.exe`
+from it. `app/main.py` writes `%LOCALAPPDATA%\RedLineEngine\last_load.log`
+the moment the page actually finishes loading — if that file is missing or
+stale after a launch attempt, the page genuinely never loaded (this class
+of issue); if it's fresh, the blackness has a different cause. Set
+`REDLINE_DEBUG_GUI=1` to open DevTools alongside the window for further
+diagnosis.
