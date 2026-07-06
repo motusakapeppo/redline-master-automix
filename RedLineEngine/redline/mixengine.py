@@ -75,6 +75,7 @@ from .masking import find_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
+from .denoise import denoise as denoise_signal
 
 # Narration (text, for the log) and structured events (real parameter values,
 # for the future animated UI — an EQ knob turning to an actual cut/boost, a
@@ -175,6 +176,15 @@ def _process_stem(
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
 
+    if is_lead_vocal:
+        # Denoise is the very first thing that happens to a vocal, before
+        # even the HPF: compressing or EQing first raises the noise floor
+        # along with everything else, or changes the noise's spectral color
+        # enough that the noise-profile estimator can't recognize it anymore.
+        on_step(f"  '{name}': riduzione rumore di fondo")
+        on_event({"type": "denoise", "stem": name})
+        audio = denoise_signal(audio, sr)
+
     board_fx: list = []
 
     if is_lead_vocal:
@@ -238,6 +248,10 @@ def _process_double_stem(
     """Register-specific chain for a vocal double/harmony (see vocalstack.py
     for why each register needs genuinely different treatment, not one
     generic "double" recipe)."""
+    on_step(f"  '{name}': riduzione rumore di fondo")
+    on_event({"type": "denoise", "stem": name})
+    audio = denoise_signal(audio, sr)
+
     recipe = RECIPES[register]
 
     board_fx = [_eq_cut_plugin(cut) for cut in recipe.extra_eq]

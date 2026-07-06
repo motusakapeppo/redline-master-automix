@@ -189,6 +189,10 @@ function onEvent(evt) {
       addEventChip(`\u{23F1}\u{FE0F} ${evt.stem} allineata (${evt.delay_ms > 0 ? "+" : ""}${evt.delay_ms}ms)`);
       break;
 
+    case "denoise":
+      addEventChip(`\u{1F9FC} ${evt.stem}: riduzione rumore`);
+      break;
+
     case "role_correction":
       addEventChip(`\u{26A0}\u{FE0F} ${evt.stem}: ${evt.from} -> ${evt.to}`);
       break;

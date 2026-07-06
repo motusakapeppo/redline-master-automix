@@ -7,3 +7,5 @@ pedalboard
 matchering
 torch
 demucs
+noisereduce
+huggingface_hub
