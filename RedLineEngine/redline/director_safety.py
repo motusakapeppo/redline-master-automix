@@ -84,6 +84,26 @@ EQ_TYPES = ("bell", "high_shelf")
 MAX_EQ_ADJUSTMENTS = 4
 FREQ_RANGE_HZ = (20.0, 20000.0)
 
+# Confirmed necessary in practice: asked something with nothing to do with
+# audio at all ("che tempo fa a Milano?", "boh, fai te", a prompt-injection
+# attempt, even literal gibberish), the model doesn't refuse -- it falls
+# back to a generic small EQ nudge almost every time instead of recognizing
+# "this isn't a real request". Range-clamping and the section-type check
+# don't catch this (the fallback nudge is small and section-agnostic, i.e.
+# "safe" by every check so far but not actually related to what was
+# written). This is the last gate: at least one acoustic-dictionary term
+# must appear in the request, or the whole suggestion is rejected.
+_ACOUSTIC_RELEVANCE_KEYWORDS = (
+    "cald", "corpo", "pien", "aperto", "aria", "cristallin",
+    "presenz", "avanti", "protagonist", "nasale", "inscatolat",
+    "eq", "frequenz", "acut", "grav", "brillante", "scur", "basso", "bassi",
+)
+
+
+def _mentions_acoustic_term(user_text: str) -> bool:
+    lowered = user_text.lower()
+    return any(kw in lowered for kw in _ACOUSTIC_RELEVANCE_KEYWORDS)
+
 
 def _section_type(name: str) -> str | None:
     """"chorus_1" -> "chorus", "verse_3" -> "verse", "intro" -> "intro"."""
@@ -130,6 +150,9 @@ def validate_dsp_automation(
     rejects the whole suggestion rather than silently "correcting" it."""
     if not isinstance(suggestion, dict):
         return None
+
+    if user_text is not None and not _mentions_acoustic_term(user_text):
+        return None  # not a request about audio at all -- reject rather than apply a generic fallback nudge
 
     target_section = suggestion.get("target_section")
     if target_section == "global":
