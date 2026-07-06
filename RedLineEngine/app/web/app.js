@@ -447,6 +447,11 @@ function onEvent(evt) {
       flashDetail("eq-detail", `Bus: ${evt.freq_hz}Hz ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB`);
       break;
 
+    case "stem_instrument":
+      if (window.avatarAPI) window.avatarAPI.onInstrument(evt.instrument);
+      addEventChip(`\u{1F3B8} ${evt.stem}: ${evt.instrument}`);
+      break;
+
     case "resonance_cut":
       eqBands[`res_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
       redrawEq();

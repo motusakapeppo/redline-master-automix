@@ -182,6 +182,37 @@ def _describe(d: StemDescriptor) -> str:
     return "/".join(bits)
 
 
+_INSTRUMENT_NAME_HINTS = {
+    "guitar": ("guitar", "chitarra", "gtr", "acoustic gtr", "electric gtr"),
+    "piano": ("piano", "keys", "tastiera", "rhodes", "wurli"),
+    "wind": ("sax", "tromba", "trumpet", "flauto", "flute", "horn", "brass", "fiati", "clarinet", "clarinetto"),
+}
+
+
+def _guess_instrument(name: str, role: str) -> str | None:
+    """Best-effort instrument guess for the avatar's "playing along" visual
+    (redline/mixengine.py emits a stem_instrument event, the GUI shows the
+    matching 3D prop) -- purely cosmetic, never affects DSP decisions.
+    bass/drums/vocal already have a clear role; "other" is anything else,
+    where a filename hint is the only signal naming.py doesn't already
+    extract, so it's guessed here rather than growing StemDescriptor for
+    a purely visual feature."""
+    if role == "bass":
+        return "bass"
+    if role != "other":
+        return None
+    lowered = name.lower()
+    for instrument, hints in _INSTRUMENT_NAME_HINTS.items():
+        if any(hint in lowered for hint in hints):
+            return instrument
+    if any(hint in lowered for hint in ("instrumental", "strumentale", "backing track", "beat")):
+        # A single combined instrumental bed, not one specific instrument --
+        # the GUI cycles through all instrument props for this one instead
+        # of picking (and getting wrong) just one.
+        return "cycle"
+    return None
+
+
 def _eq_plugin(band: EQBand):
     if band.kind == "low_shelf":
         return LowShelfFilter(cutoff_frequency_hz=band.freq, gain_db=band.gain_db, q=band.q)
@@ -562,6 +593,9 @@ def render_mix(
         if d.role == "vocal" and d.layer == "double":
             continue  # handled below, register by register
         on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
+        instrument = _guess_instrument(name, d.role)
+        if instrument is not None:
+            on_event({"type": "stem_instrument", "stem": name, "instrument": instrument})
         processed[name] = _process_stem(name, audio, sr, d, on_step, on_event)
 
         if d.role == "other":

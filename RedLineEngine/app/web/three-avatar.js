@@ -268,6 +268,113 @@ function buildSkull(onReady) {
   );
 }
 
+// ─── Props (headphones, vinyl, cassette, instruments) ──────────────────────
+//
+// Same normalize-then-tint treatment as the skull (bounding-box scale to a
+// consistent height, keep the source texture but tint it toward the
+// black/red/silver palette instead of a flat recolor) so these read as
+// belonging to the same character instead of a dropped-in stock asset.
+// All hidden by default; shown/hidden by the DSP-driven hooks below.
+
+const PROP_CONFIGS = {
+  headphones: { url: 'assets/headphones.glb', targetHeight: 1.7, position: [0, 0.75, 0], tint: '#9098A8' },
+  vinyl: { url: 'assets/vinyl.glb', targetHeight: 1.3, position: [1.5, -0.2, -0.3], tint: '#7A8290', spin: true },
+  cassette: { url: 'assets/cassette.glb', targetHeight: 0.9, position: [1.4, -0.1, 0], tint: '#8890A0' },
+  music_note: { url: 'assets/music_note.glb', targetHeight: 0.8, position: [-1.4, 0.6, 0], tint: '#C85068' },
+  guitar: { url: 'assets/guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
+  bass: { url: 'assets/bass_guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
+  piano: { url: 'assets/piano.glb', targetHeight: 1.4, position: [-1.5, -0.5, 0], tint: '#8890A0' },
+  wind: { url: 'assets/kazoo.glb', targetHeight: 0.9, position: [-1.4, -0.2, 0], tint: '#8890A0' },
+};
+
+const INSTRUMENT_CYCLE_ORDER = ['guitar', 'bass', 'piano', 'wind'];
+const INSTRUMENT_CYCLE_INTERVAL_MS = 1800;
+
+const _props = {}; // name -> THREE.Group, added to scene, .visible toggled
+const _propLoading = {}; // name -> true while a load is in flight (avoid double-loading)
+let _instrumentCycleTimer = null;
+
+function _loadProp(name, onReady) {
+  if (_props[name] || _propLoading[name]) {
+    if (_props[name] && typeof onReady === 'function') onReady(_props[name]);
+    return;
+  }
+  const config = PROP_CONFIGS[name];
+  if (!config) return;
+  _propLoading[name] = true;
+
+  new GLTFLoader().load(
+    config.url,
+    (gltf) => {
+      const model = gltf.scene;
+      const tintMaterial = new THREE.MeshStandardMaterial({
+        map: null,
+        color: config.tint,
+        metalness: 0.3,
+        roughness: 0.55,
+        envMapIntensity: 1.0,
+      });
+      model.traverse((child) => {
+        if (child.isMesh) {
+          const sourceMap = child.material && child.material.map ? child.material.map : null;
+          if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
+          child.material = tintMaterial.clone();
+          child.material.map = sourceMap;
+        }
+      });
+
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const scale = config.targetHeight / Math.max(size.y, 0.001);
+      model.scale.setScalar(scale);
+
+      const scaledBox = new THREE.Box3().setFromObject(model);
+      const center = new THREE.Vector3();
+      scaledBox.getCenter(center);
+      model.position.sub(center);
+
+      const group = new THREE.Group();
+      group.add(model);
+      group.position.set(...config.position);
+      group.visible = false;
+      scene.add(group);
+
+      _props[name] = group;
+      delete _propLoading[name];
+      if (typeof onReady === 'function') onReady(group);
+    },
+    undefined,
+    (err) => {
+      console.error(`[three-avatar] Failed to load prop "${name}":`, err);
+      delete _propLoading[name];
+    }
+  );
+}
+
+function _hideAllPropVisuals() {
+  for (const group of Object.values(_props)) group.visible = false;
+}
+
+function _hideAllProps() {
+  _hideAllPropVisuals();
+  if (_instrumentCycleTimer !== null) {
+    clearInterval(_instrumentCycleTimer);
+    _instrumentCycleTimer = null;
+  }
+}
+
+function _showProp(name, keepCycleTimer = false) {
+  if (keepCycleTimer) {
+    _hideAllPropVisuals(); // called from the cycle's own tick -- don't cancel itself
+  } else {
+    _hideAllProps(); // any other trigger (headphones, cassette, single instrument) stops a running cycle
+  }
+  _loadProp(name, (group) => {
+    group.visible = true;
+  });
+}
+
 // See `lookPhase` state comment above. A real head turn accelerates into
 // the motion and decelerates out of it (ease-in-out), over roughly half a
 // second to a second -- not a linear snap, and not the 0.25s "flick" this
@@ -525,6 +632,10 @@ function animate() {
   if (mixer) mixer.update(delta);
   skull.position.y = -0.1 + floatY;
   updateNaturalLook(time);
+
+  if (_props.vinyl && _props.vinyl.visible) {
+    _props.vinyl.rotation.z -= delta * 2.2; // steady spin, independent of the skull's own motion
+  }
 
   // Skull vibration from compression
   if (compressionIntensity > 0.01) {
@@ -807,6 +918,36 @@ function onBpm(bpm) {
 
 function onListening(on) {
   listeningMode = on;
+  if (on) {
+    _showProp('headphones');
+  } else {
+    _hideAllProps();
+  }
+}
+
+// Which instrument the avatar "plays along with" while a given stem is
+// being processed -- purely cosmetic, mirrors whatever
+// mixengine._guess_instrument() decided from the stem's role/filename.
+// "cycle" means a single combined instrumental stem: rotate through all
+// of them instead of guessing (and likely getting wrong) just one.
+function onInstrument(instrument) {
+  if (!instrument) {
+    _hideAllProps();
+    return;
+  }
+  if (instrument === 'cycle') {
+    _hideAllProps(); // stop any previous cycle before starting a new one
+    let i = 0;
+    _showProp(INSTRUMENT_CYCLE_ORDER[0], true);
+    _instrumentCycleTimer = setInterval(() => {
+      i = (i + 1) % INSTRUMENT_CYCLE_ORDER.length;
+      _showProp(INSTRUMENT_CYCLE_ORDER[i], true);
+    }, INSTRUMENT_CYCLE_INTERVAL_MS);
+    return;
+  }
+  if (PROP_CONFIGS[instrument]) {
+    _showProp(instrument);
+  }
 }
 
 function onDeepScan() {
@@ -855,18 +996,27 @@ function onDone() {
     if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
     if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
   }, 400);
+
+  // The vinyl is the "here's the finished record" beat -- shown briefly at
+  // the end, not left up permanently (this function doesn't run again
+  // until the next full render, so a plain timeout is enough here).
+  _showProp('vinyl');
+  setTimeout(() => { _hideAllProps(); }, 6000);
 }
 
 function onAuditionState(state) {
   if (state === 'BEFORE') {
     auditionTilt = 0.06;
     ringColorTarget.set('#FF6600');
+    _showProp('cassette');
   } else if (state === 'AFTER') {
     auditionTilt = -0.04;
     ringColorTarget.set('#FF003F');
+    _showProp('cassette');
   } else {
     auditionTilt = 0;
     ringColorTarget.set('#FF003F');
+    _hideAllProps();
   }
 }
 
@@ -916,6 +1066,11 @@ function dispose() {
   ringGlowParticles = null;
   particles = null;
   earrings = [];
+  if (_instrumentCycleTimer !== null) {
+    clearInterval(_instrumentCycleTimer);
+    _instrumentCycleTimer = null;
+  }
+  for (const key of Object.keys(_props)) delete _props[key];
 }
 
 // ─── Export API ─────────────────────────────────────────────────────────────
@@ -937,5 +1092,6 @@ window.avatarAPI = {
   onAuditionState,
   onApprove,
   onReject,
+  onInstrument,
   setActivity,
 };
