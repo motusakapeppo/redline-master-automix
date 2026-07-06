@@ -85,9 +85,13 @@ def main(argv: list[str] | None = None) -> int:
 
     prefs = run_wizard(analysis.genre.name, interactive=not args.non_interactive)
 
+    reference_audio, reference_sr = None, None
+    if args.reference:
+        reference_audio, reference_sr = sf.read(args.reference, dtype="float32", always_2d=True)
+
     _narrate("Avvio il mix...")
     with metrics.stage("mix_render", on_step=_narrate):
-        mixed = render_mix(stems, analysis, prefs, on_step=_narrate)
+        mixed = render_mix(stems, analysis, prefs, on_step=_narrate, reference=reference_audio, reference_sr=reference_sr)
 
     mix_path = os.path.join(args.out, "mix.wav")
     sf.write(mix_path, mixed, stems.sample_rate)
@@ -100,7 +104,10 @@ def main(argv: list[str] | None = None) -> int:
                 master_path = os.path.join(args.out, "master.wav")
                 render_master_reference(mix_path, args.reference, master_path, on_step=_narrate)
             else:
-                mastered = render_master(mixed, stems.sample_rate, analysis, platform=args.platform, on_step=_narrate)
+                mastered = render_master(
+                    mixed, stems.sample_rate, analysis, platform=args.platform, on_step=_narrate,
+                    reference=reference_audio, reference_sr=reference_sr,
+                )
                 master_path = os.path.join(args.out, "master.wav")
                 sf.write(master_path, mastered, stems.sample_rate)
         _narrate(f"Master salvato: {master_path}")

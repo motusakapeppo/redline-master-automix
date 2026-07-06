@@ -42,10 +42,17 @@ class ReverbBusSystem:
     """One instance per render (per `render_mix` call) — holds exactly 3
     Reverb instances no matter how many stems send to them."""
 
-    def __init__(self, sr: int) -> None:
+    def __init__(self, sr: int, room_size_overrides: dict[str, float] | None = None) -> None:
         self.sr = sr
         self._sums: dict[str, np.ndarray | None] = {ROOM: None, PLATE: None, HALL: None}
-        self._reverbs = {name: Pedalboard([Reverb(**params)]) for name, params in _BUS_REVERB_PARAMS.items()}
+        params = {name: dict(p) for name, p in _BUS_REVERB_PARAMS.items()}
+        if room_size_overrides:
+            # RT60 Light calibration only ever touches Room/Plate room_size —
+            # Hall is deliberately left alone (see rt60.calibrate_room_plate).
+            for bus_name, size in room_size_overrides.items():
+                if bus_name in params:
+                    params[bus_name]["room_size"] = size
+        self._reverbs = {name: Pedalboard([Reverb(**p)]) for name, p in params.items()}
 
     def send(self, signal: np.ndarray, bus: str, level: float) -> None:
         """Accumulates `signal * level` into the named bus. Does not process

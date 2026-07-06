@@ -375,10 +375,25 @@ def render_mix(
     prefs: MixPreferences,
     on_step: StepCallback = _noop,
     on_event: EventCallback = _noop_event,
+    reference: np.ndarray | None = None,
+    reference_sr: int | None = None,
 ) -> np.ndarray:
     sr = stems.sample_rate
     n = stems.num_samples()
-    reverb_bus = ReverbBusSystem(sr)
+
+    room_size_overrides = None
+    if reference is not None and config.is_enabled("ENABLE_RT60_CALIBRATION"):
+        from .rt60 import estimate_rt60, calibrate_room_plate
+
+        rt60 = estimate_rt60(reference, reference_sr or sr)
+        if rt60 is not None:
+            room_size_overrides = calibrate_room_plate(rt60)
+            on_step(f"RT60 stimato dalla reference: {rt60:.2f}s — bus Room/Plate ricalibrati")
+            on_event({"type": "rt60_calibration", "rt60_seconds": round(rt60, 2), "room_size": room_size_overrides})
+        else:
+            on_step("RT60: nessun decadimento affidabile rilevato nella reference, uso i bus di default")
+
+    reverb_bus = ReverbBusSystem(sr, room_size_overrides=room_size_overrides)
 
     descriptors = {name: parse_stem(name) for name in stems.names()}
 
