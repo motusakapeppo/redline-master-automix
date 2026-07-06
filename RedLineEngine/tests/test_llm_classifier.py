@@ -39,3 +39,28 @@ def test_interpret_creative_brief_gets_vocal_prominence_sign_right():
         assert set(result.keys()) <= {"vocal_prominence"}
         if "vocal_prominence" in result:
             assert result["vocal_prominence"] < 0  # "indietro" = less prominent = negative
+
+
+def test_interpret_creative_brief_handles_color_and_element_metaphors():
+    # Real, if unusual, mixing requests -- producers do talk like this.
+    # Rejecting them outright would be wrong; the fix was a small
+    # documented color->knob mapping (_COLOR_TO_KNOB_HINTS) injected into
+    # the prompt, not a keyword blocklist.
+    if is_available():
+        fire = interpret_creative_brief("incendia il brano")
+        assert set(fire.keys()) <= {"aggressiveness"}
+        if "aggressiveness" in fire:
+            assert fire["aggressiveness"] > 3  # "fire" reads as more aggressive, not less
+
+        purple = interpret_creative_brief("lo voglio più viola")
+        assert set(purple.keys()) <= {"warmth"}
+
+        icy = interpret_creative_brief("voglio che sia più blu, freddo e metallico")
+        assert set(icy.keys()) <= {"warmth"}
+        if "warmth" in icy:
+            assert icy["warmth"] < 0  # cold/metallic reads as less warm, not more
+
+        dreamy = interpret_creative_brief("rendilo eterei e sognante")
+        assert set(dreamy.keys()) <= {"aggressiveness"}
+        if "aggressiveness" in dreamy:
+            assert dreamy["aggressiveness"] < 3  # dreamy/ethereal reads as gentler, not harder

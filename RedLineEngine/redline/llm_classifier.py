@@ -125,10 +125,37 @@ BRIEF_ADJUSTABLE_KEYS = ("aggressiveness", "warmth", "vocal_prominence")
 # itself mentions something relevant to it, checked independently of
 # whatever the model claims it was responding to.
 _BRIEF_RELEVANCE_KEYWORDS = {
-    "warmth": ("cald", "freddo", "fredda", "brillante", "vinil", "morbid", "vintage", "analog", "scuro", "scura"),
+    "warmth": (
+        "cald", "freddo", "fredda", "brillante", "vinil", "morbid", "vintage", "analog", "scuro", "scura",
+        # Synesthetic/color vocabulary producers actually use ("more purple",
+        # "golden", "icy") -- these are real, if metaphorical, mixing
+        # requests, not nonsense. See _COLOR_TO_KNOB_HINTS below for the
+        # reasoning behind each mapping.
+        "viola", "oro", "dorat", "ambra", "marrone", "ghiacc", "gelo", "blu", "acciaio", "argent", "metallic",
+    ),
     "vocal_prominence": ("voce", "vocal", "cantante", "protagonist", "indietro", "avanti", "presenza", "canto"),
-    "aggressiveness": ("aggressiv", "compress", "delicat", "gentile", "duro", "dura", "radio", "forte", "spinto", "spinta", "punch"),
+    "aggressiveness": (
+        "aggressiv", "compress", "delicat", "gentile", "duro", "dura", "radio", "forte", "spinto", "spinta", "punch",
+        "fuoco", "incendi", "brucia", "fiamma", "esplo", "rosso", "nero", "potente", "muro", "martell", "pugno",
+        "morbid", "soffice", "leggero", "eter", "sognante", "nuvola",
+    ),
 }
+
+# A reasoned (not literal) mapping from color/element metaphors real
+# producers use to the warmth/aggressiveness axis they most often imply --
+# included directly in the prompt as extra few-shot context so the model
+# translates "make it more purple" or "set it on fire" into an actual
+# adjustment instead of treating a metaphor as nonsense and inventing
+# nothing (or inventing something unrelated). This is inherently a
+# judgment call, not a standard -- documented in the README together with
+# what was actually tested against the real model.
+_COLOR_TO_KNOB_HINTS = """\
+- "fuoco" / "incendia" / "brucia" / "fiamma" / "esplosivo": aggressiveness molto alta, energia e distorsione
+- "viola": warmth moderatamente positiva (ricco, misterioso, non troppo brillante)
+- "oro" / "dorato" / "ambra": warmth positiva (vintage, analogico, ricco)
+- "blu" / "ghiaccio" / "gelo" / "acciaio": warmth negativa (freddo, brillante, metallico)
+- "rosso" / "nero" / "potente": aggressiveness alta (pesante, energico)
+- "eterei" / "sognante" / "nuvola" / "soffice": aggressiveness bassa (delicato, spazioso)"""
 
 
 def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
@@ -154,6 +181,9 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
         "- warmth: numero -1.0 a 1.0 (negativo=freddo/brillante, positivo=caldo)\n"
         "- vocal_prominence: numero -1.0 a 1.0 (negativo=voce PIU' INDIETRO/meno protagonista, "
         "positivo=voce PIU' AVANTI/protagonista)\n\n"
+        "L'utente potrebbe usare metafore di colori o elementi invece di termini tecnici -- "
+        "traducile secondo questa guida:\n"
+        f"{_COLOR_TO_KNOB_HINTS}\n\n"
         "REGOLE FERREE:\n"
         "1. Includi SOLO i parametri esplicitamente e chiaramente richiesti. Se la richiesta "
         "non menziona affatto un aspetto, NON includerlo -- non indovinare, non aggiungere "
@@ -170,6 +200,10 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
         'Risposta: {"vocal_prominence": -0.4}\n\n'
         'Richiesta: "vorrei un suono più caldo"\n'
         'Risposta: {"warmth": 0.5}\n\n'
+        'Richiesta: "rendilo eterei e sognante"\n'
+        'Risposta: {"aggressiveness": 1.5}\n\n'
+        'Richiesta: "incendia il brano"\n'
+        'Risposta: {"aggressiveness": 4.5}\n\n'
         f'Richiesta dell\'utente: "{brief_text.strip()}"\n'
         "Risposta (SOLO l'oggetto JSON, nient'altro):"
     )
