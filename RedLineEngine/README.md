@@ -39,6 +39,9 @@ pre-feature behavior — no code revert required, no silent regressions.
 - `redline/director_safety.py` — validates/clamps any LLM-suggested value (stem category, or future DSP param) before it can reach the engine
 - `redline/director.py` — Director Mode: `threading.Event`-based gate that pauses `render_mix` for GUI approval mid-pipeline
 - `redline/audition.py` — Neural Monitor: sounddevice/PortAudio playback with peak-safety normalization + anti-click fades, and `extract_smart_chunk()` (finds the loudest window instead of comparing arbitrary/silent audio)
+- `redline/elastic_align.py` — syllable-level DTW time alignment for vocal doubles (lightweight VocALign alternative). Main/Lead vocals are never warped (name-based guard). Max safe warp limited to 2% to prevent flutter artifacts.
+- `redline/leveling.py` — concurrent vocal-take level compensation (power-preserving 1/√N gain for overlapping takes, skips Main/Lead vocals)
+- `redline/denoise.py` — spectral noise reduction for vocal cleanup before any DSP
 - `app/` — pywebview desktop shell: two-column GSAP-driven UI (`app/web/`), a 3D-shaded SVG avatar (metallic silver jewelry, autonomous idle look-around, real-time reactions to glue compression/de-esser/BPM/LLM state/live A/B audition) alongside a conversational terminal panel. Supports both folder (multitrack stems) and single-file audio selection via native OS dialogs.
 
 ## Reference document
@@ -66,6 +69,13 @@ PyInstaller packaging built and launch-tested on this machine multiple
 times (`llama_cpp`, `pywebview`, `sounddevice` + the bundled model all
 confirmed present and working in the frozen exe); still needs a
 clean-machine test on hardware that never had Python installed.
+
+**Recent vocal chain hardening (July 2026):**
+- Vocal_Main/Vocal_Doubles bus split: doubles scaled to 50% (-6dB) so the lead keeps presence
+- Makeup gain after every compressor stage to prevent cumulative level drop
+- Elastic align warp limit reduced to 2% to eliminate flutter artifacts
+- Main/Lead vocals are never warped or level-compensated — they are the timing grid
+- Neural Monitor (live A/B audition) fixed: WASAPI sample rate mismatch resolved, makeup gain added for quiet signals
 
 **Known external conflict, not a bug in this app:** if the desktop shortcut
 (`Avvia RedLine Engine.vbs`) opens a black/blank window that never renders,
