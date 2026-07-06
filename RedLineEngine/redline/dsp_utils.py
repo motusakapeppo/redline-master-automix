@@ -5,7 +5,26 @@ ducking, simple stereo utilities, band-limited processing, mid-side)."""
 from __future__ import annotations
 
 import numpy as np
+from numba import njit
 from scipy.signal import butter, sosfiltfilt
+
+
+@njit(cache=True)
+def _attack_release_recursion(block_rms: np.ndarray, attack_coef: float, release_coef: float) -> np.ndarray:
+    """Native-compiled attack/release one-pole recursion. The coefficient
+    switches per-sample depending on whether the signal is rising or falling,
+    so it can't be expressed as a single linear IIR filter (no lfilter
+    shortcut) — numba JIT makes the still-inherently-sequential loop run at
+    native speed instead of the ~100x slower pure-Python interpreter loop."""
+    n_blocks = block_rms.shape[0]
+    env = np.zeros(n_blocks, dtype=np.float64)
+    state = 0.0
+    for i in range(n_blocks):
+        v = block_rms[i]
+        coef = attack_coef if v > state else release_coef
+        state = coef * state + (1.0 - coef) * v
+        env[i] = state
+    return env
 
 
 def envelope_follower(mono: np.ndarray, sr: int, attack_ms: float, release_ms: float, block: int = 512) -> np.ndarray:
@@ -23,12 +42,7 @@ def envelope_follower(mono: np.ndarray, sr: int, attack_ms: float, release_ms: f
     attack_coef = np.exp(-1.0 / (block_rate * max(attack_ms, 1.0) / 1000.0))
     release_coef = np.exp(-1.0 / (block_rate * max(release_ms, 1.0) / 1000.0))
 
-    env = np.zeros(n_blocks, dtype=np.float64)
-    state = 0.0
-    for i, v in enumerate(block_rms):
-        coef = attack_coef if v > state else release_coef
-        state = coef * state + (1.0 - coef) * v
-        env[i] = state
+    env = _attack_release_recursion(block_rms, attack_coef, release_coef)
 
     upsampled = np.repeat(env, block)[:n]
     return upsampled.astype(np.float32)

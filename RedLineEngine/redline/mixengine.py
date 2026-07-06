@@ -39,6 +39,8 @@ plugin):
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 import librosa
@@ -587,17 +589,44 @@ def render_mix(
                     })
                 working_tracks[name] = elastic.audio
 
+    # --- Per-stem DSP is independent stem-to-stem (each _process_stem call
+    # only reads its own audio), so it's dispatched to a thread pool instead
+    # of a plain Python loop. numpy/scipy/pedalboard all release the GIL
+    # during their heavy lifting, so this gets real wall-clock parallelism
+    # even though it's threads, not processes — and it avoids the pickling
+    # cost of shipping full-length stem arrays across process boundaries.
+    # Callback emission is serialized (single lock) so progress messages
+    # stay ungarbled even though several stems render concurrently; ordering
+    # across stems is not guaranteed, but ordering *within* one stem is.
     processed: dict[str, np.ndarray] = {}
-    for name, audio in working_tracks.items():
+    solo_names = [name for name, d in descriptors.items() if not (d.role == "vocal" and d.layer == "double") and name in working_tracks]
+    callback_lock = threading.Lock()
+
+    def _guarded_on_step(msg: str) -> None:
+        with callback_lock:
+            on_step(msg)
+
+    def _guarded_on_event(evt: dict) -> None:
+        with callback_lock:
+            on_event(evt)
+
+    for name in solo_names:
         d = descriptors[name]
-        if d.role == "vocal" and d.layer == "double":
-            continue  # handled below, register by register
-        on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
+        _guarded_on_step(f"Elaborazione stem '{name}' ({_describe(d)})...")
         instrument = _guess_instrument(name, d.role)
         if instrument is not None:
-            on_event({"type": "stem_instrument", "stem": name, "instrument": instrument})
-        processed[name] = _process_stem(name, audio, sr, d, on_step, on_event)
+            _guarded_on_event({"type": "stem_instrument", "stem": name, "instrument": instrument})
 
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(solo_names)))) as pool:
+        futures = {
+            name: pool.submit(_process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event)
+            for name in solo_names
+        }
+        for name, future in futures.items():
+            processed[name] = future.result()
+
+    for name in solo_names:
+        d = descriptors[name]
         if d.role == "other":
             # Z-axis depth staging: percussive/rhythmic material (high crest
             # + high spectral flux) stays dry and full-range in front; sustained/

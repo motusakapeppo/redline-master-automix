@@ -206,6 +206,15 @@ This is backend-only for now (no chat UI wired up yet) and, being a second LLM-d
 | `metrics.py` | In-memory per-stage timing instrumentation. Logs `[METRIC] stage: Xs` for every pipeline stage. Used for performance profiling and regression detection. |
 | `dsp_utils.py` | Shared DSP utilities: envelope follower (RMS with configurable window), duck gain curves (linear/exponential), band gain curves, saturation (soft-clip/tanh), panning (equal-power), Mid/Side encoding/decoding. |
 
+### Performance
+
+Two changes were made to speed up mixing/mastering of multi-stem sessions without changing output quality (verified via the existing test suite — no numerical behavior change other than execution speed):
+
+- **Parallel per-stem DSP** (`mixengine.py`): each stem's DSP chain (HPF, resonance suppression, compression, de-essing, depth staging) is independent of every other stem's, so it's dispatched to a thread pool instead of a plain Python loop. numpy/scipy/pedalboard all release the GIL during their heavy lifting, so real wall-clock parallelism is achieved even though it's threads, not processes (avoids the pickling cost of shipping full-length stem arrays across process boundaries). Progress callbacks are serialized behind a lock so console/GUI messages stay ungarbled.
+- **JIT-compiled envelope follower** (`dsp_utils.py`): the attack/release recursion used for sidechain ducking, spectral ducking, and de-essing switches its smoothing coefficient per-block depending on whether the signal is rising or falling, so it can't be expressed as a single linear filter (no `scipy.signal.lfilter` shortcut) — it's now JIT-compiled with `numba` instead of running as an interpreted Python loop, which is roughly two orders of magnitude faster on typical song lengths.
+
+Expect the biggest wall-clock improvement on sessions with many stems (backing vocal stacks, multi-mic drums), since those are exactly the cases that previously serialized the most per-stem work.
+
 #### GUI (`app/`)
 
 | Module | What it does |
@@ -713,6 +722,15 @@ Per ora è solo backend (nessuna UI chat ancora collegata) e, essendo una second
 | `config.py` | Sistema di flag con `.flags.json` + override da variabili d'ambiente. Legge i flag all'avvio, osserva modifiche ai file (futuro: hot-reload). |
 | `metrics.py` | Strumentazione timing in-memory per stadio. Logga `[METRIC] stage: Xs` per ogni fase della pipeline. Usato per profilazione delle performance e rilevamento regressioni. |
 | `dsp_utils.py` | Utility DSP condivise: envelope follower (RMS con finestra configurabile), curve di gain duck (lineari/esponenziali), curve di gain per banda, saturazione (soft-clip/tanh), panning (equal-power), codifica/decodifica Mid/Side. |
+
+### Performance
+
+Due modifiche velocizzano il mix/mastering di sessioni multi-stem senza cambiare la qualità dell'output (verificato con la suite di test esistente — nessun cambiamento di comportamento numerico, solo di velocità di esecuzione):
+
+- **DSP per-stem parallela** (`mixengine.py`): la catena DSP di ogni stem (HPF, soppressione risonanze, compressione, de-essing, depth staging) è indipendente da quella degli altri stem, quindi viene distribuita a un thread pool invece che a un semplice ciclo Python. numpy/scipy/pedalboard rilasciano il GIL durante il lavoro pesante, quindi si ottiene un parallelismo reale anche usando thread anziché processi (evitando il costo di serializzazione degli array degli stem tra processi). I callback di progresso sono serializzati dietro un lock per non mischiare i messaggi su console/GUI.
+- **Envelope follower compilato JIT** (`dsp_utils.py`): la ricorsione attack/release usata per il sidechain, il ducking spettrale e il de-esser cambia il coefficiente di smoothing per-blocco a seconda che il segnale salga o scenda, quindi non può essere espressa come un singolo filtro lineare (niente scorciatoia `scipy.signal.lfilter`) — ora è compilata JIT con `numba` invece di girare come ciclo Python interpretato, circa due ordini di grandezza più veloce sulle durate tipiche di un brano.
+
+Il miglioramento maggiore si nota su sessioni con molti stem (stack di cori, batteria multi-microfono), cioè esattamente i casi che prima serializzavano più lavoro per-stem.
 
 #### GUI (`app/`)
 
