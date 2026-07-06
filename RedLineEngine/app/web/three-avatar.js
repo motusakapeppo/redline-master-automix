@@ -492,7 +492,6 @@ function animate() {
   animFrameId = requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
-  idlePhase += delta;
 
   // Decay state variables
   compressionIntensity *= ringWaveDecay;

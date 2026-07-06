@@ -5,6 +5,16 @@
 <title>RedLine Engine</title>
 <link rel="stylesheet" href="style.css" />
 <script src="vendor/gsap.min.js"></script>
+<script>
+// Fallback: if Three.js fails to load, avatar just won't render
+window.__THREE_FAILED = false;
+window.addEventListener('error', function(e) {
+  if (e.target && e.target.tagName === 'SCRIPT' && e.target.src && e.target.src.includes('three')) {
+    window.__THREE_FAILED = true;
+    console.warn('[three-avatar] Failed to load Three.js, avatar disabled');
+  }
+}, true);
+</script>
 <script type="importmap">
 {
   "imports": {
