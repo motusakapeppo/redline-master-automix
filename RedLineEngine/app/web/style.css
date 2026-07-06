@@ -126,6 +126,23 @@ html, body {
   letter-spacing: 0.05em;
 }
 
+.monitor-toggle {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.monitor-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* "Deep Neural Scan" state: the LLM is actively thinking (40-60s of local
    CPU inference). A slow dark-red pulsing halo around the head is the only
    signal the user needs — it says "the machine is working" without a

@@ -13,6 +13,7 @@ import numpy as np
 import soundfile as sf
 import webview
 
+from redline import config
 from redline.input_loader import load_auto
 from redline.analyze import analyze
 from redline.wizard import MixPreferences
@@ -58,6 +59,40 @@ class Api:
         instead of a generic canned animation loop."""
         if self.window is not None:
             self.window.evaluate_js(f"onEvent({json.dumps(_sanitize_for_json(evt))})")
+
+    def toggle_neural_monitor(self, is_enabled: bool) -> None:
+        """Called by the GUI's Neural Monitor switch -- flips the flag for
+        this running process only (no .flags.json edit, no restart)."""
+        config.set_override("ENABLE_LIVE_AUDITION", is_enabled)
+        self._narrate(f"Neural Monitor: {'attivo' if is_enabled else 'disattivo'}")
+
+    def _audition(self, dry: np.ndarray, wet: np.ndarray, sr: int) -> None:
+        """Plays a loud/dense before-and-after chunk of the master bus glue
+        compression through real speakers, narrating + reflecting avatar
+        state around each half. Only ever called from masterengine.py when
+        ENABLE_LIVE_AUDITION is on -- any audio-hardware or driver failure
+        here must never take down the actual render, hence the broad catch."""
+        try:
+            from redline.audition import driver, extract_smart_chunk
+
+            chunk_dry = extract_smart_chunk(dry, sr)
+            chunk_wet = extract_smart_chunk(wet, sr)
+
+            self._narrate("Neural Monitor: ascolto il segnale grezzo (dry)...")
+            if self.window is not None:
+                self.window.evaluate_js("setAuditionState('BEFORE')")
+            driver.play_chunk(chunk_dry, sr)
+
+            self._narrate("Neural Monitor: ascolto la glue compression applicata (wet)...")
+            if self.window is not None:
+                self.window.evaluate_js("setAuditionState('AFTER')")
+            driver.play_chunk(chunk_wet, sr)
+
+            if self.window is not None:
+                self.window.evaluate_js("setAuditionState('IDLE')")
+        except Exception as exc:
+            traceback.print_exc()
+            self._narrate(f"Neural Monitor: errore driver audio ({exc})")
 
     def pick_input_path(self) -> str | None:
         result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
@@ -110,7 +145,11 @@ class Api:
                     render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
                 else:
                     platform = prefs.get("platform", "auto")
-                    mastered = render_master(mixed, stems.sample_rate, analysis, platform=platform, on_step=self._narrate, on_event=self._emit)
+                    mastered = render_master(
+                        mixed, stems.sample_rate, analysis, platform=platform,
+                        on_step=self._narrate, on_event=self._emit,
+                        on_audition=self._audition if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+                    )
                     master_path = os.path.join(out_dir, "master.wav")
                     sf.write(master_path, mastered, stems.sample_rate)
                 self._narrate(f"Master salvato: {master_path}")

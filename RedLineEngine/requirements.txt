@@ -10,3 +10,4 @@ demucs
 noisereduce
 huggingface_hub
 llama-cpp-python==0.3.2
+sounddevice==0.4.6

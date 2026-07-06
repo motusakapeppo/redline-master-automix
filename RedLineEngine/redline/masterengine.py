@@ -19,6 +19,7 @@ from .qc import run_qc
 
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
+AuditionCallback = Callable[[np.ndarray, np.ndarray, int], None]
 
 
 def _noop(_msg: str) -> None:
@@ -83,7 +84,13 @@ def _split_three_bands(mono: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarra
     return low, mid, high
 
 
-def _multiband_compress(signal: np.ndarray, sr: int, on_step: StepCallback, on_event: EventCallback) -> np.ndarray:
+def _multiband_compress(
+    signal: np.ndarray,
+    sr: int,
+    on_step: StepCallback,
+    on_event: EventCallback,
+    on_audition: AuditionCallback | None = None,
+) -> np.ndarray:
     """Splits into low/mid/high, compresses each band independently with its
     own gentle recipe, sums back — glue that doesn't let the sub-bass's
     transients drag the vocal/presence range's dynamics around, or vice versa."""
@@ -100,6 +107,15 @@ def _multiband_compress(signal: np.ndarray, sr: int, on_step: StepCallback, on_e
         f"medio ({MULTIBAND_RECIPES['mid']['ratio']}:1), alto >{MULTIBAND_HIGH_HZ:.0f}Hz ({MULTIBAND_RECIPES['high']['ratio']}:1)"
     )
     on_event({"type": "multiband_compressor", "low_hz": MULTIBAND_LOW_HZ, "high_hz": MULTIBAND_HIGH_HZ, "recipes": MULTIBAND_RECIPES})
+
+    # Neural Monitor / Live Audition (off by default): lets the user actually
+    # hear the glue compression's effect through real speakers instead of
+    # only reading a ratio number. Kept entirely optional/callback-driven so
+    # masterengine.py never has to know about pywebview or audio hardware --
+    # app/api.py supplies on_audition only when ENABLE_LIVE_AUDITION is on.
+    if on_audition is not None:
+        on_audition(signal, out, sr)
+
     return out.astype(np.float32)
 
 
@@ -133,6 +149,7 @@ def render_master(
     on_event: EventCallback = _noop_event,
     reference: np.ndarray | None = None,
     reference_sr: int | None = None,
+    on_audition: AuditionCallback | None = None,
 ) -> np.ndarray:
     meter = pyln.Meter(sr)
     mono_ref = mixed.mean(axis=1) if mixed.ndim == 2 else mixed
@@ -152,7 +169,7 @@ def render_master(
 
     gained = Pedalboard([Gain(gain_db=gain_db)])(mixed.T, sr).T
 
-    glued = _multiband_compress(gained, sr, on_step, on_event)
+    glued = _multiband_compress(gained, sr, on_step, on_event, on_audition)
 
     on_step(f"Soft clipper a {CLIP_CEILING_DB}dB (scarica i picchi estremi prima del limiter)")
     on_event({"type": "soft_clip", "ceiling_db": CLIP_CEILING_DB})

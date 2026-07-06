@@ -18,6 +18,7 @@ DEFAULTS = {
     "ENABLE_LLM_ADVISORY": False,
     "ENABLE_DIRECTOR_MODE": False,
     "ENABLE_BLUEPRINT_CHAINS": False,
+    "ENABLE_LIVE_AUDITION": False,
 }
 
 _cache: dict | None = None
@@ -52,6 +53,15 @@ def _load() -> dict:
 
 def is_enabled(flag: str) -> bool:
     return _load().get(flag, False)
+
+
+def set_override(flag: str, value: bool) -> None:
+    """Runtime toggle for flags a user can flip from the GUI mid-session
+    (e.g. the Neural Monitor A/B switch) without touching .flags.json or
+    restarting the app. Only affects the in-memory cache for this process."""
+    flags = _load()
+    if flag in flags:
+        flags[flag] = bool(value)
 
 
 def reload() -> None:

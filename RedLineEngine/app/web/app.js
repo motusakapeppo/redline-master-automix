@@ -12,6 +12,8 @@ let earringSwayTween = null;
 
 function startIdleBreathing() {
   if (typeof gsap === "undefined") return;
+  if (avatarIdleTween) avatarIdleTween.kill();
+  if (earringSwayTween) earringSwayTween.kill();
   avatarIdleTween = gsap.to("#avatar-head", {
     y: 6,
     duration: 3,
@@ -297,6 +299,42 @@ function setListening(on) {
   const hp = document.getElementById("headphones");
   if (!hp) return;
   hp.classList.toggle("active", on);
+}
+
+// --- Neural Monitor (Live Audition): lets the user hear a real before/after
+// through actual speakers (redline/audition.py), not just read a ratio.
+function toggleAudition() {
+  const isChecked = document.getElementById("audition-switch").checked;
+  if (window.pywebview) {
+    window.pywebview.api.toggle_neural_monitor(isChecked);
+  }
+}
+
+// Called directly from Python (api.py's _audition) around each half of the
+// dry/wet playback -- reflects what's coming out of the speakers right now
+// onto the avatar so the A/B comparison reads as one continuous moment,
+// not a silent pause.
+function setAuditionState(state) {
+  if (typeof gsap === "undefined") return;
+  const avatar = document.getElementById("avatar-head");
+  if (!avatar) return;
+
+  if (state === "BEFORE") {
+    gsap.to("#avatar-head path", { stroke: "#FFAA00", duration: 0.3 });
+    gsap.to(avatar, { scale: 1.05, duration: 0.3 });
+    setAssistantLabel("ascolto: grezzo");
+  } else if (state === "AFTER") {
+    gsap.to("#avatar-head path", { stroke: "#FF003F", duration: 0.3 });
+    gsap.killTweensOf(avatar);
+    gsap.to(avatar, { y: 10, yoyo: true, repeat: -1, duration: 0.4 });
+    setAssistantLabel("ascolto: mixato");
+  } else {
+    gsap.killTweensOf(avatar);
+    gsap.to("#avatar-head path", { stroke: "#1A1A1A", duration: 0.5 });
+    gsap.to(avatar, { scale: 1, duration: 0.5 });
+    setAssistantLabel("pronto");
+    startIdleBreathing();
+  }
 }
 
 function reactToDeesser() {
