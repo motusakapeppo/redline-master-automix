@@ -51,12 +51,18 @@ def is_available() -> bool:
     return _get_model() is not None
 
 
-def classify_ambiguous_stems(stem_infos: list[dict]) -> dict[str, str]:
+def classify_ambiguous_stems(stem_infos: list[dict], on_token=None) -> dict[str, str]:
     """stem_infos: list of {"name": str, "spectral_hint": str, "transient_hint": str}.
     Returns {name: bus_category} for whichever stems the model could confidently
     place. Empty dict if the model isn't available or its output doesn't parse
     as valid JSON — callers must keep their existing heuristic result in that
-    case and never block on this."""
+    case and never block on this.
+
+    `on_token`, if given, is called with each generated text fragment as it
+    streams from the model — this is purely for the UI's "watch it think"
+    console (Fase 5); the full text is still assembled and parsed the same
+    way whether or not a callback is passed, so streaming is cosmetic only,
+    never a change to what gets classified."""
     model = _get_model()
     if model is None or not stem_infos:
         return {}
@@ -73,12 +79,28 @@ def classify_ambiguous_stems(stem_infos: list[dict]) -> dict[str, str]:
     )
 
     try:
-        result = model.create_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.1,
-        )
-        text = result["choices"][0]["message"]["content"]
+        if on_token is not None:
+            text = ""
+            stream = model.create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.1,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk["choices"][0].get("delta", {})
+                fragment = delta.get("content")
+                if fragment:
+                    text += fragment
+                    on_token(fragment)
+        else:
+            result = model.create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.1,
+            )
+            text = result["choices"][0]["message"]["content"]
+
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
             return {}

@@ -23,15 +23,23 @@ PARAM_RANGES: dict[str, tuple[float, float]] = {
     "pan": (-1.0, 1.0),
 }
 
-def validate_classification(suggestion: dict) -> dict:
+def validate_classification(suggestion: dict, allowed_names: set[str] | None = None) -> dict:
     """Drops any entry that isn't {stem_name: valid_category} — used for the
     naming-fallback advisory path. Returns only the entries that survived
     validation; never raises, since a hallucinated category is an expected,
-    not exceptional, case for a small local model."""
+    not exceptional, case for a small local model.
+
+    `allowed_names`, if given, additionally drops any suggestion whose key
+    isn't one of the stem names actually asked about -- confirmed necessary
+    in practice: the model has been observed echoing back a literal
+    "categoria" key instead of the real stem name, which would otherwise
+    silently reclassify a stem nobody asked it to."""
     return {
         name: category
         for name, category in suggestion.items()
-        if isinstance(name, str) and category in BUS_CATEGORIES
+        if isinstance(name, str)
+        and category in BUS_CATEGORIES
+        and (allowed_names is None or name in allowed_names)
     }
 
 

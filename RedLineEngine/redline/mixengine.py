@@ -421,14 +421,30 @@ def render_mix(
                     stem_infos.append({"name": name, "spectral_hint": spectral_hint, "transient_hint": transient_hint})
 
                 on_step(f"LLM advisory: {len(stem_infos)} stem ambigui, consulto il modello locale...")
-                raw_suggestions = classify_ambiguous_stems(stem_infos)
-                suggestions = validate_classification(raw_suggestions)
+                on_event({"type": "llm_advisory_start", "stem_count": len(stem_infos)})
+
+                def _on_token(fragment: str) -> None:
+                    # Streamed straight through as its own event type so the
+                    # GUI can render a live "thinking" console instead of
+                    # waiting silently for the ~40-60s local inference to finish.
+                    on_event({"type": "llm_token", "text": fragment})
+
+                raw_suggestions = classify_ambiguous_stems(stem_infos, on_token=_on_token)
+                on_event({"type": "llm_advisory_done"})
+                suggestions = validate_classification(raw_suggestions, allowed_names=set(ambiguous.keys()))
 
                 bus_to_role = {
                     "Drum Bus": "drums", "Bass Bus": "bass",
                     "Main Vox": "vocal", "Backing Vox": "vocal", "Music Bus": "other",
                 }
                 for name, category in suggestions.items():
+                    # The model doesn't always echo the stem name back
+                    # correctly (confirmed in practice: it once returned a
+                    # literal "categoria" key instead of the actual stem
+                    # name) -- any suggestion for a name we didn't ask about
+                    # is a hallucination, not a valid reclassification.
+                    if name not in descriptors:
+                        continue
                     new_role = bus_to_role.get(category, "other")
                     if new_role != "other":
                         d = descriptors[name]

@@ -14,6 +14,14 @@ def test_validate_classification_drops_hallucinated_category():
     assert result == {"track_08": BUS_CATEGORIES[0]}
 
 
+def test_validate_classification_drops_names_outside_allowed_set():
+    # Observed in practice: the model echoing a literal "categoria" key
+    # instead of the real stem name it was asked about.
+    suggestion = {"categoria": BUS_CATEGORIES[0]}
+    result = validate_classification(suggestion, allowed_names={"track_07"})
+    assert result == {}
+
+
 def test_clamp_params_clamps_out_of_range_gain():
     clamped, corrections = clamp_params({"gain_db": 15.0})
     assert clamped["gain_db"] == 12.0
