@@ -18,8 +18,12 @@ import numpy as np
 from pedalboard import Pedalboard, PeakFilter, LowShelfFilter, HighShelfFilter
 
 from .analysis.loudness import spectral_band_energies, SPECTRAL_BANDS
+from .targets import load_measured_target
 
 # name -> approximate target energy ratio per band (sub_bass, bass, low_mid, mid, high_mid, air)
+# These are the FALLBACK heuristics — if a measured reference profile exists
+# (redline/targets/target_<slug>.json, built by profile_targets.py from real
+# commercial tracks), resolve_target() uses that instead.
 TARGET_BAND_RATIOS: dict[str, dict[str, float]] = {
     "EDM / Urban": dict(sub_bass=0.22, bass=0.20, low_mid=0.12, mid=0.14, high_mid=0.16, air=0.16),
     "Hip-Hop": dict(sub_bass=0.25, bass=0.20, low_mid=0.12, mid=0.13, high_mid=0.15, air=0.15),
@@ -33,6 +37,15 @@ DEVIATION_THRESHOLD = 0.05  # ratio points (e.g. 0.05 = 5 percentage points) bef
 MAX_CORRECTION_DB = 3.0
 
 _BAND_CENTER_HZ = {name: (low + high) / 2.0 for name, low, high in SPECTRAL_BANDS}
+
+
+def resolve_target(genre_name: str) -> dict[str, float]:
+    """Measured reference profile for the genre if one exists, else the
+    built-in heuristic. Falls back to 'Balanced' for unknown genres."""
+    measured = load_measured_target(genre_name)
+    if measured is not None:
+        return measured
+    return TARGET_BAND_RATIOS.get(genre_name, TARGET_BAND_RATIOS["Balanced"])
 
 
 @dataclass
@@ -99,7 +112,7 @@ def run_qc(
     mono_compat = _mono_compatibility(mastered)
 
     bands = spectral_band_energies(mastered, sr)
-    target = TARGET_BAND_RATIOS.get(genre_name, TARGET_BAND_RATIOS["Balanced"])
+    target = resolve_target(genre_name)
     deviations = {name: bands[name] - target[name] for name in target}
 
     from . import analysis as _analysis_pkg2  # local import avoids a cycle at module load
