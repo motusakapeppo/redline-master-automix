@@ -8,15 +8,75 @@ let selectedOutput = null;
 // beat-synced headbang -- the breathing is just what it does before the
 // engine has anything to groove to yet.
 let avatarIdleTween = null;
-if (typeof gsap !== "undefined") {
+let earringSwayTween = null;
+
+function startIdleBreathing() {
+  if (typeof gsap === "undefined") return;
   avatarIdleTween = gsap.to("#avatar-head", {
-    y: 3,
-    duration: 2.5,
+    y: 6,
+    duration: 3,
     repeat: -1,
     yoyo: true,
     ease: "sine.inOut",
   });
+  // The earrings hang off the head and lag slightly behind its motion --
+  // real jewelry doesn't move in perfect lockstep with the body, it trails
+  // a beat behind from inertia.
+  earringSwayTween = gsap.to(".svg-earring", {
+    rotation: 5,
+    duration: 3,
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut",
+    delay: 0.5,
+  });
 }
+startIdleBreathing();
+
+// --- Idle "look around": autonomous, randomly-timed head turns on a
+// virtual Z-axis (rotationX/rotationY + #avatar-panel's CSS perspective)
+// so the avatar reads as present and alive between real DSP events, not
+// frozen staring straight ahead. Purely cosmetic -- never driven by real
+// data, this is the one animation that's allowed to just be alive on its
+// own, same as a person waiting in a room glances around without a reason.
+function randomLookAround() {
+  if (typeof gsap === "undefined") return;
+  const rotY = gsap.utils.random(-25, 25);
+  const rotX = gsap.utils.random(-10, 10);
+  const turnSpeed = gsap.utils.random(0.8, 1.5);
+  const holdStare = gsap.utils.random(1.0, 3.5);
+  const nextLookDelay = gsap.utils.random(2.0, 7.0);
+
+  gsap.to("#avatar-head", {
+    rotationY: rotY,
+    rotationX: rotX,
+    duration: turnSpeed,
+    ease: "power2.inOut",
+    onUpdate: function () {
+      // Centrifugal detail: a brisk head turn gives the earrings a little
+      // extra kick in the opposite direction, on top of their own
+      // independent sway tween.
+      gsap.to(".svg-earring", {
+        rotation: -rotY * 0.2,
+        duration: 0.5,
+        overwrite: "auto",
+      });
+    },
+    onComplete: () => {
+      gsap.to("#avatar-head", {
+        rotationY: 0,
+        rotationX: 0,
+        duration: turnSpeed,
+        ease: "power2.inOut",
+        delay: holdStare,
+        onComplete: () => {
+          gsap.delayedCall(nextLookDelay, randomLookAround);
+        },
+      });
+    },
+  });
+}
+randomLookAround();
 
 // --- QC canvas "breathing" waveform: a proxy for "the machine is listening"
 // — activity spikes on every real step/event and decays, driving the wave's
@@ -192,36 +252,45 @@ function setAssistantLabel(text) {
 // --- Reactions driven by real DSP values, not a canned loop ---
 
 function reactToCompression(ratio, releaseMs) {
-  // Interpolates the real ratio (roughly 1..12) to a rotation in degrees,
-  // holds it, then releases back to zero over the compressor's own real
-  // release time — a "ballistic" return, not a fixed animation duration.
-  const degrees = Math.min(90, Math.max(0, (ratio - 1) * 9));
+  // Per-stem compression -- a smaller, quicker jewelry jingle than the
+  // master-bus glue reaction (reactToGlueCompression), on the earrings
+  // only. Ballistic return over the compressor's own real release time.
+  if (typeof gsap === "undefined") return;
+  const degrees = Math.min(20, Math.max(0, (ratio - 1) * 2));
   const releaseSeconds = Math.max(0.15, Math.min(2.0, (releaseMs || 150) / 1000));
-  for (const id of ["assistant-piercing-1", "assistant-piercing-2", "assistant-piercing-3"]) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.style.transitionDuration = "0.08s";
-    el.style.transform = `rotate(${degrees}deg)`;
-    setTimeout(() => {
-      el.style.transitionDuration = `${releaseSeconds}s`;
-      el.style.transform = "rotate(0deg)";
-    }, 90);
-  }
+  gsap.to(".svg-earring", {
+    rotation: degrees,
+    duration: 0.08,
+    overwrite: "auto",
+    onComplete: () => {
+      gsap.to(".svg-earring", { rotation: 0, duration: releaseSeconds, ease: "power1.out" });
+    },
+  });
 }
 
 function reactToGlueCompression(ratio) {
-  // The harder the master bus glue squeezes, the more the avatar squints --
-  // a felt sense of "how much am I pushing this mix", not just a number in
-  // a meter. Ratio ~1.2:1 (barely touching it) to ~4:1 (leaning on it hard).
-  const squint = Math.min(0.6, Math.max(0, (ratio - 1.2) / 3.0));
-  const eyeScale = 1 - squint * 0.7;
-  const target = { scaleY: eyeScale };
-  if (typeof gsap !== "undefined") {
-    gsap.to("#assistant-eyes", { ...target, duration: 0.3, ease: "power1.out" });
-  } else {
-    const eyes = document.getElementById("assistant-eyes");
+  // The harder the master bus glue squeezes, the more the avatar squints
+  // and the earrings take a physical "hit" -- a felt sense of "how much am
+  // I pushing this mix", not just a number in a meter. Ratio ~1.2:1
+  // (barely touching it) to ~4:1 (leaning on it hard) mapped to a 0..6
+  // "pressure" proxy (a real GR-in-dB reading isn't available yet).
+  const pressure = Math.min(6, Math.max(0, (ratio - 1.2) * 2));
+  const eyeScale = Math.max(0.3, 1 - pressure * 0.1);
+
+  if (typeof gsap === "undefined") {
+    const eyes = document.getElementById("eyes");
     if (eyes) eyes.style.transform = `scaleY(${eyeScale})`;
+    return;
   }
+
+  gsap.to("#earring-left", {
+    rotation: 15 + pressure * 2,
+    duration: 0.2,
+    ease: "power2.out",
+    yoyo: true,
+    repeat: 1,
+  });
+  gsap.to("#eyes", { scaleY: eyeScale, transformOrigin: "center", duration: 0.2 });
 }
 
 function setListening(on) {
@@ -231,10 +300,28 @@ function setListening(on) {
 }
 
 function reactToDeesser() {
-  const nose = document.getElementById("assistant-nose");
-  if (!nose) return;
-  nose.classList.add("hot");
-  setTimeout(() => nose.classList.remove("hot"), 220);
+  // The nose piercing "overheats" for an instant -- flashes red and
+  // dilates slightly -- then settles back to its silver metallic material.
+  const piercing = document.getElementById("piercing-nose");
+  if (!piercing) return;
+
+  if (typeof gsap === "undefined") {
+    piercing.style.fill = "#FF003F";
+    setTimeout(() => { piercing.style.fill = ""; }, 150);
+    return;
+  }
+
+  gsap.to(piercing, {
+    fill: "#FF003F",
+    scale: 1.2,
+    transformOrigin: "center",
+    duration: 0.05,
+    yoyo: true,
+    repeat: 1,
+    onComplete: () => {
+      piercing.style.fill = "";
+    },
+  });
 }
 
 function syncAssistantToBpm(bpm) {
@@ -245,7 +332,12 @@ function syncAssistantToBpm(bpm) {
     avatarIdleTween.kill();
     avatarIdleTween = null;
   }
-  // Subtle headbang locked to the real tempo -- a light nod, not a bobblehead.
+  if (earringSwayTween) {
+    earringSwayTween.kill();
+    earringSwayTween = null;
+  }
+  // Subtle headbang locked to the real tempo -- a light nod, not a
+  // bobblehead -- with the earrings swinging along at the same tempo.
   gsap.to("#avatar-head", {
     y: 4,
     rotation: 2,
@@ -253,6 +345,14 @@ function syncAssistantToBpm(bpm) {
     repeat: -1,
     yoyo: true,
     ease: "sine.inOut",
+  });
+  gsap.to(".svg-earring", {
+    rotation: 6,
+    duration: beatSeconds / 2,
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut",
+    delay: beatSeconds / 4,
   });
 }
 

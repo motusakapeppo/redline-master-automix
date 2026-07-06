@@ -69,15 +69,30 @@ html, body {
 }
 
 .assistant {
-  width: 160px;
+  width: 190px;
   text-align: center;
   flex: none;
 }
 
-.assistant-svg { width: 100%; height: auto; }
+.assistant-svg { width: 100%; height: auto; filter: drop-shadow(0px 10px 15px rgba(0, 0, 0, 0.8)); }
 
-#avatar-head { transform-box: fill-box; transform-origin: center; }
-#assistant-eyes { transform-box: fill-box; transform-origin: center; }
+/* #avatar-panel is the virtual "camera" for the idle-look-around 3D head
+   turn (see randomLookAround() in app.js) -- without a perspective on the
+   containing block, rotationX/rotationY just squash the head like paper
+   instead of reading as a real turn. */
+#avatar-panel { perspective: 800px; }
+
+#avatar-head {
+  transform-style: preserve-3d;
+  transform-origin: center center;
+}
+
+#eyes { transform-box: fill-box; transform-origin: center; animation: assistant-blink 4.5s ease-in-out infinite; }
+
+@keyframes assistant-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
 
 /* Headphones: hidden by default, GSAP/CSS fades them in while the engine
    is actively "listening" (stem analysis, LTAS reference matching, the
@@ -103,68 +118,6 @@ html, body {
   stroke-width: 1.5;
 }
 
-/* Minimal wireframe/blueprint style: no fill, thin uniform strokes, only
-   the piercings/mouth carry the red accent — reads as a precision
-   instrument readout rather than an illustrated cartoon face. */
-
-.assistant-head {
-  fill: none;
-  stroke: #555;
-  stroke-width: 1;
-}
-
-.assistant-piercing {
-  fill: none;
-  stroke: #888;
-  stroke-width: 1;
-  transform-box: fill-box;
-  transform-origin: center;
-  transition: transform 0.3s ease-out;
-}
-
-.assistant-piercing-hoop {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.25;
-  transition: stroke 0.15s ease, filter 0.15s ease;
-}
-
-.assistant-piercing-hoop.hot {
-  stroke: #ff2a4d;
-  filter: drop-shadow(0 0 4px #ff2a4d);
-}
-
-.assistant-eye {
-  stroke: #999;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: assistant-blink 4.5s ease-in-out infinite;
-}
-
-@keyframes assistant-blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.15); }
-}
-
-.assistant-mouth {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.25;
-  stroke-linecap: round;
-  transition: d 0.15s ease;
-}
-
-.assistant-mouth.talking {
-  animation: assistant-talk 0.3s ease;
-}
-
-@keyframes assistant-talk {
-  0%, 100% { d: path("M64,112 L96,112"); }
-  50% { d: path("M68,110 Q80,120 92,110"); }
-}
-
 .assistant-label {
   margin-top: 4px;
   font-size: 10px;
@@ -177,13 +130,13 @@ html, body {
    CPU inference). A slow dark-red pulsing halo around the head is the only
    signal the user needs — it says "the machine is working" without a
    progress bar promising a duration nobody can predict. */
-.assistant.deep-scan .assistant-head {
+.assistant.deep-scan #avatar-head {
   animation: assistant-scan-halo 1.8s ease-in-out infinite;
 }
 
 @keyframes assistant-scan-halo {
-  0%, 100% { filter: drop-shadow(0 0 2px #4a000d); stroke: #555; }
-  50% { filter: drop-shadow(0 0 10px #8a0020); stroke: #a33; }
+  0%, 100% { filter: drop-shadow(0 0 2px #4a000d); }
+  50% { filter: drop-shadow(0 0 12px #8a0020); }
 }
 
 /* Streaming reasoning console: raw model tokens appended live, monospace,

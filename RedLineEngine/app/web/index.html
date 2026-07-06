@@ -107,33 +107,62 @@
          analysis/LTAS running -> headphones fade in). Wireframe line-art,
          no fill except the red accent details, per the RedLine style. -->
     <div id="assistant" class="assistant">
-      <svg viewBox="0 0 160 160" class="assistant-svg">
+      <svg id="avatar-svg" viewBox="0 0 200 250" class="assistant-svg">
+        <defs>
+          <linearGradient id="silver-metal" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FFFFFF" />
+            <stop offset="25%" stop-color="#E0E0E0" />
+            <stop offset="50%" stop-color="#888888" />
+            <stop offset="75%" stop-color="#CCCCCC" />
+            <stop offset="100%" stop-color="#333333" />
+          </linearGradient>
+
+          <radialGradient id="skin-3d" cx="35%" cy="35%" r="70%">
+            <stop offset="0%" stop-color="#2A2A2A" />
+            <stop offset="70%" stop-color="#111111" />
+            <stop offset="100%" stop-color="#020202" />
+          </radialGradient>
+
+          <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
         <g id="avatar-head">
-          <path d="M80,20 C110,20 128,46 128,84 C128,118 108,140 80,140 C52,140 32,118 32,84 C32,46 50,20 80,20 Z"
-                class="assistant-head" />
+          <path d="M70 160 L70 220 C70 240, 130 240, 130 220 L130 160 Z" fill="#080808" />
+
+          <path d="M50 80 C50 30, 150 30, 150 80 C150 130, 130 170, 100 180 C70 170, 50 130, 50 80 Z"
+                fill="url(#skin-3d)" stroke="#1A1A1A" stroke-width="2" />
 
           <!-- headphones: hidden by default, faded in while the engine is
-               actively "listening" (stem analysis, LTAS reference matching) -->
+               actively "listening" (stem analysis, LTAS reference matching).
+               Resized/repositioned to this head's proportions. -->
           <g id="headphones" class="headphones-svg">
-            <path d="M40,70 A40,40 0 0 1 120,70" class="headphones-band" />
-            <rect x="28" y="66" width="12" height="26" rx="4" class="headphones-cup" />
-            <rect x="120" y="66" width="12" height="26" rx="4" class="headphones-cup" />
+            <path d="M44,86 C44,20 156,20 156,86" class="headphones-band" />
+            <ellipse cx="42" cy="95" rx="11" ry="24" class="headphones-cup" />
+            <ellipse cx="158" cy="95" rx="11" ry="24" class="headphones-cup" />
           </g>
 
-          <circle id="assistant-piercing-1" cx="31" cy="74" r="2.6" class="assistant-piercing" />
-          <circle id="assistant-piercing-2" cx="30" cy="84" r="2.6" class="assistant-piercing" />
-          <circle id="assistant-piercing-3" cx="31" cy="94" r="2.6" class="assistant-piercing" />
-
-          <circle cx="129" cy="86" r="4.5" class="assistant-piercing-hoop" />
-
-          <circle id="assistant-nose" cx="72" cy="108" r="3" class="assistant-piercing-hoop" />
-
-          <g id="assistant-eyes">
-            <line id="eye-left" x1="56" y1="76" x2="68" y2="76" class="assistant-eye" />
-            <line id="eye-right" x1="92" y1="76" x2="104" y2="76" class="assistant-eye" />
+          <g id="eyes">
+            <path d="M60 90 Q100 100 140 90 L135 98 Q100 108 65 98 Z" fill="#111" stroke="#FF003F" stroke-width="0.5" />
+            <circle cx="100" cy="96" r="2" fill="#FF003F" filter="url(#neon-glow)" opacity="0.8" id="eye-led" />
           </g>
 
-          <path id="assistant-mouth" d="M64,112 L96,112" class="assistant-mouth" />
+          <ellipse id="piercing-nose" cx="95" cy="140" rx="3.5" ry="4.5" fill="url(#silver-metal)" transform="rotate(-15 95 140)" />
+
+          <g id="earring-left" class="svg-earring" style="transform-origin: 52px 105px;">
+            <path d="M48 105 C48 100, 56 100, 56 105 C56 110, 48 110, 48 105 Z" fill="none" stroke="url(#silver-metal)" stroke-width="2.5" />
+            <path d="M52 108 L50 125 L52 130 L54 125 Z" fill="url(#silver-metal)" />
+          </g>
+
+          <g id="earring-right" class="svg-earring" style="transform-origin: 148px 105px;">
+            <path d="M144 105 C144 100, 152 100, 152 105 C152 110, 144 110, 144 105 Z" fill="none" stroke="url(#silver-metal)" stroke-width="2.5" />
+            <path d="M148 108 L146 120 L148 124 L150 120 Z" fill="url(#silver-metal)" />
+          </g>
         </g>
       </svg>
       <div class="assistant-label" id="assistant-label">pronto</div>
