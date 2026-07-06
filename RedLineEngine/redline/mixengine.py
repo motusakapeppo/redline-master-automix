@@ -615,21 +615,32 @@ def render_mix(
             for name in levelable:
                 processed[name] = apply_gain_curve(processed[name], gain_curves[name])
 
+    # --- Vocal_Main bus: sum all lead vocal takes into one bus so
+    # downstream processing (space, prominence, parallel, mix) treats
+    # the lead as one coherent element instead of N individual tracks.
+    vocal_main_bus = None
+    if lead_names:
+        vocal_main_bus = np.zeros((n, 2), dtype=np.float32)
+        for name in lead_names:
+            vocal_main_bus += processed[name]
+        on_step(f"Bus Vocal_Main: {len(lead_names)} tracce lead sommate")
+        on_event({"type": "vocal_main_bus", "stems": lead_names})
+
     # --- Space: a short send-style reverb + BPM-synced delay on the lead
     # vocal (genre/aggressiveness-informed amount), a subtle room send on
     # drums for cohesion. Parallel, not insert — the dry signal underneath
-    # is preserved.
-    if lead_names:
+    # is preserved. Applied to the Vocal_Main bus as a whole, not per-stem.
+    if vocal_main_bus is not None:
         base_space_mix = genre_space_amount(analysis.genre.name, prefs.aggressiveness)
         on_step(f"Spazio voce: riverbero + delay sincronizzato al BPM ({analysis.bpm:.0f}), base {base_space_mix * 100:.0f}%")
         on_event({"type": "vocal_space", "mix": round(base_space_mix, 2), "bpm": analysis.bpm})
-        for name in lead_names:
-            # Chorus lifts (more space, meant to open up), verse stays more
-            # intimate/dry — same section-aware idea as the presence boost.
-            section = descriptors[name].section
-            section_scale = 1.4 if section == "chorus" else (0.7 if section == "verse" else 1.0)
-            space_mix = float(np.clip(base_space_mix * section_scale, 0.0, 0.45))
-            processed[name] = vocal_send(processed[name], sr, analysis.bpm, space_mix)
+        # Chorus lifts (more space, meant to open up), verse stays more
+        # intimate/dry — section-aware idea. Use the first lead's section
+        # as a proxy for the bus; if mixed sections exist, default to 1.0.
+        section = descriptors[lead_names[0]].section if lead_names else None
+        section_scale = 1.4 if section == "chorus" else (0.7 if section == "verse" else 1.0)
+        space_mix = float(np.clip(base_space_mix * section_scale, 0.0, 0.45))
+        vocal_main_bus = vocal_send(vocal_main_bus, sr, analysis.bpm, space_mix)
 
     drum_names_for_space = [n for n, r in roles.items() if r == "drums"]
     if drum_names_for_space:
@@ -679,6 +690,14 @@ def render_mix(
         )(backing_vocals_bus.T, sr).T
         on_step(f"Bus voci di supporto: {len(register_buses)} sub-bus per registro ({', '.join(register_buses.keys())}), colla finale {BACKING_VOCALS_GLUE_RATIO:.1f}:1")
         on_event({"type": "backing_vocals_bus", "registers": list(register_buses.keys())})
+
+    # --- Vocal_Doubles bus: alias for the backing vocals bus, named
+    # symmetrically with Vocal_Main so the mix bus routing is clear.
+    # Doubles are scaled to 50% of Main level so the lead keeps presence.
+    vocal_doubles_bus = backing_vocals_bus  # already summed + glued
+    if vocal_doubles_bus is not None:
+        vocal_doubles_bus = vocal_doubles_bus * 0.5
+        on_step("Bus Vocal_Doubles: volume ridotto al 50% della Main")
 
     # --- Preventive masking: cut instrumental stems that structurally pile
     # up energy in the vocal's presence band (2-5kHz), sized by how much
@@ -744,53 +763,35 @@ def render_mix(
         on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
 
     # Gain-stage vocal prominence: +/- up to 5dB relative to everything else
-    # (applies to the lead and the whole backing vocals bus alike, preserving
-    # their relative internal balance)
+    # (applies to the Vocal_Main and Vocal_Doubles buses, preserving their
+    # relative internal balance)
     vocal_gain_db = prefs.vocal_prominence * 5.0
-    if lead_names or backing_vocals_bus is not None:
+    if vocal_main_bus is not None or vocal_doubles_bus is not None:
         on_step(f"Regolazione presenza voce: {vocal_gain_db:+.1f}dB")
-    for name in lead_names:
-        processed[name] = processed[name] * db_to_gain(vocal_gain_db)
-    if backing_vocals_bus is not None:
-        backing_vocals_bus = backing_vocals_bus * db_to_gain(vocal_gain_db)
+    if vocal_main_bus is not None:
+        vocal_main_bus = vocal_main_bus * db_to_gain(vocal_gain_db)
+    if vocal_doubles_bus is not None:
+        vocal_doubles_bus = vocal_doubles_bus * db_to_gain(vocal_gain_db)
 
     # --- Parallel (New York) compression bus for drums + lead vocal: adds
     # weight/punch by blending in a hard-compressed copy, rather than
-    # crushing the clean signal's own transients.
-    parallel_source_names = [n for n in lead_names if n in processed] + [
-        n for n, r in roles.items() if r == "drums" and n in processed
-    ]
+    # crushing the clean signal's own transients. Uses the Vocal_Main bus
+    # instead of individual lead tracks so the parallel bus sees the same
+    # summed vocal entity that goes into the mix.
+    drum_names_for_parallel = [n for n, r in roles.items() if r == "drums" and n in processed]
     parallel_bus = None
-    if parallel_source_names:
+    if vocal_main_bus is not None or drum_names_for_parallel:
         parallel_bus = np.zeros((n, 2), dtype=np.float32)
-        for name in parallel_source_names:
+        if vocal_main_bus is not None:
+            parallel_bus += vocal_main_bus
+        for name in drum_names_for_parallel:
             parallel_bus += processed[name]
         ny_board = Pedalboard(
             [Compressor(threshold_db=-32.0, ratio=8.0, attack_ms=1.0, release_ms=100.0), Gain(gain_db=2.0)]
         )
         parallel_bus = ny_board(parallel_bus.T, sr).T
         on_step(f"Bus parallelo (New York compression) su voce+batteria, mix {PARALLEL_BUS_MIX * 100:.0f}%")
-        on_event({"type": "parallel_bus", "mix": PARALLEL_BUS_MIX, "sources": parallel_source_names})
-
-    # --- Vocal_Main bus: sum all lead vocal takes into one bus so the
-    # mix_bus sees a single vocal entity instead of N individual tracks.
-    # This makes gain-staging and downstream processing (parallel bus,
-    # master bus) treat the lead vocal as one coherent element.
-    vocal_main_bus = None
-    if lead_names:
-        vocal_main_bus = np.zeros((n, 2), dtype=np.float32)
-        for name in lead_names:
-            vocal_main_bus += processed[name]
-        on_step(f"Bus Vocal_Main: {len(lead_names)} tracce lead sommate")
-        on_event({"type": "vocal_main_bus", "stems": lead_names})
-
-    # --- Vocal_Doubles bus: alias for the backing vocals bus, named
-    # symmetrically with Vocal_Main so the mix bus routing is clear.
-    # Doubles are scaled to 55% of Main level so the lead keeps presence.
-    vocal_doubles_bus = backing_vocals_bus  # already summed + glued
-    if vocal_doubles_bus is not None:
-        vocal_doubles_bus = vocal_doubles_bus * 0.55
-        on_step("Bus Vocal_Doubles: volume ridotto al 55% della Main")
+        on_event({"type": "parallel_bus", "mix": PARALLEL_BUS_MIX, "sources": ["vocal_main_bus"] + drum_names_for_parallel})
 
     mix_bus = np.zeros((n, 2), dtype=np.float32)
     for name, audio in processed.items():
@@ -804,7 +805,7 @@ def render_mix(
     if vocal_main_bus is not None:
         mix_bus += vocal_main_bus
     if vocal_doubles_bus is not None:
-        mix_bus += vocal_doubles_bus * _DOUBLES_VOLUME_SCALE
+        mix_bus += vocal_doubles_bus
     if parallel_bus is not None:
         mix_bus += parallel_bus * PARALLEL_BUS_MIX
 

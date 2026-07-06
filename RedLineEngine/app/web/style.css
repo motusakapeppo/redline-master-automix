@@ -72,9 +72,16 @@ html, body {
   width: 190px;
   text-align: center;
   flex: none;
+  position: relative;
 }
 
-.assistant-svg { width: 100%; height: auto; filter: drop-shadow(0px 10px 15px rgba(0, 0, 0, 0.8)); }
+.assistant-svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0px 10px 15px rgba(0, 0, 0, 0.8));
+}
 
 /* #avatar-panel is the virtual "camera" for the idle-look-around 3D head
    turn (see randomLookAround() in app.js) -- without a perspective on the

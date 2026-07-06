@@ -29,7 +29,7 @@ from .dsp_utils import envelope_follower
 # the take's timing was too different from the lead to trust a correction —
 # skip that window rather than risk the robotic "flutter" artifact of
 # over-warping a bad match.
-MAX_SAFE_WARP_FRACTION = 0.05
+MAX_SAFE_WARP_FRACTION = 0.02
 
 _ENVELOPE_BLOCK = 1024  # ~23ms at 44.1kHz — fine enough to catch syllable-level drift
 _WINDOW_SECONDS = 0.4
