@@ -19,6 +19,16 @@ The entire pipeline is **measurement-driven**: every EQ cut, compression ratio, 
 - **Measured, not guessed** — all DSP parameters are computed from real audio measurements, not static presets.
 - **Fail-safe by design** — every module is wrapped in try-except. A missing audio device, a failed LLM inference, or a librosa error never takes down the render.
 
+**Screenshots:**
+
+| Upload + 3D avatar | Live processing rack |
+|---|---|
+| ![Upload screen with avatar](RedLineEngine/docs/screenshots/01_upload_avatar.png) | ![Processing rack](RedLineEngine/docs/screenshots/02_progress_rack.png) |
+
+| Per-stem chain badges | Mix DAW — waveforms + channel strip |
+|---|---|
+| ![Stem rows](RedLineEngine/docs/screenshots/03_stem_rows.png) | ![DAW channel strip](RedLineEngine/docs/screenshots/05_daw_channel_strip.png) |
+
 ### Project Structure
 
 ```
@@ -275,6 +285,8 @@ The pipeline can stop after the mix stage and present a lightweight review scree
 5. **Reopen buttons**: after a full pipeline run (mix + mastering), the final result screen has "MIX" and "MASTERING" buttons that reopen the respective DAW views at any time, using the cached render stages.
 
 All of this reuses the existing `_last_dry`/`_last_mix`/`_last_master`/`_last_stems` cache that `run_pipeline` already populates — no redundant processing.
+
+![Mix DAW waveform timeline](RedLineEngine/docs/screenshots/04_daw_waveforms.png)
 
 ### Vocal Chain Design
 
@@ -612,6 +624,16 @@ L'intera pipeline è **basata su misurazioni**: ogni taglio EQ, ratio di compres
 - **La sicurezza prima dell'ingegno** — ogni modulo sperimentale è disabilitato di default dietro flag. Disabilitare un flag è un rollback istantaneo e completo.
 - **Misurato, non ipotizzato** — tutti i parametri DSP sono calcolati da misurazioni audio reali, non da preset statici.
 - **Fail-safe di design** — ogni modulo è wrapped in try-except. Un dispositivo audio mancante, un'inferenza LLM fallita o un errore librosa non fermano mai il render.
+
+**Screenshot:**
+
+| Caricamento + avatar 3D | Rack di elaborazione live |
+|---|---|
+| ![Schermata di upload con avatar](RedLineEngine/docs/screenshots/01_upload_avatar.png) | ![Rack di elaborazione](RedLineEngine/docs/screenshots/02_progress_rack.png) |
+
+| Badge catena per-stem | DAW del mix — waveform + channel strip |
+|---|---|
+| ![Righe stem](RedLineEngine/docs/screenshots/03_stem_rows.png) | ![Channel strip DAW](RedLineEngine/docs/screenshots/05_daw_channel_strip.png) |
 
 ### Struttura del Progetto
 
@@ -1105,6 +1127,8 @@ Innescato da un feedback reale dell'utente: i render gracchiavano, la voce era q
 - **Presenza vocale 1.5→3.0dB**: `LEAD_PRESENCE_GAIN_DB` alzato da 1.5 a 3.0 — il vecchio valore era troppo debole per essere percepito come presenza reale contro un bed strumentale pieno, anche con il ducking spettrale e il dip Mid/Side del bus musicale già attivi.
 - **Panning da nome file per tutti gli stem** (`naming.py`): `_pan_from_name()` era limitato a `layer == "double"` — un hint `dx`/`sx` nel nome di uno stem strumentale (es. `Chitarra_dx.wav`) veniva ignorato e lo stem restava al centro. Ora onorato per qualsiasi stem, riconoscendo che la convenzione `dx`/`sx` è generica, non solo vocale.
 - **Workflow DAW**: la pipeline può ora fermarsi dopo la fase di mix (`stop_after_mix`) e mostrare una schermata di revisione con miniature delle forme d'onda per traccia (`get_waveform_peaks`), ascolto A/B/C di dry/mix/master, una casella di testo libero per descrivere modifiche, e pulsanti per ri-eseguire solo la fase mix (`reprocess_mix`, salta demucs/analisi) o proseguire al mastering (`continue_to_mastering`). Dopo un'esecuzione completa, la schermata finale ha pulsanti "MIX" e "MASTERING" che riaprono le rispettive viste DAW in qualsiasi momento.
+
+![Timeline forme d'onda DAW del mix](RedLineEngine/docs/screenshots/04_daw_waveforms.png)
 
 **Indurimento recente (Luglio 2026, parte 5 — matrice preset, batch, logging, A/B, strumenti stereo):**
 - **Matrice preset ampliata** (`presets.py`): da 5 a 22 preset predefiniti organizzati come matrice genere × piattaforma × stile. Ogni preset imposta aggressiveness, warmth, vocal_prominence, genre_override, piattaforma di destinazione, stereo width e transient shaper. Preset come "Rock - Spotify", "EDM - Club", "Hip-Hop - Apple Music" permettono di scegliere genere e piattaforma in un click. Ricade sul rilevamento automatico del genere quando nessun preset è selezionato. I preset utente sono salvati come JSON in `~/.redline/presets/`.
