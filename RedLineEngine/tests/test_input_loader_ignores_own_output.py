@@ -42,3 +42,21 @@ def test_load_auto_ignores_mix_and_master_wav(tmp_path):
     stems = load_auto(str(tmp_path))
 
     assert len(stems.names()) == 2
+
+
+def test_ignores_prefixed_reference_master_bounce(tmp_path):
+    # Confirmed with a real FL Studio project export: a pre-mixed reference
+    # bounce named "SONGNAME (Autotune) - _Master.wav" sitting right next to
+    # the real stems in the same folder. The old exact-basename check only
+    # caught a file literally named "master.wav" -- this one slipped through
+    # and got summed into the render as if it were one more instrumental
+    # layer, a real and severe cause of an unbalanced/muddy result.
+    _write_tone(tmp_path / "BAGDAD (Autotune) - _Main - Ritornello.wav", freq=440.0)
+    _write_tone(tmp_path / "BAGDAD (Autotune) - _Double - Rap dx.wav", freq=445.0)
+    _write_tone(tmp_path / "BAGDAD (Autotune) - _Beat.wav", freq=110.0)
+    _write_tone(tmp_path / "BAGDAD (Autotune) - _Master.wav", freq=990.0)
+
+    stems = load_stems_dir(str(tmp_path))
+
+    assert len(stems.names()) == 3
+    assert not any("master" in name.lower() for name in stems.names())

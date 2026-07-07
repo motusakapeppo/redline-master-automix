@@ -16,7 +16,12 @@ from dataclasses import dataclass
 # individual take names (e.g. "Main (Rap) - Special.wav") don't mention
 # "vocal" at all.
 VOCAL_ROLE_HINTS = ("vocal", "vox", "voice", "voce", "voci", "canto", "cantante")
-BASS_ROLE_HINTS = ("bass", "sub", "basso")
+# "808" -- the sub-bass instrument name in trap/hip-hop production, as
+# standard a convention as "kick" is for drums (confirmed with a real trap
+# session: a file literally named "808.wav" sitting next to "Kick"/"Snare").
+# Without it, an 808 falls through to role="other" and gets a highpass
+# applied that guts the exact sub-bass content it exists for.
+BASS_ROLE_HINTS = ("bass", "sub", "basso", "808")
 DRUM_ROLE_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullante")
 
 # Take-layer hints, meaningful for vocal stems: a "double"/harmony sits under
@@ -27,6 +32,16 @@ DRUM_ROLE_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullan
 DOUBLE_HINTS = ("double", "armonizz", "harmony", "backing", "coro", "cori")
 MAIN_HINTS = ("main", "lead")
 
+# "Db"/"Db." -- short for "Doppia" (Italian for "double"), a real naming
+# convention confirmed in practice (e.g. "INTRO_Db Falsetto", "INTRO_Db.
+# Alta") distinct from the DOUBLE_HINTS words above. Too short to trust as a
+# plain substring (would false-positive inside unrelated text), so it's
+# matched the same word-boundary way DX_PATTERN/SX_PATTERN already are --
+# without this, these takes defaulted to layer="primary" and got summed
+# straight into the lead vocal bus alongside the real lead, comb-filtering
+# with it (heard as the vocal cutting in and out unpredictably).
+_DB_LAYER_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])db\.?(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+
 SECTION_HINTS = {
     "chorus": ("rit", "ritornello", "chorus", "hook"),
     "verse": ("str", "strofa", "verse"),
@@ -35,7 +50,8 @@ SECTION_HINTS = {
 
 REGISTER_HINTS = {
     "falsetto": ("falsetto", "flasetto"),  # tolerate the common typo
-    "low": ("low",),
+    "low": ("low", "bassa"),  # "bassa" = Italian for "low" (register, not role)
+    "high": ("high", "alta"),  # "alta" = Italian for "high"
     "mid": ("mid",),
     "special": ("special",),
 }
@@ -47,6 +63,22 @@ _SX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])sx(?:[\s_./\\(){}\[\]-]|$)", 
 def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
     lowered = text.lower()
     return any(t in lowered for t in tokens)
+
+
+def _contains_word(text: str, tokens: tuple[str, ...]) -> bool:
+    """Same as _contains_any, but requires each token to be its own word
+    (bounded by start/end-of-string or a separator) rather than matching
+    anywhere as a bare substring. BASS_ROLE_HINTS needs this: "bass" is a
+    real, common role hint, but it's also the first four letters of "Bassa"
+    (Italian for a low vocal register, confirmed in a real session's file
+    "Db. Bassa" -- a vocal double, misrouted to role=bass entirely because
+    of this). Bass instrument filenames are always their own standalone
+    word in practice ("Bass DI.wav", "808.wav"), so this loses nothing."""
+    lowered = text.lower()
+    return any(
+        re.search(rf"(?:^|[\s_./\\(){{}}\[\]-]){re.escape(t)}(?:[\s_./\\(){{}}\[\]-]|$)", lowered)
+        for t in tokens
+    )
 
 
 def _first_match(text: str, hint_groups: dict[str, tuple[str, ...]]) -> str | None:
@@ -78,7 +110,7 @@ class StemDescriptor:
 def parse_stem(path_like: str) -> StemDescriptor:
     text = path_like.replace("\\", "/")
 
-    if _contains_any(text, BASS_ROLE_HINTS):
+    if _contains_word(text, BASS_ROLE_HINTS):
         role = "bass"
         role_confidence = 1.0
     elif _contains_any(text, DRUM_ROLE_HINTS):
@@ -94,7 +126,7 @@ def parse_stem(path_like: str) -> StemDescriptor:
         role = "other"
         role_confidence = 0.3
 
-    layer = "double" if _contains_any(text, DOUBLE_HINTS) else "primary"
+    layer = "double" if _contains_any(text, DOUBLE_HINTS) or _DB_LAYER_PATTERN.search(text) else "primary"
     # Was gated to `layer == "double"` only -- a dx/sx hint in an
     # instrumental stem's name (e.g. "Chitarra_dx.wav") was silently
     # ignored and the stem defaulted to dead center, along with every other

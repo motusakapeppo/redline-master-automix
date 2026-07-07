@@ -5,6 +5,7 @@ named stem tracks sharing sample rate, length and channel count."""
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -28,10 +29,26 @@ AUDIO_EXTENSIONS = (".wav", ".flac", ".aiff", ".aif", ".mp3", ".ogg")
 # contamination on repeated runs, not a hypothetical edge case.
 RESERVED_OUTPUT_NAMES = {"mix", "master"}
 
+# Was an exact-basename check ("mix.wav"/"master.wav" only) -- real project
+# folders routinely also contain a pre-mixed reference bounce named like
+# "SONGNAME - _Master.wav" or "SONGNAME (Autotune) - _Master.wav" sitting
+# right alongside the individual stems (confirmed with real FL Studio
+# project exports). An exact match never catches those, so the full mixed
+# reference silently got summed in as if it were one more instrumental
+# layer -- a real, severe cause of an unbalanced/muddy result, not a
+# hypothetical edge case. Matches "mix"/"master" as a standalone word
+# (surrounded by start/end-of-string or a separator), same word-boundary
+# approach naming.py already uses for dx/sx, so it still won't reject an
+# actual instrument whose name merely contains "mix"/"master" as part of a
+# longer unrelated word.
+_RESERVED_OUTPUT_PATTERN = re.compile(
+    r"(?:^|[\s_./\\(){}\[\]-])(?:mix|master)(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE
+)
+
 
 def _is_reserved_output(rel_path_no_ext: str) -> bool:
-    basename = os.path.basename(rel_path_no_ext).lower()
-    return basename in RESERVED_OUTPUT_NAMES
+    basename = os.path.basename(rel_path_no_ext)
+    return bool(_RESERVED_OUTPUT_PATTERN.search(basename))
 
 
 @dataclass
