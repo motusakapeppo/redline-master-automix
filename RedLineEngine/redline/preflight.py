@@ -110,8 +110,12 @@ class PreFlightValidator:
 
     @staticmethod
     def check_mixed_sample_rates(sample_rates: list[int], name: str) -> PreFlightReport:
+        """Mixed sample rates are a WARNING, not a blocking ISSUE -- multi-
+        session projects with stems recorded at different rates are a real,
+        normal case, and input_loader._align() already resamples everything
+        to the highest rate found before mixing. Blocking here would refuse
+        a file set the pipeline can (and does) handle correctly."""
         report = PreFlightReport()
         if len(set(sample_rates)) > 1:
-            report.passed = False
-            report.issues.append(f"{name}: sample rate misti tra stem ({sorted(set(sample_rates))})")
+            report.warnings.append(f"{name}: sample rate misti tra stem ({sorted(set(sample_rates))}), verranno ricampionati al più alto")
         return report

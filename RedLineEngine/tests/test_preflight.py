@@ -72,6 +72,16 @@ def test_detects_sample_rate_mismatch():
     assert good.passed is True
 
 
+def test_mixed_sample_rates_is_warning_not_blocking():
+    # Multi-session projects with stems recorded at different rates are a
+    # real, normal case -- input_loader._align() already resamples
+    # everything to the highest rate found, so this must never block the
+    # whole load.
+    report = PreFlightValidator.check_mixed_sample_rates([44100, 48000], "stems")
+    assert report.passed is True
+    assert any("misti" in w for w in report.warnings)
+
+
 def test_detects_extreme_duration():
     sr = 8000
     n = int(35 * 60 * sr)
