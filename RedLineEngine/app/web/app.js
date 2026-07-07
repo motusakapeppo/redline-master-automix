@@ -492,6 +492,7 @@ function flashDetail(id, text) {
 // instead of the old scrolling log where earlier stems' progress just
 // disappeared off the top.
 const STEM_STAGE_BADGES = [
+  { key: "instrument", label: "INST" },
   { key: "denoise", label: "NR" },
   { key: "hpf", label: "HPF" },
   { key: "resonance", label: "RES" },
@@ -579,6 +580,11 @@ function onEvent(evt) {
     case "stem_instrument":
       if (window.avatarAPI) window.avatarAPI.onInstrument(evt.instrument);
       addEventChip(`\u{1F3B8} ${evt.stem}: ${evt.instrument}`);
+      break;
+
+    case "instrument_chain":
+      addEventChip(`\u{1F3BB} ${evt.stem}: catena '${evt.instrument}'`);
+      markStemStage(evt.stem, "instrument");
       break;
 
     case "resonance_cut":

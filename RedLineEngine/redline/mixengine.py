@@ -79,6 +79,7 @@ from .resonance import find_resonance
 from .alignment import align_to_reference
 from .masking import find_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
+from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
@@ -122,8 +123,22 @@ def _noop_event(_evt: dict) -> None:
 LEAD_PRESENCE_FREQ_HZ = 3000.0
 LEAD_PRESENCE_GAIN_DB = 1.5
 VOCAL_DUCK_BAND_HZ = (1000.0, 4000.0)  # the band a lead vocal actually occupies most
-PARALLEL_BUS_MIX = 0.22
+# Was 0.22 -- research on modern vocal/pop mixing consistently puts parallel
+# ("New York") blends in the 10-20% range; 22% combined with the parallel
+# bus's own 8:1 hard compression on vocal+drums was tipping transient
+# emphasis toward the drums (compression favors whatever hits hardest,
+# which is kick/snare, not vocal sustain), burying the vocal further.
+PARALLEL_BUS_MIX = 0.15
 BACKING_VOCALS_GLUE_RATIO = 2.0
+
+# Baseline lead-vocal level priority, always applied on top of the user's
+# +/-5dB vocal_prominence slider (which defaults to 0 = "no opinion").
+# Reference mix data (masteringthemix.com's dataset of professional mixes)
+# shows the lead vocal sitting clearly above the instrumental bed rather
+# than at parity with it -- without this baseline, a vocal recorded quieter
+# than the instrumental just stayed buried, since EQ presence boosts alone
+# don't compensate for an actual level deficit.
+BASE_VOCAL_PROMINENCE_DB = 3.0
 
 # Kick/bass sidechain: a pure, fast broadband duck of the bass every time the
 # drums hit — the classic "pumping" low-end trick that keeps the kick and
@@ -135,8 +150,12 @@ KICK_BASS_DUCK_BASE_DB = 3.5
 
 # Music bus (the "other"/harmonic instruments grouped together) Mid/Side EQ:
 # dip the mono center where the vocal needs to sit, widen the sides a touch
-# so the instrumental still reads as large despite the dip.
-MUSIC_BUS_MID_DIP_DB = -1.5
+# so the instrumental still reads as large despite the dip. Was -1.5dB --
+# too subtle to create real separation in the vocal's presence band when
+# several instrumental layers stack there; -3dB is still transparent but
+# actually carves enough room (matches the "carve the vocal's shape out of
+# the instrumental" technique from modern mixing references).
+MUSIC_BUS_MID_DIP_DB = -3.0
 MUSIC_BUS_SIDE_WIDTH_DB = 1.0
 MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
 
@@ -226,6 +245,8 @@ def _eq_plugin(band: EQBand):
 def _eq_cut_plugin(cut: EqCut):
     if cut.kind == "highpass":
         return HighpassFilter(cutoff_frequency_hz=cut.freq)
+    if cut.kind == "lowpass":
+        return LowpassFilter(cutoff_frequency_hz=cut.freq)
     if cut.kind == "low_shelf":
         return LowShelfFilter(cutoff_frequency_hz=cut.freq, gain_db=cut.gain_db, q=cut.q)
     if cut.kind == "high_shelf":
@@ -261,6 +282,13 @@ def _process_stem(
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
 
+    instrument_recipe = None
+    if role == "other":
+        instrument_kind = classify_instrument(name, audio, sr)
+        instrument_recipe = INSTRUMENT_RECIPES[instrument_kind]
+        on_step(f"  '{name}': trattato come '{instrument_kind}'")
+        on_event({"type": "instrument_chain", "stem": name, "instrument": instrument_kind})
+
     if is_lead_vocal:
         # Denoise is the very first thing that happens to a vocal, before
         # even the HPF: compressing or EQing first raises the noise floor
@@ -278,7 +306,9 @@ def _process_stem(
         on_event({"type": "dynamic_hpf", "stem": name, "fundamental_hz": round(fundamental, 1), "cutoff_hz": round(hpf_hz, 1)})
         board_fx.append(HighpassFilter(cutoff_frequency_hz=hpf_hz))
     elif role == "other":
-        board_fx.append(HighpassFilter(cutoff_frequency_hz=60.0))
+        board_fx.append(HighpassFilter(cutoff_frequency_hz=instrument_recipe.hpf_hz))
+        for cut in instrument_recipe.extra_eq:
+            board_fx.append(_eq_cut_plugin(cut))
     elif role == "drums":
         board_fx.append(HighpassFilter(cutoff_frequency_hz=30.0))
     # bass: no HPF — it's the one element allowed to own the low end
@@ -327,12 +357,26 @@ def _process_stem(
         on_event({"type": "compressor", "stem": name, **drum_comp})
         board_fx.append(Compressor(**drum_comp))
         board_fx.append(Gain(gain_db=_DRUM_GLUE_MAKEUP_DB))
+    elif role == "other":
+        # Was one flat generic setting for every "other" stem regardless of
+        # what it actually was -- now driven by the instrument recipe
+        # (see instrumentstack.py), so a violin, an acoustic guitar, and a
+        # synth pad each get dynamics that actually suit them instead of an
+        # identical compressor.
+        other_comp = dict(
+            threshold_db=instrument_recipe.comp_threshold_db,
+            ratio=instrument_recipe.comp_ratio,
+            attack_ms=instrument_recipe.comp_attack_ms,
+            release_ms=instrument_recipe.comp_release_ms,
+        )
+        on_event({"type": "compressor", "stem": name, **other_comp})
+        board_fx.append(Compressor(**other_comp))
+        board_fx.append(Gain(gain_db=instrument_recipe.comp_makeup_db))
     else:
         role_comp = {
             "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
             "bass": dict(threshold_db=-18.0, ratio=3.0, attack_ms=10.0, release_ms=150.0),
             "drums": dict(threshold_db=-16.0, ratio=2.5, attack_ms=5.0, release_ms=100.0),
-            "other": dict(threshold_db=-20.0, ratio=2.0, attack_ms=15.0, release_ms=180.0),
         }[role]
         on_event({"type": "compressor", "stem": name, **role_comp})
         board_fx.append(Compressor(**role_comp))
@@ -340,12 +384,15 @@ def _process_stem(
             "vocal": _VOCAL_COMP_MAKEUP_DB,
             "bass": _BASS_COMP_MAKEUP_DB,
             "drums": _DRUMS_COMP_MAKEUP_DB,
-            "other": _OTHER_COMP_MAKEUP_DB,
         }[role]
         board_fx.append(Gain(gain_db=_role_makeup))
 
     board = Pedalboard(board_fx)
     out = board(audio.T, sr).T
+
+    if role == "other" and instrument_recipe.saturation_drive > 0.0:
+        out = saturate(out, instrument_recipe.saturation_drive)
+        on_event({"type": "saturation", "stem": name, "drive": instrument_recipe.saturation_drive})
 
     if is_lead_vocal:
         band = detect_sibilance_band(out, sr)
@@ -635,6 +682,12 @@ def render_mix(
             # through EQ/reverb alone, without spending level/headroom on it.
             depth = classify_stem_depth(processed[name], sr)
             on_event({"type": "depth_stage", "stem": name, "depth": depth})
+            # Reuse the same instrument classification _process_stem already
+            # made for this stem's EQ/dynamics -- some instruments (strings,
+            # pads) sit better wetter than depth.py's generic default, others
+            # (synth leads) drier, independent of which depth bucket they
+            # landed in.
+            reverb_bias = INSTRUMENT_RECIPES[classify_instrument(name, processed[name], sr)].reverb_send_bias
 
             if depth == BACKGROUND:
                 # Hard low-pass (air absorbs highs over distance) + fast-attack
@@ -646,13 +699,13 @@ def render_mix(
                     Compressor(threshold_db=BACKGROUND_COMP_THRESHOLD_DB, ratio=BACKGROUND_COMP_RATIO, attack_ms=BACKGROUND_COMP_ATTACK_MS, release_ms=150.0),
                 ])
                 processed[name] = board(processed[name].T, sr).T
-                reverb_bus.send(processed[name], HALL, BACKGROUND_REVERB_SEND)
+                reverb_bus.send(processed[name], HALL, min(1.0, BACKGROUND_REVERB_SEND * reverb_bias))
             elif depth == MIDGROUND:
                 # Split the difference: milder LPF/reverb, no strong dynamic
                 # push either way — these stems already sit ambiguously.
                 on_step(f"  '{name}': centro (taglio sopra {MIDGROUND_LOWPASS_HZ / 1000:.0f}kHz, riverbero {MIDGROUND_REVERB_SEND * 100:.0f}%)")
                 processed[name] = Pedalboard([LowpassFilter(cutoff_frequency_hz=MIDGROUND_LOWPASS_HZ)])(processed[name].T, sr).T
-                reverb_bus.send(processed[name], PLATE, MIDGROUND_REVERB_SEND)
+                reverb_bus.send(processed[name], PLATE, min(1.0, MIDGROUND_REVERB_SEND * reverb_bias))
             else:
                 # Foreground: no cut, a touch of "air" shelf instead, and a
                 # slower compressor attack so it doesn't squash the transients
@@ -850,10 +903,13 @@ def render_mix(
         on_step(f"Bus musicale Mid/Side: buco vocale {MUSIC_BUS_MID_DIP_DB:+.1f}dB a {LEAD_PRESENCE_FREQ_HZ:.0f}Hz, lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz")
         on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
 
-    # Gain-stage vocal prominence: +/- up to 5dB relative to everything else
-    # (applies to the Vocal_Main and Vocal_Doubles buses, preserving their
-    # relative internal balance)
-    vocal_gain_db = prefs.vocal_prominence * 5.0
+    # Gain-stage vocal prominence: a baseline +3dB priority (see
+    # BASE_VOCAL_PROMINENCE_DB above) plus the user's own +/-5dB preference on
+    # top (applies to the Vocal_Main and Vocal_Doubles buses, preserving their
+    # relative internal balance). At the slider's neutral position (0) the
+    # vocal still gets the baseline instead of sitting at flat parity with
+    # the instrumental bed.
+    vocal_gain_db = BASE_VOCAL_PROMINENCE_DB + prefs.vocal_prominence * 5.0
     if vocal_main_bus is not None or vocal_doubles_bus is not None:
         on_step(f"Regolazione presenza voce: {vocal_gain_db:+.1f}dB")
     if vocal_main_bus is not None:
@@ -881,15 +937,29 @@ def render_mix(
         on_step(f"Bus parallelo (New York compression) su voce+batteria, mix {PARALLEL_BUS_MIX * 100:.0f}%")
         on_event({"type": "parallel_bus", "mix": PARALLEL_BUS_MIX, "sources": ["vocal_main_bus"] + drum_names_for_parallel})
 
+    # --- Instrumental bed headroom: every "other"/drums/bass stem was being
+    # summed at full level with no regard for how many there are, so a
+    # session with 6-8 instrumental layers produced a bed several dB louder
+    # than one with 2-3 -- proportionally burying the one lead vocal every
+    # time. Power-preserving scale (1/sqrt(N)), same principle already used
+    # for concurrent vocal takes in leveling.py, keeps the bed's perceived
+    # loudness roughly stable regardless of how many instrumental stems feed
+    # it, instead of climbing with every added track.
+    non_vocal_names = [name for name in processed if name not in other_names and name not in lead_names]
+    instrumental_layers = len(non_vocal_names) + (1 if other_names else 0)
+    instrumental_gain = 1.0 if instrumental_layers <= 2 else float(np.sqrt(2.0 / instrumental_layers))
+    if instrumental_layers > 2:
+        on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati -> {20 * np.log10(instrumental_gain):+.1f}dB")
+
     mix_bus = np.zeros((n, 2), dtype=np.float32)
     for name, audio in processed.items():
         if name in other_names:
             continue  # folded into the Mid/Side-processed music_bus instead
         if name in lead_names:
             continue  # folded into vocal_main_bus instead
-        mix_bus += audio
+        mix_bus += audio * instrumental_gain
     if music_bus is not None:
-        mix_bus += music_bus
+        mix_bus += music_bus * instrumental_gain
     if vocal_main_bus is not None:
         mix_bus += vocal_main_bus
     if vocal_doubles_bus is not None:
@@ -901,6 +971,22 @@ def render_mix(
     if reverb_out is not None:
         mix_bus += reverb_out
         on_event({"type": "reverb_bus_render", "buses": [b for b, s in reverb_bus._sums.items() if s is not None]})
+
+    # --- Pre-glue headroom: summing many buses can leave mix_bus several dB
+    # over 0dBFS before the glue compressor even runs. A gentle glue ratio
+    # (1.1-1.6:1, see below) cannot tame a large overshoot in one pass, so
+    # the *only* thing that used to catch it was the hard safety ceiling at
+    # the very end -- a single blanket gain cut that flattens the whole
+    # mix's dynamics instead of a controlled, proportionate reduction here.
+    # Bringing the bus to a sane +3dB-over-ceiling window before the glue
+    # compressor means that compressor is actually doing the musical
+    # dynamics work it was tuned for, instead of the final safety net doing
+    # all of it as a last-second across-the-board cut.
+    pre_glue_peak = float(np.max(np.abs(mix_bus))) + 1e-9
+    pre_glue_ceiling = db_to_gain(3.0)
+    if pre_glue_peak > pre_glue_ceiling:
+        on_step(f"Bus a {20 * np.log10(pre_glue_peak):+.1f}dBFS prima della glue: applico headroom di sicurezza")
+        mix_bus = mix_bus * (pre_glue_ceiling / pre_glue_peak)
 
     on_step(f"Applico EQ di bus per genere '{analysis.genre.name}' (tilt calore: {prefs.warmth:+.1f})")
     genre_bands = _scaled_bands(analysis.genre.bus_eq, prefs.warmth)

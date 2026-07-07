@@ -48,7 +48,7 @@ SIDE_AIR_GAIN_DB = 1.2
 # phase-perfect linear-phase crossover — a common, practical compromise, not
 # a claim of surgical precision). Each band gets its own gentle compressor
 # so the low end doesn't pull the whole mix's dynamics around and vice versa.
-MULTIBAND_LOW_HZ = 200.0
+MULTIBAND_LOW_HZ = 150.0  # was 200 -- reference mastering chains split lower (120-170Hz), keeping kick fundamental + bass in the low band without also grabbing vocal low-mid body
 MULTIBAND_HIGH_HZ = 4000.0
 MULTIBAND_RECIPES = {
     "low": dict(threshold_db=-18.0, ratio=2.5, attack_ms=20.0, release_ms=180.0),

@@ -44,7 +44,18 @@ def envelope_follower(mono: np.ndarray, sr: int, attack_ms: float, release_ms: f
 
     env = _attack_release_recursion(block_rms, attack_coef, release_coef)
 
-    upsampled = np.repeat(env, block)[:n]
+    # Linear interpolation between block-center values, NOT np.repeat.
+    # np.repeat produces a hard staircase -- every `block` (512) samples the
+    # gain jumps discontinuously to the next block's value. Multiplying audio
+    # by that step function (as every caller here does: de-esser, sidechain
+    # ducking, concurrent-take leveling) injects a broadband click at every
+    # step edge -- at 512 samples/~11.6ms this is frequent enough to be
+    # audible as persistent crackle/zipper noise across a whole render,
+    # especially since several of these gain curves stack on the same
+    # signal. Interpolating removes the discontinuity entirely.
+    block_centers = (np.arange(env.shape[0], dtype=np.float64) + 0.5) * block
+    sample_positions = np.arange(n, dtype=np.float64)
+    upsampled = np.interp(sample_positions, block_centers, env)
     return upsampled.astype(np.float32)
 
 

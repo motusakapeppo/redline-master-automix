@@ -67,7 +67,7 @@ class EqCut:
     freq: float
     gain_db: float
     q: float = 1.0
-    kind: str = "peak"  # peak | low_shelf | high_shelf | highpass
+    kind: str = "peak"  # peak | low_shelf | high_shelf | highpass | lowpass
 
 
 @dataclass
@@ -104,7 +104,11 @@ RECIPES: dict[str, RegisterRecipe] = {
     # Same-pitch doubles: pushed fully hard L/R so they don't fight the
     # center, heavy anti-mud cut, a scoop right where the lead needs to
     # breathe, and a much more aggressive de-esser — several unaligned
-    # "S"s at once is a notorious amateur-mix tell.
+    # "S"s at once is a notorious amateur-mix tell. Also lowpassed at 5.5kHz
+    # (reference mixes push backing vocals back with an HPF+LPF "window"
+    # around the lead's own band, not just a highpass) -- without this the
+    # unison doubles kept full top-end and fought the lead's own presence/
+    # air instead of reading as clearly "behind" it.
     UNISON: RegisterRecipe(
         pan_magnitude=1.0,
         comp_ratio=3.0,
@@ -117,6 +121,7 @@ RECIPES: dict[str, RegisterRecipe] = {
             EqCut(freq=200.0, gain_db=0.0, kind="highpass"),
             EqCut(freq=275.0, gain_db=-3.5, q=1.2, kind="peak"),
             EqCut(freq=1500.0, gain_db=-2.5, q=1.3, kind="peak"),
+            EqCut(freq=5500.0, gain_db=0.0, kind="lowpass"),
         ],
     ),
     # High harmonies (thirds/fifths above): no body needed, just air and

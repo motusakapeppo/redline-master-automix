@@ -14,6 +14,20 @@ class MixPreferences:
     genre_override: str | None = None
     do_mastering: bool = True
 
+    def __post_init__(self) -> None:
+        # Defense in depth: the GUI's range inputs already constrain these
+        # (and the free-text creative-brief path is separately clamped by
+        # director_safety.clamp_params before it ever reaches here), but
+        # MixPreferences itself is a plain constructible dataclass -- any
+        # future caller (a script, a different frontend, a bug) could hand
+        # it an out-of-range value, and the mix engine trusts these at face
+        # value in gain-scaling formulas (e.g. vocal_gain_db). Clamping here
+        # guarantees no combination of inputs can push those formulas into
+        # destructive territory, no matter how it got constructed.
+        self.aggressiveness = int(max(1, min(5, self.aggressiveness)))
+        self.warmth = float(max(-1.0, min(1.0, self.warmth)))
+        self.vocal_prominence = float(max(-1.0, min(1.0, self.vocal_prominence)))
+
 
 def _ask_choice(prompt: str, options: dict[str, tuple[str, float]], default_key: str) -> float:
     """Prints numbered options, returns the numeric value tied to the chosen key."""
