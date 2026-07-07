@@ -11,6 +11,7 @@ import numpy as np
 import sounddevice as sd
 
 from redline.logging_setup import get_logger
+from redline import config
 
 logger = get_logger(__name__)
 
@@ -107,6 +108,53 @@ def extract_smart_chunk(audio_array: np.ndarray, sr: int, duration_sec: float = 
             best_start = start
 
     return audio_array[best_start : best_start + chunk_samples]
+
+
+def _estimate_lag_samples(probe: np.ndarray, recording: np.ndarray) -> int | None:
+    """Pure correlation logic, kept separate from the hardware I/O so it can
+    be unit-tested with synthetic signals -- no speakers/mic required.
+    Returns None if the recording doesn't contain a plausible echo of the
+    probe (e.g. no loopback connected, silence recorded)."""
+    if recording.size == 0 or np.max(np.abs(recording)) < 1e-6:
+        return None
+    correlation = np.correlate(recording, probe, mode="full")
+    lag = int(np.argmax(correlation)) - (len(probe) - 1)
+    return lag if lag >= 0 else None
+
+
+def measure_loopback_latency_ms(sr: int = 44100, duration_sec: float = 0.5) -> float | None:
+    """Delay-compensated loopback: plays a short windowed tone out through
+    the real output device and records it back through the input device,
+    then cross-correlates to measure the actual round-trip hardware+driver
+    latency (DAC + ADC + OS buffering) -- something a synthetic test can
+    never measure, only real hardware can. Requires a physical loopback (a
+    cable from output to input, or a mic placed near the speakers) and is
+    gated behind ENABLE_LIVE_AUDITION so it only ever runs when the user has
+    explicitly opted into real playback for this session -- never as part
+    of an automated test run.
+
+    Returns latency in milliseconds, or None if the flag is off, no
+    loopback is connected, or the device is unavailable."""
+    if not config.is_enabled("ENABLE_LIVE_AUDITION"):
+        logger.warning("Loopback latency measurement skipped — ENABLE_LIVE_AUDITION is off")
+        return None
+
+    n = int(sr * duration_sec)
+    t = np.linspace(0, duration_sec, n, endpoint=False)
+    window = np.hanning(n).astype(np.float32)
+    probe = (0.5 * np.sin(2 * np.pi * 1000.0 * t)).astype(np.float32) * window
+
+    try:
+        recording = sd.playrec(probe, samplerate=sr, channels=1, blocking=True)
+    except Exception:
+        logger.exception("Loopback latency measurement failed — check device/loopback cabling")
+        return None
+
+    lag_samples = _estimate_lag_samples(probe, recording[:, 0])
+    if lag_samples is None:
+        logger.warning("Loopback latency measurement found no usable echo — is a loopback connected?")
+        return None
+    return float(lag_samples / sr * 1000.0)
 
 
 driver = AudioDriver()
