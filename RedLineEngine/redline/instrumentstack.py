@@ -36,7 +36,10 @@ STRINGS = "strings"
 GUITAR_ACOUSTIC = "guitar_acoustic"
 GUITAR_ELECTRIC = "guitar_electric"
 KEYS = "keys"
+ORGAN = "organ"
 BRASS = "brass"
+PERCUSSION = "percussion"
+CHOIR = "choir"
 SYNTH_PAD = "synth_pad"
 SYNTH_LEAD = "synth_lead"
 GENERIC = "generic"  # fallback -- the old one-size-fits-all treatment, kept as a safe default
@@ -48,11 +51,26 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
         "electric gtr", "electric guitar", "chitarra elettrica", "elgtr", "e gtr",
         "distortion", "overdrive", "dist gtr",
     ),
-    KEYS: ("piano", "keys", "tastiera", "rhodes", "wurli", "organ", "organo"),
+    KEYS: ("piano", "keys", "tastiera", "rhodes", "wurli"),
+    # Split from KEYS -- a Hammond/organ patch wants a very different EQ
+    # (present midrange, no piano-style low-mid dip since bass pedals can
+    # carry real low end) and a much slower, gentler compressor than a
+    # percussive piano attack needs.
+    ORGAN: ("organ", "organo", "hammond", "b3"),
     BRASS: (
         "sax", "tromba", "trumpet", "flauto", "flute", "horn", "brass", "fiati",
         "clarinet", "clarinetto", "trombone", "tuba",
     ),
+    # Hand/auxiliary percussion (shaker, tambourine, conga...) -- distinct
+    # from a drum-kit "drums" role stem (naming.py already routes anything
+    # with "perc"/"drum"/"kick" etc. to role=drums before this module ever
+    # sees it); these hints only match auxiliary percussion that naming.py's
+    # own role hints don't already catch.
+    PERCUSSION: ("shaker", "tambourine", "tamburello", "conga", "cajon", "bongo", "shekere", "guiro"),
+    # Sampled choir/vocal-ensemble texture used as an instrumental layer,
+    # not an actual lead/double vocal take (naming.py's VOCAL_ROLE_HINTS
+    # doesn't match "choir"/"coro", so this correctly still reaches "other").
+    CHOIR: ("choir", "coro", "ensemble vocale", "vocal pad", "aahs", "oohs"),
     SYNTH_PAD: ("pad", "synth pad", "ambient", "texture", "drone", "atmosphere"),
     SYNTH_LEAD: ("lead synth", "synth lead", "arp", "pluck", "synth"),
     # Bare "guitar"/"gtr"/"chitarra" with no acoustic/electric qualifier defaults
@@ -205,6 +223,55 @@ RECIPES: dict[str, InstrumentRecipe] = {
             EqCut(freq=9000.0, gain_db=1.0, q=0.7, kind="high_shelf"),
         ],
         reverb_send_bias=0.8,
+    ),
+    # Organ: midrange presence carries the character (drawbar harmonics
+    # live around 1-3kHz), gentle low-mid dip instead of piano's mud cut
+    # since organ bass pedals can legitimately own real low end. Slow,
+    # gentle compression -- organ swells are meant to breathe, not pump.
+    ORGAN: InstrumentRecipe(
+        hpf_hz=60.0,
+        comp_ratio=2.2,
+        comp_threshold_db=-20.0,
+        comp_attack_ms=25.0,
+        comp_release_ms=220.0,
+        comp_makeup_db=3.0,
+        extra_eq=[
+            EqCut(freq=300.0, gain_db=-1.0, q=1.0, kind="peak"),
+            EqCut(freq=1800.0, gain_db=1.5, q=1.0, kind="peak"),
+        ],
+    ),
+    # Hand/auxiliary percussion: bright and fully transient by nature (no
+    # low end to speak of), so no HPF-driven thinning is needed -- just a
+    # fast, light compressor to even out hits and a presence lift so shakers/
+    # tambourines cut through a dense arrangement without extra level.
+    PERCUSSION: InstrumentRecipe(
+        hpf_hz=200.0,
+        comp_ratio=2.5,
+        comp_threshold_db=-16.0,
+        comp_attack_ms=3.0,
+        comp_release_ms=90.0,
+        comp_makeup_db=2.0,
+        extra_eq=[
+            EqCut(freq=6000.0, gain_db=1.5, q=0.8, kind="high_shelf"),
+        ],
+        reverb_send_bias=0.9,
+    ),
+    # Choir/vocal-ensemble texture: treated like a diffuse pad rather than
+    # a real lead/backing vocal (it isn't one) -- rolled-off top for
+    # distance, gentle compression, wetter reverb so it blurs into the
+    # room instead of competing with the actual lead vocal's presence band.
+    CHOIR: InstrumentRecipe(
+        hpf_hz=150.0,
+        comp_ratio=2.0,
+        comp_threshold_db=-20.0,
+        comp_attack_ms=25.0,
+        comp_release_ms=250.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=3000.0, gain_db=-1.5, q=1.0, kind="peak"),  # yield to the real lead vocal's presence band
+            EqCut(freq=7000.0, gain_db=-1.5, q=0.7, kind="high_shelf"),
+        ],
+        reverb_send_bias=1.3,
     ),
 }
 
