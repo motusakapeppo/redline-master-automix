@@ -142,7 +142,6 @@ async function startRun() {
 
   showScreen("screen-progress");
   document.getElementById("log").innerHTML = "";
-  document.getElementById("event-feed").innerHTML = "";
   document.getElementById("spinner").classList.remove("hidden");
   document.getElementById("result").classList.add("hidden");
   document.getElementById("result").innerHTML = "";
@@ -167,7 +166,11 @@ async function startRun() {
 function onStep(msg) {
   const log = document.getElementById("log");
   const line = document.createElement("div");
-  line.className = "log-line";
+  // The engine's own narration convention already distinguishes macro
+  // phases ("Elaborazione stem 'X'...", no leading spaces) from micro
+  // sub-steps ("  'X': risonanza a 250Hz...", 2-space indented) -- reuse it
+  // for visual hierarchy in the unified log instead of a separate panel.
+  line.className = msg.startsWith("  ") ? "log-line log-micro" : "log-line log-macro";
   line.textContent = msg;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
@@ -254,15 +257,17 @@ function toggleAudition() {
   }
 }
 
-// --- AUTO/MANUALE: default AUTO never interrupts the render for stem
-// classification approval; MANUALE re-enables the Director Mode checkpoint
-// (pipeline pauses until the user clicks ENGAGE in the director panel).
+// --- AUTO/MANUALE: checkbox CHECKED means AUTO is active (never interrupts
+// the render for stem classification approval) -- the intuitive reading of
+// an "active" toggle. Unchecked means MANUALE, which re-enables the
+// Director Mode checkpoint (pipeline pauses until the user clicks ENGAGE).
+// Checked by default in index.html to match AUTO being the engine default.
 function toggleDirectorMode() {
-  const isManual = document.getElementById("director-mode-switch").checked;
+  const isAuto = document.getElementById("director-mode-switch").checked;
   const label = document.getElementById("director-mode-label");
-  if (label) label.textContent = isManual ? "MANUALE" : "AUTO";
+  if (label) label.textContent = isAuto ? "AUTO" : "MANUALE";
   if (window.pywebview) {
-    window.pywebview.api.toggle_director_mode(isManual);
+    window.pywebview.api.toggle_director_mode(!isAuto);
   }
 }
 
@@ -512,6 +517,7 @@ function getOrCreateStemRow(name) {
 
   const row = document.createElement("div");
   row.className = "stem-row";
+  row.title = "Clicca per vedere i parametri di questa traccia";
 
   const label = document.createElement("div");
   label.className = "stem-row-label";
@@ -531,8 +537,31 @@ function getOrCreateStemRow(name) {
   }
   row.appendChild(badgeStrip);
 
+  // Channel-strip detail panel: hidden until the row is clicked, then shows
+  // every recorded parameter for this stem in one place -- a first, minimal
+  // version of the "click a track to see/adjust its plugins" DAW view.
+  const detail = document.createElement("div");
+  detail.className = "stem-row-detail hidden";
+  row.appendChild(detail);
+
+  row.addEventListener("click", (ev) => {
+    if (ev.target.closest(".stem-row-detail")) return; // clicks inside the detail panel don't toggle it shut
+    const isOpen = !detail.classList.contains("hidden");
+    // Only one channel strip open at a time -- keeps the track list scannable.
+    document.querySelectorAll(".stem-row-detail").forEach((d) => d.classList.add("hidden"));
+    document.querySelectorAll(".stem-row.selected").forEach((r) => r.classList.remove("selected"));
+    if (isOpen) return;
+    const params = stemEventParams.get(name) || {};
+    const lines = Object.entries(params).map(([type, evt]) => _describeStemEvent(type, evt));
+    detail.innerHTML = lines.length
+      ? lines.map((l) => `<div class="stem-row-detail-line">${l}</div>`).join("")
+      : `<div class="stem-row-detail-line">Nessun parametro registrato ancora.</div>`;
+    detail.classList.remove("hidden");
+    row.classList.add("selected");
+  });
+
   container.appendChild(row);
-  const entry = { row, badges };
+  const entry = { row, badges, detail };
   stemRows.set(name, entry);
   return entry;
 }
@@ -557,19 +586,64 @@ function markStemStage(name, stageKey) {
   badge._flashTimer = setTimeout(() => badge.classList.remove("flash"), 900);
 }
 
+// Was a separate #event-feed box above #log -- two panels for one stream of
+// "what's happening" read as redundant once the per-stem rows (#stem-rows)
+// and the DAW panel took over showing structured state. Chips now append
+// into the same #log panel as onStep's macro/micro lines, in the same
+// chronological order they actually happened in, instead of two boxes the
+// user had to cross-reference by eye.
 function addEventChip(text) {
-  const feed = document.getElementById("event-feed");
+  const log = document.getElementById("log");
   const chip = document.createElement("div");
-  chip.className = "event-chip";
+  chip.className = "log-line log-chip";
   chip.textContent = text;
-  feed.appendChild(chip);
-  feed.scrollTop = feed.scrollHeight;
-  // keep the feed from growing unbounded during a long render
-  while (feed.children.length > 40) feed.removeChild(feed.firstChild);
+  log.appendChild(chip);
+  log.scrollTop = log.scrollHeight;
+  while (log.children.length > 400) log.removeChild(log.firstChild);
+}
+
+// Generic per-stem parameter log: every event carrying `evt.stem` gets
+// recorded here regardless of type, keyed by event type so a re-fired event
+// (e.g. a corrected resonance cut) replaces its own previous entry instead
+// of piling up duplicates. This is what makes stem rows clickable (A4) --
+// it's also the data source the mix-review DAW (Part C) reads from, so no
+// separate bookkeeping is needed once that screen exists.
+const stemEventParams = new Map(); // stem name -> { evtType: evt }
+
+function _recordStemParam(evt) {
+  if (!evt || !evt.stem) return;
+  if (!stemEventParams.has(evt.stem)) stemEventParams.set(evt.stem, {});
+  stemEventParams.get(evt.stem)[evt.type] = evt;
+}
+
+// Human-readable one-line summary of a recorded event, for the channel-strip
+// detail panel -- reuses the same field names the DSP layer already emits
+// (freq_hz, gain_db, ratio, threshold_db, low_hz/high_hz, pan, instrument...)
+// instead of a generic key:value dump.
+function _describeStemEvent(type, evt) {
+  const g = (v) => (v > 0 ? `+${v}` : `${v}`);
+  switch (type) {
+    case "instrument_chain": return `Strumento: ${evt.instrument}`;
+    case "dynamic_hpf": return `HPF: ${evt.cutoff_hz}Hz (fondamentale ${evt.fundamental_hz}Hz)`;
+    case "resonance_cut": return `Risonanza: ${evt.freq_hz}Hz ${g(evt.gain_db)}dB`;
+    case "presence_boost": return `Presenza: ${evt.freq_hz}Hz ${g(evt.gain_db)}dB`;
+    case "instrument_eq": return `EQ: ${evt.freq_hz}Hz ${g(evt.gain_db)}dB (${evt.kind})`;
+    case "masking_cut": return `Mascheramento: ${evt.freq_hz}Hz ${g(evt.gain_db)}dB`;
+    case "midrange_masking_cut": return `Accumulo medio: ${evt.freq_hz}Hz ${g(evt.gain_db)}dB`;
+    case "compressor": return `Compressore: ${evt.ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB (attack ${evt.attack_ms}ms)`;
+    case "deesser": return `De-esser: banda ${Math.round(evt.low_hz)}-${Math.round(evt.high_hz)}Hz`;
+    case "saturation": return `Saturazione: drive ${evt.drive}`;
+    case "auto_pan": return `Pan: ${evt.pan > 0 ? "dx" : "sx"} ${Math.abs(evt.pan * 100).toFixed(0)}%`;
+    case "reverb_send": return `Riverbero: ${evt.bus} ${Math.round(evt.mix * 100)}%`;
+    case "register_classified": return `Registro: ${evt.register} (${evt.fundamental_hz}Hz)`;
+    case "denoise": return `Riduzione rumore: attiva`;
+    default: return type;
+  }
 }
 
 function onEvent(evt) {
   bumpActivity();
+  _recordStemParam(evt);
   switch (evt.type) {
     case "bus_eq_band":
       eqBands[`bus_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
@@ -598,6 +672,26 @@ function onEvent(evt) {
       flashDetail("eq-detail", `${evt.stem}: HPF dinamico ${evt.cutoff_hz}Hz (fondamentale ${evt.fundamental_hz}Hz)`);
       addEventChip(`\u{1F3A4} ${evt.stem}: taglio adattivo a ${evt.cutoff_hz}Hz`);
       markStemStage(evt.stem, "hpf");
+      break;
+
+    // Was previously not emitted at all -- the EQ curve only ever showed
+    // cuts (resonance_cut, masking_cut) because boosts (vocal presence,
+    // several instrument recipes' presence/air shelves) were applied with
+    // no event, making the engine look cut-only when it already boosts
+    // where the instrument recipe calls for it.
+    case "presence_boost":
+      eqBands[`pres_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
+      redrawEq();
+      flashDetail("eq-detail", `${evt.stem}: presenza ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
+      addEventChip(`\u{2B06}\u{FE0F} ${evt.stem}: presenza ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB`);
+      break;
+
+    case "instrument_eq":
+      eqBands[`inst_${evt.stem}_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
+      redrawEq();
+      flashDetail("eq-detail", `${evt.stem}: ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
+      addEventChip(`${evt.gain_db >= 0 ? "\u{2B06}\u{FE0F}" : "\u{2B07}\u{FE0F}"} ${evt.stem}: ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
+      markStemStage(evt.stem, "instrument");
       break;
 
     case "compressor":
@@ -662,6 +756,12 @@ function onEvent(evt) {
       addEventChip(`\u{26A0}\u{FE0F} ${evt.stem}: ${evt.from} -> ${evt.to}`);
       break;
 
+    case "auto_pan": {
+      const side = evt.pan < 0 ? "sx" : "dx";
+      addEventChip(`\u{1F3A7} ${evt.stem}: pan ${side} ${Math.abs(evt.pan * 100).toFixed(0)}%`);
+      break;
+    }
+
     case "spectral_duck":
       addEventChip(`\u{1F507} Ducking spettrale ${evt.band_low_hz}-${evt.band_high_hz}Hz (${evt.amount_db}dB)`);
       break;
@@ -714,6 +814,11 @@ function onEvent(evt) {
 
     case "masking_cut":
       addEventChip(`\u{1F3B8} ${evt.stem}: mascheramento a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
+      markStemStage(evt.stem, "masking");
+      break;
+
+    case "midrange_masking_cut":
+      addEventChip(`\u{1FA98} ${evt.stem}: accumulo medio a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
       markStemStage(evt.stem, "masking");
       break;
 

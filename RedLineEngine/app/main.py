@@ -30,15 +30,30 @@ def _run() -> None:
     from api import Api
     api = Api()
     web_dir = _web_dir()
-    # .as_uri() percent-encodes spaces etc. in the path — the project lives
-    # under "D:\FASE REM_automix\..." (note the space), and passing the raw
-    # Windows path straight to the webview control silently fails to load
-    # the page (window opens but stays on the fallback background_color).
-    index_uri = (web_dir / "index.html").as_uri()
+    # Plain filesystem path, NOT a file:// URI. Two reasons, both real bugs
+    # found in practice:
+    #   1. Passing the raw Windows path straight to the webview control used
+    #      to silently fail to load the page (window opens but stays on the
+    #      fallback background_color) because of the space in
+    #      "D:\FASE REM_automix\...". A file:// URI (.as_uri()) fixed that.
+    #   2. But a file:// URI stopped the 3D avatar (three-avatar.js, an ES
+    #      module) from loading at all: Chromium/WebView2 enforce CORS-style
+    #      restrictions on `<script type="module">` under file://, which
+    #      silently fails the whole module graph (three.module.js -> the
+    #      avatar's "three" import) with no visible error beyond a generic
+    #      window 'error' event. pywebview has a built-in fix for exactly
+    #      this: passing a *plain path* (not http(s):// or file://) makes it
+    #      recognize the URL as "local" (see webview/util.py's
+    #      is_local_url()) and automatically spin up its own bundled local
+    #      HTTP server (webview/http.py's BottleServer) to serve the whole
+    #      web_dir over http://127.0.0.1:<port>/ instead -- which resolves
+    #      both the space-in-path issue (a clean http:// URL has no such
+    #      problem) and the ES-module-under-file:// restriction, in one move.
+    index_path = str(web_dir / "index.html")
 
     window = webview.create_window(
         "RedLine Engine",
-        url=index_uri,
+        url=index_path,
         js_api=api,
         width=880,
         height=680,
@@ -67,7 +82,7 @@ def _run() -> None:
         import datetime
         LOAD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         LOAD_LOG_PATH.write_text(
-            f"Page loaded OK at {datetime.datetime.now().isoformat()}\nurl={index_uri}\n",
+            f"Page loaded OK at {datetime.datetime.now().isoformat()}\nurl={window.real_url}\n",
             encoding="utf-8",
         )
         # Signal the UI that the Python bridge is fully initialized

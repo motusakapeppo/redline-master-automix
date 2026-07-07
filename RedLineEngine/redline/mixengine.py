@@ -77,9 +77,9 @@ from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
 from .resonance import find_resonance
 from .alignment import align_to_reference
-from .masking import find_masking_cut
+from .masking import find_masking_cut, find_midrange_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
-from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES
+from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES, SYNTH_PAD
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
@@ -121,7 +121,7 @@ def _noop_event(_evt: dict) -> None:
 
 
 LEAD_PRESENCE_FREQ_HZ = 3000.0
-LEAD_PRESENCE_GAIN_DB = 1.5
+LEAD_PRESENCE_GAIN_DB = 3.0  # was 1.5 -- too subtle to read as real presence against a full instrumental bed
 VOCAL_DUCK_BAND_HZ = (1000.0, 4000.0)  # the band a lead vocal actually occupies most
 # Was 0.22 -- research on modern vocal/pop mixing consistently puts parallel
 # ("New York") blends in the 10-20% range; 22% combined with the parallel
@@ -309,6 +309,14 @@ def _process_stem(
         board_fx.append(HighpassFilter(cutoff_frequency_hz=instrument_recipe.hpf_hz))
         for cut in instrument_recipe.extra_eq:
             board_fx.append(_eq_cut_plugin(cut))
+            # Was applied with no event at all -- the instrument recipes
+            # already include real boosts (e.g. guitar_acoustic +1.5dB pick
+            # presence, synth_lead +2.0dB cut-through) as well as cuts, but
+            # none of it was visible in the log or the EQ curve, which made
+            # the engine look like it only ever cuts. Skip highpass/lowpass
+            # here -- those aren't gain bands the EQ curve can plot.
+            if cut.kind not in ("highpass", "lowpass"):
+                on_event({"type": "instrument_eq", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1), "kind": cut.kind})
     elif role == "drums":
         board_fx.append(HighpassFilter(cutoff_frequency_hz=30.0))
     # bass: no HPF — it's the one element allowed to own the low end
@@ -331,6 +339,7 @@ def _process_stem(
         section_boost = 0.7 if descriptor.section == "chorus" else (-0.3 if descriptor.section == "verse" else 0.0)
         presence_gain = LEAD_PRESENCE_GAIN_DB + section_boost
         board_fx.append(PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=presence_gain, q=1.0))
+        on_event({"type": "presence_boost", "stem": name, "freq_hz": LEAD_PRESENCE_FREQ_HZ, "gain_db": round(presence_gain, 1)})
 
     blueprint_chains = config.is_enabled("ENABLE_BLUEPRINT_CHAINS")
 
@@ -452,6 +461,9 @@ def _process_double_stem(
     recipe = RECIPES[register]
 
     board_fx = [_eq_cut_plugin(cut) for cut in recipe.extra_eq]
+    for cut in recipe.extra_eq:
+        if cut.kind not in ("highpass", "lowpass"):
+            on_event({"type": "instrument_eq", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1), "kind": cut.kind})
     board_fx.append(
         Compressor(
             threshold_db=recipe.comp_threshold_db,
@@ -487,6 +499,7 @@ def render_mix(
     reference: np.ndarray | None = None,
     reference_sr: int | None = None,
     director_gate=None,
+    on_stem_audition=None,
 ) -> np.ndarray:
     sr = stems.sample_rate
     n = stems.num_samples()
@@ -671,6 +684,31 @@ def render_mix(
         }
         for name, future in futures.items():
             processed[name] = future.result()
+            # Neural Monitor during the mix stage, not just the final
+            # master: was previously only wired into masterengine's
+            # multiband compression step, so live audition reflected the
+            # last few seconds of mastering and nothing about the actual
+            # per-track mix decisions. Called here (main thread, after the
+            # thread pool result is back) rather than from inside the pool
+            # worker itself, so concurrent stems never fight over the audio
+            # device at once -- one clean dry/wet pair per stem, in order.
+            if on_stem_audition is not None:
+                on_stem_audition(name, working_tracks[name], processed[name], sr)
+
+    # --- Automatic stereo panning for instrumental ("other") stems: there
+    # was no panning strategy for these at all -- naming.py only read a
+    # dx/sx hint for vocal doubles, and everything else defaulted to dead
+    # center regardless of role, which is exactly why a session with
+    # several guitars/keys/synths piled into one indistinct mono-ish mass.
+    # Stems with an explicit dx/sx name hint (now honored for any role, see
+    # naming.py) use that; everything else gets auto-spread by instrument
+    # category so repeated instances of the same instrument (two guitars,
+    # two synths) don't stack on top of each other, while a lone instance
+    # of a category stays centered (no gratuitous movement). Sustained pads
+    # are excluded -- they're meant to read as a wide, diffuse bed (helped
+    # by their own heavier reverb send) rather than hard-panned to one side.
+    _PAN_SPREAD_SEQUENCE = (0.0, -0.35, 0.35, -0.6, 0.6, -0.8, 0.8)
+    _instrument_pan_counts: dict[str, int] = {}
 
     for name in solo_names:
         d = descriptors[name]
@@ -687,7 +725,22 @@ def render_mix(
             # pads) sit better wetter than depth.py's generic default, others
             # (synth leads) drier, independent of which depth bucket they
             # landed in.
-            reverb_bias = INSTRUMENT_RECIPES[classify_instrument(name, processed[name], sr)].reverb_send_bias
+            instrument_kind = classify_instrument(name, processed[name], sr)
+            reverb_bias = INSTRUMENT_RECIPES[instrument_kind].reverb_send_bias
+
+            if d.pan != 0.0:
+                effective_pan = d.pan
+            elif instrument_kind == SYNTH_PAD:
+                effective_pan = 0.0
+            else:
+                idx = _instrument_pan_counts.get(instrument_kind, 0)
+                _instrument_pan_counts[instrument_kind] = idx + 1
+                effective_pan = _PAN_SPREAD_SEQUENCE[idx] if idx < len(_PAN_SPREAD_SEQUENCE) else 0.0
+
+            if effective_pan != 0.0:
+                processed[name] = pan_stereo(processed[name], effective_pan)
+                on_step(f"  '{name}': pan automatico a {effective_pan:+.2f} ({instrument_kind})")
+                on_event({"type": "auto_pan", "stem": name, "pan": round(effective_pan, 2), "instrument": instrument_kind})
 
             if depth == BACKGROUND:
                 # Hard low-pass (air absorbs highs over distance) + fast-attack
@@ -854,6 +907,15 @@ def render_mix(
                 on_step(f"  '{name}': mascheramento con la voce a {cut.freq:.0f}Hz, taglio preventivo {cut.gain_db:.1f}dB")
                 on_event({"type": "masking_cut", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1)})
                 processed[name] = apply_eq_cut(processed[name], sr, cut.freq, cut.gain_db, cut.q)
+
+            # Same principle, lower band (300-800Hz): mud/honk that muddies
+            # vocal body/clarity without ever showing up in the 2-5kHz
+            # presence-band check above.
+            mid_cut = find_midrange_masking_cut(processed[name], vocal_reference, sr)
+            if mid_cut is not None:
+                on_step(f"  '{name}': accumulo medio-basso con la voce a {mid_cut.freq:.0f}Hz, taglio {mid_cut.gain_db:.1f}dB")
+                on_event({"type": "midrange_masking_cut", "stem": name, "freq_hz": mid_cut.freq, "gain_db": round(mid_cut.gain_db, 1)})
+                processed[name] = apply_eq_cut(processed[name], sr, mid_cut.freq, mid_cut.gain_db, mid_cut.q)
 
     # --- Kick/bass sidechain: pure, fast duck of the bass every time the
     # drums hit, independent of the vocal ducking — the classic low-end

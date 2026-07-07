@@ -81,12 +81,24 @@ class Api:
 
     def _start_js_worker(self) -> None:
         """Daemon thread that drains the JS eval queue. A sentinel None shuts
-        it down cleanly. Drops stale entries when the queue grows beyond 60
-        items (roughly 1 second of 60fps frames) — the UI only needs the
-        latest state, not every intermediate value. Also rate-limits actual
-        evaluate_js calls to 60fps (~16.7ms) so the .NET/COM bridge never
-        queues up stale frames."""
+        it down cleanly. Rate-limits actual evaluate_js calls to 60fps
+        (~16.7ms) so the .NET/COM bridge never queues up stale frames.
+
+        IMPORTANT: this used to discard every queued call except the very
+        last one whenever the queue had more than one item backed up --
+        which, during a real render (dozens of onStep/onEvent calls per
+        second, far faster than one evaluate_js round-trip), was nearly
+        every cycle. In practice this silently dropped most EQ/compressor/
+        masking/etc. events before they ever reached the browser: the EQ
+        curve stayed flat, most per-stem stage badges never lit up, because
+        the events that would have driven them were thrown away here, not
+        because the DSP wasn't running. Fixed by batching every pending call
+        into one `;`-joined evaluate_js instead of overwriting -- one round
+        trip per drain cycle still (keeping the throttle's benefit), but no
+        event is lost. Capped defensively so a pathological backlog can't
+        build one unbounded eval string."""
         _JS_THROTTLE_S = 1.0 / 60.0
+        _MAX_BATCH = 500
 
         def _drain() -> None:
             last_js_time = 0.0
@@ -94,24 +106,28 @@ class Api:
                 js = self._js_queue.get()
                 if js is None:
                     return  # sentinel shutdown
-                # Drain stale entries: if the queue has piled up, skip all
-                # but the most recent one to keep the UI responsive.
-                while not self._js_queue.empty():
+                batch = [js]
+                # Collect whatever else is already waiting into the same
+                # batch instead of discarding it -- every call still gets
+                # delivered, just coalesced into fewer evaluate_js round trips.
+                while len(batch) < _MAX_BATCH:
                     try:
                         next_js = self._js_queue.get_nowait()
-                        if next_js is None:
-                            return  # sentinel while draining
-                        js = next_js
                     except queue.Empty:
                         break
-                # 60fps throttle: skip if we just sent a frame
+                    if next_js is None:
+                        return  # sentinel while draining
+                    batch.append(next_js)
+                # 60fps throttle: wait out the remainder of the frame instead
+                # of dropping the batch we just collected.
                 now = time.perf_counter()
-                if now - last_js_time < _JS_THROTTLE_S:
-                    continue
-                last_js_time = now
+                wait = _JS_THROTTLE_S - (now - last_js_time)
+                if wait > 0:
+                    time.sleep(wait)
+                last_js_time = time.perf_counter()
                 if self._window is not None:
                     try:
-                        self._window.evaluate_js(js)
+                        self._window.evaluate_js(';\n'.join(batch))
                     except Exception:
                         pass  # window may be closing — swallow silently
 
@@ -174,6 +190,32 @@ class Api:
             driver.play_chunk(chunk_dry, sr)
 
             self._narrate("Neural Monitor: ascolto la glue compression applicata (wet)...")
+            self._js_queue.put("setAuditionState('AFTER')")
+            driver.play_chunk(chunk_wet, sr)
+
+            self._js_queue.put("setAuditionState('IDLE')")
+        except Exception as exc:
+            traceback.print_exc()
+            self._narrate(f"Neural Monitor: errore driver audio ({exc})")
+
+    def _audition_mix_stem(self, name: str, dry: np.ndarray, wet: np.ndarray, sr: int) -> None:
+        """Same before/after audition as _audition above, but per-track
+        during the mix stage instead of once on the master bus. Only ever
+        called from mixengine.py's render_mix (main thread, after each
+        stem's parallel processing result is back) when ENABLE_LIVE_AUDITION
+        is on -- never from inside the per-stem thread pool, so concurrent
+        stems never contend for the audio device at once."""
+        try:
+            from redline.audition import driver, extract_smart_chunk
+
+            chunk_dry = extract_smart_chunk(dry, sr)
+            chunk_wet = extract_smart_chunk(wet, sr)
+
+            self._narrate(f"Neural Monitor: '{name}' grezzo (dry)...")
+            self._js_queue.put("setAuditionState('BEFORE')")
+            driver.play_chunk(chunk_dry, sr)
+
+            self._narrate(f"Neural Monitor: '{name}' dopo l'elaborazione (wet)...")
             self._js_queue.put("setAuditionState('AFTER')")
             driver.play_chunk(chunk_wet, sr)
 
@@ -262,6 +304,7 @@ class Api:
             mixed = render_mix(
                 stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
                 director_gate=self.director_gate,
+                on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
             )
 
             mix_path = os.path.join(out_dir, "mix.wav")

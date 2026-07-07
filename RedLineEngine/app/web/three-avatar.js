@@ -174,43 +174,41 @@ const SKULL_MODEL_URL = 'assets/skull.glb';
 // scale each channel, not shift hue -- so multiplying this over the source
 // asset's own warm khaki/olive-painted texture still reads as khaki (just a
 // darker khaki), not silver, because R/G/B keep their original ratio. See
-// _desaturateTexture below: the texture is grayscaled first so this tint
+// _desaturateMaterial below: the texture is grayscaled first so this tint
 // actually determines the final hue instead of just dimming the wrong one.
 const SKULL_TINT = '#AEB4C2';
 
-// One-time canvas desaturation of a loaded texture's image, so a colored
-// material tint (multiply blend) actually produces that color instead of a
-// darker version of whatever hue the source texture happened to be painted.
-// Falls back to the original texture untouched if the image isn't readable
-// (e.g. a CORS-tainted canvas in some hosting setups) rather than throwing.
-function _desaturateTexture(map) {
-  if (!map || !map.image || !map.image.width) return map;
-  try {
-    const img = map.image;
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-      data[i] = gray;
-      data[i + 1] = gray;
-      data[i + 2] = gray;
-    }
-    ctx.putImageData(imageData, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = map.colorSpace;
-    tex.wrapS = map.wrapS;
-    tex.wrapT = map.wrapT;
-    tex.needsUpdate = true;
-    return tex;
-  } catch (err) {
-    console.warn('[three-avatar] Texture desaturation skipped:', err);
-    return map;
-  }
+// GPU-side desaturation of a material's texture map, so a colored material
+// tint (multiply blend) actually produces that color instead of a darker
+// version of whatever hue the source texture happened to be painted.
+//
+// A previous version of this did the desaturation on the CPU via
+// canvas.getImageData() pixel readback. That works fine served over
+// http://, but the packaged desktop app loads this page from a file:// URL
+// (see app/main.py's `.as_uri()` window URL) where canvas pixel readback is
+// subject to stricter/less consistent cross-origin tainting rules across
+// browser engines -- confirmed in practice: the skull (and everything else
+// in the group, since the failure happened inside the mesh-building loop)
+// stopped appearing at all once that code shipped. This version instead
+// patches the compiled fragment shader to desaturate the sampled texel on
+// the GPU at render time (standard three.js `onBeforeCompile` technique) --
+// it never touches a single pixel on the CPU, so there is no canvas/origin
+// interaction to fail regardless of http:// vs file://.
+function _desaturateMaterial(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `
+      #ifdef USE_MAP
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        float _redlineGray = dot( sampledDiffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) );
+        sampledDiffuseColor.rgb = vec3( _redlineGray );
+        diffuseColor *= sampledDiffuseColor;
+      #endif
+      `
+    );
+  };
+  material.needsUpdate = true;
 }
 
 function buildSkull(onReady) {
@@ -224,20 +222,30 @@ function buildSkull(onReady) {
       const model = gltf.scene;
       model.traverse((child) => {
         if (child.isMesh) {
-          const sourceMap = child.material && child.material.map ? child.material.map : null;
-          if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
-          // Rebuilt as MeshStandardMaterial (the source used
-          // KHR_materials_unlit, flat/shadeless) so it actually responds
-          // to the rim/key/fill lighting already set up in the scene,
-          // while keeping the real texture map for genuine surface detail
-          // and color variation instead of one uniform flat tone.
-          child.material = new THREE.MeshStandardMaterial({
-            map: _desaturateTexture(sourceMap),
-            color: SKULL_TINT,
-            metalness: 0.15,
-            roughness: 0.65,
-            envMapIntensity: 1.0,
-          });
+          // Whole rebuild wrapped defensively -- a cosmetic tint failure
+          // must never be the reason the whole avatar fails to appear; the
+          // mesh just keeps its original (unlit, khaki-tinted) material and
+          // the model/eyes/mixer below still get added to the scene.
+          try {
+            const sourceMap = child.material && child.material.map ? child.material.map : null;
+            if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
+            // Rebuilt as MeshStandardMaterial (the source used
+            // KHR_materials_unlit, flat/shadeless) so it actually responds
+            // to the rim/key/fill lighting already set up in the scene,
+            // while keeping the real texture map for genuine surface detail
+            // and color variation instead of one uniform flat tone.
+            const rebuilt = new THREE.MeshStandardMaterial({
+              map: sourceMap,
+              color: SKULL_TINT,
+              metalness: 0.15,
+              roughness: 0.65,
+              envMapIntensity: 1.0,
+            });
+            if (sourceMap) _desaturateMaterial(rebuilt);
+            child.material = rebuilt;
+          } catch (err) {
+            console.warn('[three-avatar] Skull material rebuild failed, keeping original material:', err);
+          }
         }
       });
 
@@ -298,7 +306,26 @@ function buildSkull(onReady) {
     },
     undefined,
     (err) => {
-      console.error('[three-avatar] Failed to load skull model:', err);
+      // Without this, a failed GLB load (e.g. a resource-loading quirk
+      // specific to the desktop app's file:// context, different from the
+      // http:// dev server this was tested against) left `group` completely
+      // empty -- no mesh, no eyes, nothing -- which is exactly "the avatar
+      // doesn't appear at all" with no visible clue why. A simple placeholder
+      // sphere + eyes means something always renders, and the console error
+      // still identifies the real cause for debugging.
+      console.error('[three-avatar] Failed to load skull model, showing placeholder:', err);
+      const placeholder = new THREE.Mesh(
+        new THREE.SphereGeometry(0.7, 24, 24),
+        new THREE.MeshStandardMaterial({ color: SKULL_TINT, metalness: 0.15, roughness: 0.65 })
+      );
+      group.add(placeholder);
+      const eyeMat = new THREE.MeshStandardMaterial({ color: '#FF003F', emissive: '#FF003F', emissiveIntensity: 0.5 });
+      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat);
+      eyeLeft.position.set(-0.22, 0.15, 0.6);
+      group.add(eyeLeft);
+      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat.clone());
+      eyeRight.position.set(0.22, 0.15, 0.6);
+      group.add(eyeRight);
       if (typeof onReady === 'function') onReady();
     }
   );
@@ -352,10 +379,16 @@ function _loadProp(name, onReady) {
       });
       model.traverse((child) => {
         if (child.isMesh) {
-          const sourceMap = child.material && child.material.map ? child.material.map : null;
-          if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
-          child.material = tintMaterial.clone();
-          child.material.map = _desaturateTexture(sourceMap);
+          try {
+            const sourceMap = child.material && child.material.map ? child.material.map : null;
+            if (sourceMap) sourceMap.colorSpace = THREE.SRGBColorSpace;
+            const propMaterial = tintMaterial.clone();
+            propMaterial.map = sourceMap;
+            if (sourceMap) _desaturateMaterial(propMaterial);
+            child.material = propMaterial;
+          } catch (err) {
+            console.warn(`[three-avatar] Prop "${name}" material rebuild failed, keeping original material:`, err);
+          }
         }
       });
 

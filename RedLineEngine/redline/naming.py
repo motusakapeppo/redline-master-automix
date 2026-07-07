@@ -92,7 +92,13 @@ def parse_stem(path_like: str) -> StemDescriptor:
         role_confidence = 0.3
 
     layer = "double" if _contains_any(text, DOUBLE_HINTS) else "primary"
-    pan = _pan_from_name(text) if layer == "double" else 0.0
+    # Was gated to `layer == "double"` only -- a dx/sx hint in an
+    # instrumental stem's name (e.g. "Chitarra_dx.wav") was silently
+    # ignored and the stem defaulted to dead center, along with every other
+    # "other"-role stem (mixengine.py had no panning logic for them at all).
+    # The dx/sx convention is generic, not vocal-specific, so honor it for
+    # any stem that has it.
+    pan = _pan_from_name(text)
 
     # Section/register (verse/chorus, falsetto/low/mid...) only mean anything
     # for vocal takes. Gating on role also avoids false positives like "STR"

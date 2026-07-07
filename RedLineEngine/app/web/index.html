@@ -395,12 +395,11 @@ window.addEventListener('error', function(e) {
 
       <div class="monitor-toggle">
         <label for="director-mode-switch">MODALITÀ: <span id="director-mode-label">AUTO</span></label>
-        <input type="checkbox" id="director-mode-switch" onchange="toggleDirectorMode()">
+        <input type="checkbox" id="director-mode-switch" checked onchange="toggleDirectorMode()">
       </div>
     </div>
 
     <div id="terminal-box" class="terminal-box">
-      <div id="event-feed" class="event-feed"></div>
       <div id="log" class="log"></div>
       <div id="llm-console-wrap" class="llm-console-wrap">
         <div class="llm-console-label">&#129504; Ragionamento IA locale (grezzo)</div>

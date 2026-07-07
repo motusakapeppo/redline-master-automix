@@ -530,33 +530,17 @@ select { width: auto; }
   margin-top: 16px;
 }
 
-.event-feed {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-  max-height: 70px;
-  overflow-y: auto;
-}
-
-.event-chip {
-  font-size: 11px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  background: rgba(255, 0, 63, 0.06);
-  opacity: 0;
-  animation: fade-in 0.3s ease forwards;
-  white-space: nowrap;
-}
-
+/* Unified log: was two separate boxes (#event-feed chips above, #log text
+   below) the user had to visually cross-reference to follow one stream of
+   "what's happening" -- now one taller panel, chronological, with macro
+   phases ("Elaborazione stem 'X'...") and DSP-event chips visually
+   distinguished by weight/color rather than physically separated. */
 .log {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px 16px;
-  height: 200px;
+  height: 340px;
   overflow-y: auto;
   overflow-x: hidden;
   font-family: "Cascadia Code", Consolas, monospace;
@@ -584,6 +568,37 @@ select { width: auto; }
   color: var(--text);
 }
 
+/* Macro phase ("Elaborazione stem 'X' (...)...") -- the headline of what's
+   happening right now, bolder/brighter than the micro detail lines under it. */
+.log-macro {
+  color: var(--text);
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.log-macro:first-child {
+  margin-top: 0;
+}
+
+/* Micro sub-step ("  'X': risonanza a 250Hz...") -- indented detail under
+   the macro line it belongs to. */
+.log-micro {
+  padding-left: 10px;
+}
+
+/* DSP-event chip (was .event-chip in the old separate panel) -- an inline
+   pill within the same chronological stream instead of a separate box. */
+.log-chip {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 9px;
+  margin: 2px 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: rgba(255, 0, 63, 0.06);
+}
+
 /* Per-stem breakdown rows: one persistent row per track (see #stem-rows in
    index.html), small stage badges instead of scrolling text that vanishes
    as new lines push old ones out. */
@@ -598,18 +613,51 @@ select { width: auto; }
 
 .stem-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;
+  cursor: pointer;
   transition: border-color 0.25s ease, background 0.25s ease;
+}
+
+.stem-row:hover {
+  border-color: rgba(255, 0, 63, 0.4);
 }
 
 .stem-row.row-active {
   border-color: var(--accent);
   background: rgba(255, 0, 63, 0.08);
+}
+
+.stem-row.selected {
+  border-color: var(--accent);
+}
+
+/* Channel-strip detail panel: forced onto its own line below the label +
+   badges (not squeezed into the same flex row) via the 100% basis. */
+.stem-row-detail {
+  flex: 1 0 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: default;
+}
+
+.stem-row-detail.hidden {
+  display: none;
+}
+
+.stem-row-detail-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: "Cascadia Code", Consolas, monospace;
 }
 
 .stem-row-label {
