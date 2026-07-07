@@ -24,6 +24,8 @@ DEFAULTS = {
     "ENABLE_LIVE_AUDITION": False,
     "ENABLE_STEREO_WIDENING": False,
     "ENABLE_TRANSIENT_SHAPER": False,
+    "ENABLE_FEEDBACK_DELAY": False,
+    "ENABLE_BUS_EXPORT": False,
 }
 
 # Logging configuration (not feature flags — always available)

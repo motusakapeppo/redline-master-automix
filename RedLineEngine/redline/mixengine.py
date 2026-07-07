@@ -87,6 +87,7 @@ from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
 from .elastic_align import elastic_align
 from .reverbbus import ReverbBusSystem, ROOM, PLATE, HALL
+from .feedback_delay import feedback_delay, FeedbackDelayParams
 from .depth import (
     classify_stem_depth,
     FOREGROUND,
@@ -508,7 +509,9 @@ def render_mix(
     reference_sr: int | None = None,
     director_gate=None,
     on_stem_audition=None,
+    on_bus_ready: Callable[[str, np.ndarray], None] | None = None,
 ) -> np.ndarray:
+    notify_bus = on_bus_ready or (lambda _name, _audio: None)
     sr = stems.sample_rate
     n = stems.num_samples()
 
@@ -1065,6 +1068,15 @@ def render_mix(
     if instrumental_layers > 2:
         on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati -> {20 * np.log10(instrumental_gain):+.1f}dB")
 
+    if vocal_main_bus is not None:
+        notify_bus("vocal_main", vocal_main_bus)
+    if vocal_doubles_bus is not None:
+        notify_bus("vocal_doubles", vocal_doubles_bus)
+    if music_bus is not None:
+        notify_bus("music", music_bus)
+    if parallel_bus is not None:
+        notify_bus("parallel", parallel_bus)
+
     mix_bus = np.zeros((n, 2), dtype=np.float32)
     for name, audio in processed.items():
         if name in other_names:
@@ -1083,8 +1095,20 @@ def render_mix(
 
     reverb_out = reverb_bus.render(on_step=on_step)
     if reverb_out is not None:
+        notify_bus("reverb", reverb_out)
         mix_bus += reverb_out
         on_event({"type": "reverb_bus_render", "buses": [b for b, s in reverb_bus._sums.items() if s is not None]})
+
+    # --- Feedback delay (experimental, tape-style): low-pass filter recurses
+    # inside the feedback loop so repeats darken progressively. Applied to
+    # the full mix bus and cropped back to the original length -- the delay
+    # tail beyond the bus's own duration is sacrificed to keep this a
+    # zero-risk, shape-preserving addition behind a flag that's OFF by default.
+    if config.is_enabled("ENABLE_FEEDBACK_DELAY"):
+        on_step("Feedback delay tape-style applicato al bus mix")
+        on_event({"type": "feedback_delay"})
+        delayed = feedback_delay(mix_bus, sr, FeedbackDelayParams())
+        mix_bus = delayed[:n].astype(np.float32)
 
     # --- Stereo widening (experimental): applied to the full mix bus before
     # bus EQ/compression, only when the feature flag is enabled and width > 0.

@@ -51,6 +51,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--reference", help="Optional reference track for reference-matched mastering")
     p.add_argument("--platform", default="auto", choices=["auto", "spotify", "apple", "youtube", "club"])
     p.add_argument("--non-interactive", action="store_true", help="Skip the wizard, use default preferences")
+    p.add_argument("--export-buses", action="store_true", help="Also export intermediate buses (vocal_main, vocal_doubles, music, parallel, reverb) as separate WAV files")
     return p
 
 
@@ -104,8 +105,26 @@ def main(argv: list[str] | None = None) -> int:
         reference_audio, reference_sr = sf.read(args.reference, dtype="float32", always_2d=True)
 
     _narrate("Avvio il mix...")
-    with metrics.stage("mix_render", on_step=_narrate):
-        mixed = render_mix(stems, analysis, prefs, on_step=_narrate, reference=reference_audio, reference_sr=reference_sr)
+    if args.export_buses:
+        from .bus_exporter import export_buses
+        with metrics.stage("mix_render", on_step=_narrate):
+            buses = export_buses(stems, analysis, prefs, on_step=_narrate, on_event=lambda _e: None)
+        mixed = buses.full_mix
+        bus_files = {
+            "vocal_main": buses.vocal_main,
+            "vocal_doubles": buses.vocal_doubles,
+            "music_bus": buses.music,
+            "parallel_bus": buses.parallel,
+            "reverb_bus": buses.reverb,
+        }
+        for bus_name, bus_audio in bus_files.items():
+            if bus_audio is not None:
+                bus_path = os.path.join(args.out, f"{bus_name}.wav")
+                sf.write(bus_path, bus_audio, stems.sample_rate)
+                _narrate(f"Bus esportato: {bus_path}")
+    else:
+        with metrics.stage("mix_render", on_step=_narrate):
+            mixed = render_mix(stems, analysis, prefs, on_step=_narrate, reference=reference_audio, reference_sr=reference_sr)
 
     mix_path = os.path.join(args.out, "mix.wav")
     sf.write(mix_path, mixed, stems.sample_rate)
