@@ -157,6 +157,7 @@ async function startRun() {
     genre_override: document.getElementById("genre_override").value,
     do_mastering: document.getElementById("do_mastering").checked,
     platform: document.getElementById("platform").value,
+    stop_after_mix: document.getElementById("workflow_mode").value === "stop_at_mix",
   };
 
   const result = await window.pywebview.api.run_pipeline(selectedInput, prefs, selectedOutput);
@@ -362,7 +363,38 @@ function onDone(result) {
   const resultEl = document.getElementById("result");
   resultEl.classList.remove("hidden");
 
+  if (result && result.ok && result.stage === "mix") {
+    // Workflow choice was "stop after mix" (or mastering was skipped
+    // entirely): show the mix DAW instead of a final result -- listen,
+    // optionally describe/adjust changes, then either re-render just the
+    // mix or continue on to mastering.
+    lastRunResult = result;
+    resultEl.innerHTML = `
+      <div class="result-card">
+        <div class="result-title">Mix pronto</div>
+        <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
+
+        <div class="audition-abc">
+          <div class="audition-abc-label">Riascolta:</div>
+          <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
+          <button class="btn" onclick="auditionStage('mix')">Con mix</button>
+        </div>
+
+        <div class="feedback-box">
+          <label for="feedback-text">Cosa vorresti cambiare nel mix? (es. "voce pi&ugrave; avanti", "pi&ugrave; caldo")</label>
+          <textarea id="feedback-text" rows="2" placeholder="Descrivi le modifiche, o lascia vuoto e clicca solo Rielabora"></textarea>
+          <button class="btn" onclick="reprocessMix()">Rielabora il mix</button>
+          <div id="feedback-status"></div>
+        </div>
+
+        <button class="btn btn-accent" onclick="continueToMastering()">Procedi al mastering</button>
+        <button class="btn" onclick="openOutput()">Apri cartella risultati</button>
+      </div>`;
+    return;
+  }
+
   if (result && result.ok) {
+    lastRunResult = result;
     resultEl.innerHTML = `
       <div class="result-card">
         <div class="result-title">Fatto</div>
@@ -383,10 +415,48 @@ function onDone(result) {
           <button class="btn btn-accent" onclick="submitFeedback()" ${result.master_path ? "" : "disabled"}>Rielabora (veloce)</button>
           <div id="feedback-status"></div>
         </div>
+
+        <div class="daw-reopen-buttons">
+          <button class="btn" onclick="reopenDaw('mix')">MIX</button>
+          <button class="btn" onclick="reopenDaw('master')" ${result.master_path ? "" : "disabled"}>MASTERING</button>
+        </div>
       </div>`;
   } else {
     const errorMsg = result ? result.error : "errore sconosciuto";
     resultEl.innerHTML = `<div class="result-card error">Errore: ${errorMsg}</div>`;
+  }
+}
+
+let lastRunResult = null;
+
+// "Rielabora il mix": re-runs only render_mix (stems/analysis already
+// cached server-side) with the edited feedback text, then re-shows the
+// mix DAW with the new result.
+async function reprocessMix() {
+  const status = document.getElementById("feedback-status");
+  const text = document.getElementById("feedback-text")?.value?.trim() || "";
+  if (status) status.textContent = "Rielaborazione in corso...";
+  const prefs = { creative_brief: text };
+  const result = await window.pywebview.api.reprocess_mix(prefs);
+  onDone(result);
+}
+
+// "Procedi al mastering": resumes from the cached mix straight into the
+// mastering stage, then shows the normal final result screen.
+async function continueToMastering() {
+  const platform = document.getElementById("platform")?.value || "auto";
+  const result = await window.pywebview.api.continue_to_mastering({ platform });
+  onDone(result);
+}
+
+// Final-screen "MIX"/"MASTERING" buttons: reopen the relevant DAW view at
+// any point after the pipeline has finished, without re-running anything.
+function reopenDaw(which) {
+  if (!lastRunResult) return;
+  if (which === "mix") {
+    onDone({ ...lastRunResult, stage: "mix" });
+  } else {
+    onDone({ ...lastRunResult, stage: "master" });
   }
 }
 

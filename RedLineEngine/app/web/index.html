@@ -83,7 +83,15 @@ window.addEventListener('error', function(e) {
         </select>
       </div>
 
-      <button class="btn btn-accent" onclick="startRun()">Avvia mix + mastering</button>
+      <div class="field">
+        <label>Come procedere</label>
+        <select id="workflow_mode">
+          <option value="auto">Tutto in sequenza (mix + mastering automatico)</option>
+          <option value="stop_at_mix">Fermati dopo il mix per ascoltare ed eventualmente correggere</option>
+        </select>
+      </div>
+
+      <button class="btn btn-accent" onclick="startRun()">Avvia</button>
     </div>
 
     <div id="screen-progress" class="screen">

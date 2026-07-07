@@ -78,6 +78,12 @@ class Api:
         self._last_platform: str = "auto"
         self._last_out_dir: str | None = None
         self._feedback_version: int = 1
+        # Needed to re-run just the mix stage (DAW "Rielabora il mix") or
+        # resume straight to mastering (DAW "Procedi al mastering") without
+        # repeating demucs separation + analysis, the two genuinely
+        # expensive steps neither of those actions needs to redo.
+        self._last_stems = None
+        self._last_mix_path: str | None = None
 
     def _start_js_worker(self) -> None:
         """Daemon thread that drains the JS eval queue. A sentinel None shuts
@@ -252,6 +258,64 @@ class Api:
             return None
         return result[0]
 
+    def _build_mix_prefs(self, prefs: dict) -> MixPreferences:
+        """Shared by run_pipeline and reprocess_mix -- turns the raw prefs
+        dict (sliders + optional free-text creative brief) into a validated
+        MixPreferences, applying the LLM's brief interpretation on top of
+        the slider values when a brief is given."""
+        aggressiveness = float(prefs.get("aggressiveness", 3))
+        warmth = float(prefs.get("warmth", 0.0))
+        vocal_prominence = float(prefs.get("vocal_prominence", 0.0))
+
+        creative_brief = (prefs.get("creative_brief") or "").strip()
+        if creative_brief:
+            from redline.llm_classifier import interpret_creative_brief, is_available
+            from redline.director_safety import clamp_params
+
+            if is_available():
+                self._narrate(f"Interpreto la richiesta: \"{creative_brief}\"...")
+                raw_adjustments = interpret_creative_brief(creative_brief)
+                adjustments, corrections = clamp_params(raw_adjustments)
+                if adjustments:
+                    aggressiveness = adjustments.get("aggressiveness", aggressiveness)
+                    warmth = adjustments.get("warmth", warmth)
+                    vocal_prominence = adjustments.get("vocal_prominence", vocal_prominence)
+                    self._narrate("Richiesta applicata: " + ", ".join(f"{k}={v}" for k, v in adjustments.items()))
+                if corrections:
+                    self._narrate("Nota: " + "; ".join(corrections))
+            else:
+                self._narrate("Richiesta libera ignorata: modello LLM locale non disponibile.")
+
+        return MixPreferences(
+            aggressiveness=int(round(aggressiveness)),
+            warmth=warmth,
+            vocal_prominence=vocal_prominence,
+            genre_override=prefs.get("genre_override") or None,
+            do_mastering=bool(prefs.get("do_mastering", True)),
+        )
+
+    def _do_mastering(self, mixed: np.ndarray, stems, analysis, out_dir: str, prefs: dict) -> str | None:
+        """Shared by run_pipeline and continue_to_mastering."""
+        self._narrate("Avvio il mastering...")
+        mix_path = self._last_mix_path or os.path.join(out_dir, "mix.wav")
+        reference = prefs.get("reference") or None
+        if reference:
+            master_path = os.path.join(out_dir, "master.wav")
+            render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
+        else:
+            platform = prefs.get("platform", "auto")
+            self._last_platform = platform
+            mastered = render_master(
+                mixed, stems.sample_rate, analysis, platform=platform,
+                on_step=self._narrate, on_event=self._emit,
+                on_audition=self._audition if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+            )
+            master_path = os.path.join(out_dir, "master.wav")
+            sf.write(master_path, mastered, stems.sample_rate)
+            self._last_master = mastered
+        self._narrate(f"Master salvato: {master_path}")
+        return master_path
+
     def run_pipeline(self, input_path: str, prefs: dict, out_dir: str) -> dict:
         try:
             os.makedirs(out_dir, exist_ok=True)
@@ -267,38 +331,7 @@ class Api:
                 f"{analysis.mix_lufs:.1f} LUFS  |  Crest {analysis.mix_crest:.1f}"
             )
 
-            aggressiveness = float(prefs.get("aggressiveness", 3))
-            warmth = float(prefs.get("warmth", 0.0))
-            vocal_prominence = float(prefs.get("vocal_prominence", 0.0))
-
-            creative_brief = (prefs.get("creative_brief") or "").strip()
-            if creative_brief:
-                from redline.llm_classifier import interpret_creative_brief, is_available
-                from redline.director_safety import clamp_params
-
-                if is_available():
-                    self._narrate(f"Interpreto la richiesta: \"{creative_brief}\"...")
-                    raw_adjustments = interpret_creative_brief(creative_brief)
-                    adjustments, corrections = clamp_params(raw_adjustments)
-                    if adjustments:
-                        aggressiveness = adjustments.get("aggressiveness", aggressiveness)
-                        warmth = adjustments.get("warmth", warmth)
-                        vocal_prominence = adjustments.get("vocal_prominence", vocal_prominence)
-                        self._narrate(
-                            "Richiesta applicata: " + ", ".join(f"{k}={v}" for k, v in adjustments.items())
-                        )
-                    if corrections:
-                        self._narrate("Nota: " + "; ".join(corrections))
-                else:
-                    self._narrate("Richiesta libera ignorata: modello LLM locale non disponibile.")
-
-            mix_prefs = MixPreferences(
-                aggressiveness=int(round(aggressiveness)),
-                warmth=warmth,
-                vocal_prominence=vocal_prominence,
-                genre_override=prefs.get("genre_override") or None,
-                do_mastering=bool(prefs.get("do_mastering", True)),
-            )
+            mix_prefs = self._build_mix_prefs(prefs)
 
             self._narrate("Avvio il mix...")
             mixed = render_mix(
@@ -312,9 +345,9 @@ class Api:
             self._narrate(f"Mix salvato: {mix_path}")
 
             # Cache for the post-render "NO MIX / CON MIX / CON MASTERING"
-            # in-app audition and the feedback re-mastering pass below.
-            # Raw stems are just summed dry (no panning/leveling/EQ) -- the
-            # simplest honest definition of "before" to compare against.
+            # in-app audition, the feedback re-mastering pass, and the DAW
+            # review screens (mix reprocessing needs stems+analysis without
+            # repeating demucs/analysis; mastering resume needs mixed+stems).
             dry_sum = np.zeros_like(mixed)
             for track in stems.tracks.values():
                 dry_sum += track
@@ -324,33 +357,111 @@ class Api:
             self._last_sr = stems.sample_rate
             self._last_analysis = analysis
             self._last_out_dir = out_dir
+            self._last_mix_path = mix_path
+            self._last_stems = stems
             self._feedback_version = 1
 
-            master_path = None
-            if mix_prefs.do_mastering:
-                self._narrate("Avvio il mastering...")
-                reference = prefs.get("reference") or None
-                if reference:
-                    master_path = os.path.join(out_dir, "master.wav")
-                    render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
-                else:
-                    platform = prefs.get("platform", "auto")
-                    self._last_platform = platform
-                    mastered = render_master(
-                        mixed, stems.sample_rate, analysis, platform=platform,
-                        on_step=self._narrate, on_event=self._emit,
-                        on_audition=self._audition if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
-                    )
-                    master_path = os.path.join(out_dir, "master.wav")
-                    sf.write(master_path, mastered, stems.sample_rate)
-                    self._last_master = mastered
-                self._narrate(f"Master salvato: {master_path}")
+            # DAW workflow choice: if the user asked to stop and review the
+            # mix before deciding on mastering, return here -- the frontend
+            # shows the mix DAW screen instead of the final result screen,
+            # and continue_to_mastering()/reprocess_mix() pick up from the
+            # cached state above whenever the user is ready.
+            if not mix_prefs.do_mastering or bool(prefs.get("stop_after_mix", False)):
+                self._narrate("Mix pronto. In attesa di revisione." if bool(prefs.get("stop_after_mix", False)) else "Fatto (solo mix).")
+                return _sanitize_for_json({
+                    "ok": True,
+                    "stage": "mix",
+                    "mix_path": mix_path,
+                    "master_path": None,
+                    "bpm": analysis.bpm,
+                    "key": analysis.key_name,
+                    "genre": analysis.genre.name,
+                    "lufs": analysis.mix_lufs,
+                })
+
+            master_path = self._do_mastering(mixed, stems, analysis, out_dir, prefs)
 
             self._narrate("Fatto.")
             return _sanitize_for_json({
                 "ok": True,
+                "stage": "master",
                 "mix_path": mix_path,
                 "master_path": master_path,
+                "bpm": analysis.bpm,
+                "key": analysis.key_name,
+                "genre": analysis.genre.name,
+                "lufs": analysis.mix_lufs,
+            })
+        except Exception as exc:
+            traceback.print_exc()
+            self._narrate(f"Errore: {exc}")
+            return {"ok": False, "error": str(exc)}
+
+    def continue_to_mastering(self, prefs: dict) -> dict:
+        """DAW "Procedi al mastering" button: resumes from the cached mix
+        (no re-run of demucs/analysis/mix) and runs only the mastering
+        stage, exactly like run_pipeline would have if stop_after_mix
+        hadn't been set."""
+        if self._last_mix is None or self._last_stems is None or self._last_analysis is None or self._last_out_dir is None:
+            return {"ok": False, "error": "Nessun mix in cache da masterizzare."}
+        try:
+            master_path = self._do_mastering(self._last_mix, self._last_stems, self._last_analysis, self._last_out_dir, prefs)
+            self._narrate("Fatto.")
+            return _sanitize_for_json({
+                "ok": True,
+                "stage": "master",
+                "mix_path": self._last_mix_path,
+                "master_path": master_path,
+                "bpm": self._last_analysis.bpm,
+                "key": self._last_analysis.key_name,
+                "genre": self._last_analysis.genre.name,
+                "lufs": self._last_analysis.mix_lufs,
+            })
+        except Exception as exc:
+            traceback.print_exc()
+            self._narrate(f"Errore: {exc}")
+            return {"ok": False, "error": str(exc)}
+
+    def reprocess_mix(self, prefs: dict) -> dict:
+        """DAW "Rielabora il mix" button: re-runs only render_mix against
+        the already-loaded/analyzed stems (skips demucs separation and
+        analysis, the two expensive steps) with new preferences -- either
+        edited slider values or a fresh free-text prompt describing what to
+        change. Updates the same cache run_pipeline populates, so audition/
+        continue_to_mastering keep working against the new result."""
+        if self._last_stems is None or self._last_analysis is None or self._last_out_dir is None:
+            return {"ok": False, "error": "Nessuno stem in cache da rielaborare."}
+        try:
+            stems = self._last_stems
+            analysis = self._last_analysis
+            out_dir = self._last_out_dir
+
+            mix_prefs = self._build_mix_prefs(prefs)
+            self._narrate("Rielaborazione del mix...")
+            mixed = render_mix(
+                stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
+                director_gate=self.director_gate,
+                on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+            )
+
+            mix_path = os.path.join(out_dir, "mix.wav")
+            sf.write(mix_path, mixed, stems.sample_rate)
+            self._narrate(f"Mix aggiornato: {mix_path}")
+
+            dry_sum = np.zeros_like(mixed)
+            for track in stems.tracks.values():
+                dry_sum += track
+            self._last_dry = dry_sum
+            self._last_mix = mixed
+            self._last_master = None
+            self._last_mix_path = mix_path
+
+            self._narrate("Fatto.")
+            return _sanitize_for_json({
+                "ok": True,
+                "stage": "mix",
+                "mix_path": mix_path,
+                "master_path": None,
                 "bpm": analysis.bpm,
                 "key": analysis.key_name,
                 "genre": analysis.genre.name,
