@@ -130,7 +130,7 @@ VOCAL_DUCK_BAND_HZ = (1000.0, 4000.0)  # the band a lead vocal actually occupies
 # bus's own 8:1 hard compression on vocal+drums was tipping transient
 # emphasis toward the drums (compression favors whatever hits hardest,
 # which is kick/snare, not vocal sustain), burying the vocal further.
-PARALLEL_BUS_MIX = 0.15
+PARALLEL_BUS_MIX = 0.20
 BACKING_VOCALS_GLUE_RATIO = 2.0
 
 # Baseline lead-vocal level priority, always applied on top of the user's
@@ -158,13 +158,13 @@ KICK_BASS_DUCK_BASE_DB = 3.5
 # actually carves enough room (matches the "carve the vocal's shape out of
 # the instrumental" technique from modern mixing references).
 MUSIC_BUS_MID_DIP_DB = -3.0
-MUSIC_BUS_SIDE_WIDTH_DB = 1.0
+MUSIC_BUS_SIDE_WIDTH_DB = 1.5
 MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
 
 # Drum bus tape-style saturation (§3 Drum Bus blueprint): even-harmonic
 # "dirt" blended in after glue compression, standard on urban/modern busses.
 DRUM_SATURATION_DRIVE = 0.35
-DRUM_SATURATION_MIX = 0.18
+DRUM_SATURATION_MIX = 0.22
 
 # Bass 2-band split + harmonic exciter (§4 Bass blueprint): the split point
 # separates the immobile sub from the more dynamic pluck/attack band, and
@@ -172,7 +172,7 @@ DRUM_SATURATION_MIX = 0.18
 # bass reads as present even on speakers that can't reproduce the sub.
 BASS_SPLIT_HZ = 120.0
 BASS_EXCITER_DRIVE = 0.4
-BASS_EXCITER_MIX = 0.25
+BASS_EXCITER_MIX = 0.30
 
 # Makeup gain constants — each compressor stage gets a compensating Gain
 # after it so the output level stays roughly where it was pre-compression.

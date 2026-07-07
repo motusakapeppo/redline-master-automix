@@ -27,8 +27,8 @@ _FLUX_LOW = 0.14
 # Foreground treatment: a touch of high-shelf "air" instead of a cut, medium/
 # slow compression attack so it doesn't squash the transients that keep it
 # sounding close and up-front.
-FOREGROUND_AIR_SHELF_HZ = 8000.0
-FOREGROUND_AIR_GAIN_DB = 1.0
+FOREGROUND_AIR_SHELF_HZ = 10000.0
+FOREGROUND_AIR_GAIN_DB = 1.5
 FOREGROUND_COMP_ATTACK_MS = 25.0
 FOREGROUND_COMP_RATIO = 2.0
 FOREGROUND_COMP_THRESHOLD_DB = -14.0

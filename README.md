@@ -547,10 +547,10 @@ Triggered by real user feedback that renders were crackling, the vocal was nearl
 | # | Issue | Status | Note |
 |---|-------|--------|------|
 | 1 | **Mix output quality still needs calibration** | **OPEN** | The research report (`docs/research_report.md`) documents discrepancies between current code constants and industry standards. A second calibration pass on varied material (rock, pop, jazz, electronic, classical) is needed before the output is consistently professional. |
-| 2 | **`pyloudnorm` not in requirements.txt** | **OPEN** | `loudness_match()` falls back gracefully if pyloudnorm is not installed, but for proper A/B loudness matching it should be added to `requirements.txt`. |
+| 2 | **`pyloudnorm` not in requirements.txt** | **FIXED** | `pyloudnorm` is already in `requirements.txt` (line 6). |
 | 3 | **No test for `DirectorGate.request_answer()`/`answer()`** | **OPEN** | The new checkpoint API (instrument-identity questions) has no unit test. The existing `test_director.py` only covers `request_approval()`/`approve()`. |
 | 4 | **`classify_instrument` cache not tested** | **MINOR** | `_instrument_cache` in `mixengine.py` avoids redundant spectral analysis but has no dedicated test. |
-| 5 | **Research report discrepancies not applied** | **OPEN** | The report lists specific recommended changes (Hip-Hop presence at 2000Hz too low, Pop warmth cut instead of boost, Classical air shelf too aggressive) — none have been applied to the code yet. |
+| 5 | **Research report discrepancies not applied** | **FIXED** | The report's recommended changes (Hip-Hop presence, Pop warmth, Classical air, EDM sub/air, mix constants, drum room send, depth staging) have been applied to the code. |
 | 6 | **Stereo widening / transient shaper not calibrated** | **OPEN** | Both modules work correctly on synthetic test audio but have not been tuned on real music. Default values may need adjustment. |
 | 7 | **Preset system UI not tested in real app** | **OPEN** | The preset dropdown and save button work in the code but have not been verified in the running pywebview application. |
 | 8 | **CLI `--batch` mode not tested with real audio** | **OPEN** | Batch processing tests use synthetic audio. Real-world performance with Demucs separation and full DSP pipeline is untested. |
@@ -1119,10 +1119,10 @@ Innescato da un feedback reale dell'utente: i render gracchiavano, la voce era q
 | # | Problema | Stato | Nota |
 |---|----------|-------|------|
 | 1 | **Qualità output mix ancora da calibrare** | **APERTO** | Il report di ricerca (`docs/research_report.md`) documenta discrepanze tra le costanti attuali e gli standard di settore. Serve un secondo giro di calibrazione su materiale variato (rock, pop, jazz, elettronica, classica). |
-| 2 | **`pyloudnorm` non in requirements.txt** | **APERTO** | `loudness_match()` ricade gracefulmente se pyloudnorm non è installato, ma per un corretto loudness matching A/B va aggiunto a `requirements.txt`. |
+| 2 | **`pyloudnorm` non in requirements.txt** | **RISOLTO** | Già presente in `requirements.txt` (riga 6). Nessuna azione necessaria. |
 | 3 | **Nessun test per `DirectorGate.request_answer()`/`answer()`** | **APERTO** | La nuova API checkpoint (domande identità strumenti) non ha test unitari. `test_director.py` copre solo `request_approval()`/`approve()`. |
 | 4 | **Cache `classify_instrument` non testata** | **MINORE** | `_instrument_cache` in `mixengine.py` evita analisi spettrale ridondante ma non ha test dedicati. |
-| 5 | **Discrepanze report ricerca non applicate** | **APERTO** | Il report elenca modifiche raccomandate (presenza Hip-Hop a 2000Hz troppo bassa, taglio warmth Pop invece di boost, air shelf Classical troppo aggressivo) — nessuna ancora applicata. |
+| 5 | **Discrepanze report ricerca non applicate** | **RISOLTO** | Tutte le modifiche HIGH e MEDIUM applicate a `genre.py` (Hip-Hop presenza 2000→3500Hz, aria 0→+2dB; Pop 250Hz -2→-0.5dB, aria 10→12kHz; Classical aria +3→+1.5dB; EDM aria +1→+2.5dB, sub +3→+4dB). Modifiche LOW applicate a `mixengine.py` (bus parallelo 15→20%, side width 1.0→1.5, drum sat 18→22%, bass exciter 25→30%), `fxsends.py` (drum room 8→10%), `depth.py` (foreground air 8→10kHz, +1→+1.5dB). |
 | 6 | **Stereo widening / transient shaper non calibrati** | **APERTO** | Entrambi i moduli funzionano su audio sintetico ma non sono stati tarati su musica reale. |
 | 7 | **UI preset non testata in app reale** | **APERTO** | Dropdown e pulsante preset funzionano nel codice ma non verificati nell'app pywebview in esecuzione. |
 | 8 | **CLI `--batch` non testata con audio reale** | **APERTO** | I test batch usano audio sintetico. Performance con Demucs e pipeline DSP completa non testata. |
@@ -1173,10 +1173,10 @@ Uccidere il processo overlay era un workaround precedente (sbagliato) che sembra
 | # | Issue | Status | Note |
 |---|-------|--------|------|
 | 1 | **Mix output quality still needs calibration** | **OPEN** | The research report (`docs/research_report.md`) documents discrepancies between current code constants and industry standards. A second calibration pass on varied material (rock, pop, jazz, electronic, classical) is needed before the output is consistently professional. |
-| 2 | **`pyloudnorm` not in requirements.txt** | **OPEN** | `loudness_match()` falls back gracefully if pyloudnorm is not installed, but for proper A/B loudness matching it should be added to `requirements.txt`. |
+| 2 | **`pyloudnorm` not in requirements.txt** | **FIXED** | `pyloudnorm` is already in `requirements.txt` (line 6). |
 | 3 | **No test for `DirectorGate.request_answer()`/`answer()`** | **OPEN** | The new checkpoint API (instrument-identity questions) has no unit test. The existing `test_director.py` only covers `request_approval()`/`approve()`. |
 | 4 | **`classify_instrument` cache not tested** | **MINOR** | `_instrument_cache` in `mixengine.py` avoids redundant spectral analysis but has no dedicated test. |
-| 5 | **Research report discrepancies not applied** | **OPEN** | The report lists specific recommended changes (Hip-Hop presence at 2000Hz too low, Pop warmth cut instead of boost, Classical air shelf too aggressive) — none have been applied to the code yet. |
+| 5 | **Research report discrepancies not applied** | **FIXED** | The report's recommended changes (Hip-Hop presence, Pop warmth, Classical air, EDM sub/air, mix constants, drum room send, depth staging) have been applied to the code. |
 | 6 | **Stereo widening / transient shaper not calibrated** | **OPEN** | Both modules work correctly on synthetic test audio but have not been tuned on real music. Default values may need adjustment. |
 | 7 | **Preset system UI not tested in real app** | **OPEN** | The preset dropdown and save button work in the code but have not been verified in the running pywebview application. |
 | 8 | **CLI `--batch` mode not tested with real audio** | **OPEN** | Batch processing tests use synthetic audio. Real-world performance with Demucs separation and full DSP pipeline is untested. |

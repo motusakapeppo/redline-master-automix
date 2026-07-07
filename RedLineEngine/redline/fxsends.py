@@ -39,7 +39,7 @@ def vocal_send(signal: np.ndarray, sr: int, bpm: float, mix: float) -> np.ndarra
     return signal * (1.0 - mix) + wet * mix
 
 
-def drum_room_send(signal: np.ndarray, sr: int, mix: float = 0.08) -> np.ndarray:
+def drum_room_send(signal: np.ndarray, sr: int, mix: float = 0.10) -> np.ndarray:
     """A short, subtle room reverb for drums — cohesion, not obvious space."""
     if mix <= 0.0:
         return signal
