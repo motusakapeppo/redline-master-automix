@@ -13,6 +13,11 @@ import numpy as np
 import soundfile as sf
 import librosa
 
+from redline.preflight import PreFlightValidator
+from redline.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 AUDIO_EXTENSIONS = (".wav", ".flac", ".aiff", ".aif", ".mp3", ".ogg")
 
 # Our own conventional output file names (cli.py/app/api.py always write
@@ -61,6 +66,28 @@ def _read_audio(path: str) -> tuple[np.ndarray, int]:
 def _align(named: dict[str, tuple[np.ndarray, int]]) -> Stems:
     """Resamples everything to the highest sample rate found and zero-pads to the
     longest track, so every stem in the returned Stems has identical shape."""
+    sample_rates = [sr for _, sr in named.values()]
+    mixed_sr_report = PreFlightValidator.check_mixed_sample_rates(sample_rates, "stems")
+    if mixed_sr_report.warnings or mixed_sr_report.issues:
+        for w in mixed_sr_report.warnings:
+            logger.warning(w)
+        if not mixed_sr_report.passed:
+            for issue in mixed_sr_report.issues:
+                logger.error(issue)
+            raise ValueError("PreFlight fallito:\n" + "\n".join(mixed_sr_report.issues))
+
+    issues: list[str] = []
+    for name, (data, sr) in named.items():
+        report = PreFlightValidator.check_audio(data, sr, name)
+        for w in report.warnings:
+            logger.warning(w)
+        if not report.passed:
+            issues.extend(report.issues)
+    if issues:
+        for issue in issues:
+            logger.error(issue)
+        raise ValueError("PreFlight fallito:\n" + "\n".join(issues))
+
     target_sr = max(sr for _, sr in named.values())
 
     resampled: dict[str, np.ndarray] = {}
