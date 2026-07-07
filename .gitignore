@@ -42,3 +42,22 @@ RedLineEngine/redline/targets/target_*.json
 # Machine-local feature flag overrides (see redline/config.py) — never shared
 RedLineEngine/.flags.json
 .flags.json
+
+# Session / planning artifacts
+RedLineEngine/.omo/
+RedLineEngine/docs/superpowers/
+RedLineEngine/_verify_out/
+
+# Reference books (large, not source)
+*.txt
+*libgen*
+
+# Test / debug scripts
+RedLineEngine/ci_check.py
+
+# Avatar background image (large, not source)
+RedLineEngine/app/web/motus_base.png
+RedLineEngine/motus_base.png
+
+# Vendored Three.js (large, not actively maintained in repo)
+RedLineEngine/app/web/vendor/three/
