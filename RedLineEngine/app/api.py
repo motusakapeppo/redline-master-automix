@@ -22,6 +22,7 @@ from redline.director import DirectorGate
 from redline.input_loader import load_auto
 from redline.analyze import analyze
 from redline.presets import PresetManager
+from redline.session_history import SessionHistory
 from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
@@ -67,6 +68,9 @@ def _sanitize_for_json(data):
     return data
 
 
+_MIX_HISTORY_CAP = 8
+
+
 class Api:
     def __init__(self) -> None:
         self._window: webview.Window | None = None
@@ -103,6 +107,15 @@ class Api:
         # expensive steps neither of those actions needs to redo.
         self._last_stems = None
         self._last_mix_path: str | None = None
+
+        # Undo/redo for the mix-review DAW ("Rielabora il mix" reprocessing):
+        # caches prior mix buffers in memory instead of re-running render_mix
+        # (which can take seconds to minutes) -- undo/redo becomes an O(1)
+        # buffer swap, not a DSP re-render. Capped at _MIX_HISTORY_CAP
+        # entries since each is a full audio buffer (memory, not time, is
+        # the real constraint here).
+        self._mix_undo_stack: list[dict] = []
+        self._mix_redo_stack: list[dict] = []
 
     def _start_js_worker(self) -> None:
         """Daemon thread that drains the JS eval queue. A sentinel None shuts
@@ -317,11 +330,14 @@ class Api:
             traceback.print_exc()
             self._narrate(f"Neural Monitor: errore driver audio ({exc})")
 
-    def approve_director_checkpoint(self) -> None:
-        """Called by the GUI's "ENGAGE"/approve button -- unblocks whichever
-        render_mix() checkpoint is currently paused waiting for it. Safe to
-        call even if nothing is currently waiting (just a no-op set())."""
-        self.director_gate.approve()
+    def approve_director_checkpoint(self, corrections: dict | None = None) -> None:
+        """Called by the GUI's "ENGAGE" button -- unblocks the
+        "stem_classification" Director Mode checkpoint. `corrections` is
+        {stem_name: {"role": ..., "layer": ..., "register": ...}} for any
+        stem the user overrode via the dropdowns; render_mix ignores/
+        validates anything not recognized, so an empty or partial dict is
+        always safe -- same contract as answer_instrument_questions below."""
+        self.director_gate.answer(corrections or {})
 
     def answer_instrument_questions(self, answers: dict) -> None:
         """Called by the GUI's instrument-question form -- unblocks the
@@ -462,6 +478,8 @@ class Api:
             self._last_mix_path = mix_path
             self._last_stems = stems
             self._feedback_version = 1
+            self._mix_undo_stack.clear()
+            self._mix_redo_stack.clear()
 
             # DAW workflow choice: if the user asked to stop and review the
             # mix before deciding on mastering, return here -- the frontend
@@ -470,6 +488,12 @@ class Api:
             # cached state above whenever the user is ready.
             if not mix_prefs.do_mastering or bool(prefs.get("stop_after_mix", False)):
                 self._narrate("Mix pronto. In attesa di revisione." if bool(prefs.get("stop_after_mix", False)) else "Fatto (solo mix).")
+                SessionHistory.add({
+                    "input_path": input_path, "output_dir": out_dir, "stage": "mix",
+                    "mix_path": mix_path, "master_path": None,
+                    "bpm": analysis.bpm, "key": analysis.key_name,
+                    "genre": analysis.genre.name, "lufs": analysis.mix_lufs,
+                })
                 return _sanitize_for_json({
                     "ok": True,
                     "stage": "mix",
@@ -484,6 +508,12 @@ class Api:
             master_path = self._do_mastering(mixed, stems, analysis, out_dir, prefs)
 
             self._narrate("Fatto.")
+            SessionHistory.add({
+                "input_path": input_path, "output_dir": out_dir, "stage": "master",
+                "mix_path": mix_path, "master_path": master_path,
+                "bpm": analysis.bpm, "key": analysis.key_name,
+                "genre": analysis.genre.name, "lufs": analysis.mix_lufs,
+            })
             return _sanitize_for_json({
                 "ok": True,
                 "stage": "master",
@@ -563,6 +593,12 @@ class Api:
             analysis = self._last_analysis
             out_dir = self._last_out_dir
 
+            if self._last_mix is not None:
+                self._mix_undo_stack.append({"mixed": self._last_mix, "mix_path": self._last_mix_path})
+                if len(self._mix_undo_stack) > _MIX_HISTORY_CAP:
+                    self._mix_undo_stack.pop(0)
+                self._mix_redo_stack.clear()
+
             mix_prefs = self._build_mix_prefs(prefs)
             self._narrate("Rielaborazione del mix...")
             mixed = render_mix(
@@ -599,8 +635,99 @@ class Api:
             self._narrate(f"Errore: {exc}")
             return {"ok": False, "error": str(exc)}
 
+    def list_sessions(self) -> list[dict]:
+        """Return past render sessions (most recent first) for the Cronologia
+        screen. Never raises -- a history read failure just shows an empty
+        list, it must not block the rest of the UI."""
+        try:
+            return SessionHistory.list()
+        except Exception as exc:
+            logging.getLogger(__name__).error("list_sessions fallito: %s", exc)
+            return []
+
+    def open_session_folder(self, session_id: str) -> dict:
+        """Cronologia "apri cartella" button: opens the output folder of a
+        past session by id."""
+        entry = SessionHistory.get(session_id)
+        if not entry or not entry.get("output_dir"):
+            return {"ok": False, "error": "Sessione non trovata."}
+        try:
+            os.startfile(entry["output_dir"])  # noqa: S606
+            return {"ok": True}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def undo_mix(self) -> dict:
+        """Undo the last "Rielabora il mix": pops the previous mix buffer
+        from memory and swaps it back in -- no DSP re-render, just restoring
+        an already-computed buffer, so this is near-instant regardless of
+        how expensive the original render_mix pass was."""
+        if not self._mix_undo_stack or self._last_mix_path is None:
+            return {"ok": False, "error": "Niente da annullare."}
+        try:
+            self._mix_redo_stack.append({"mixed": self._last_mix, "mix_path": self._last_mix_path})
+            prev = self._mix_undo_stack.pop()
+            self._last_mix = prev["mixed"]
+            self._last_mix_path = prev["mix_path"]
+            sf.write(self._last_mix_path, self._last_mix, self._last_sr)
+            self._narrate("Annullato: torno alla versione precedente del mix.")
+            return {"ok": True}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
+    def redo_mix(self) -> dict:
+        """Redo a previously undone mix reprocessing -- same O(1) buffer
+        swap as undo_mix, just from the other stack."""
+        if not self._mix_redo_stack or self._last_mix_path is None:
+            return {"ok": False, "error": "Niente da ripetere."}
+        try:
+            self._mix_undo_stack.append({"mixed": self._last_mix, "mix_path": self._last_mix_path})
+            nxt = self._mix_redo_stack.pop()
+            self._last_mix = nxt["mixed"]
+            self._last_mix_path = nxt["mix_path"]
+            sf.write(self._last_mix_path, self._last_mix, self._last_sr)
+            self._narrate("Ripristinata la versione successiva del mix.")
+            return {"ok": True}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
     def open_folder(self, path: str) -> None:
         os.startfile(path)  # noqa: S606 — Windows-only app, opening a folder the user just produced
+
+    def export_final(self, stage: str = "auto") -> dict:
+        """One-click export: writes the finished render (master if one was
+        produced, otherwise the mix) to a user-chosen path via a native save
+        dialog, skipping the "go find it in the output folder" step. Reuses
+        whichever buffer run_pipeline/reprocess_mix/submit_feedback already
+        cached in memory -- no re-render, no format conversion beyond what
+        soundfile infers from the chosen extension (wav/flac/ogg)."""
+        buf = self._last_master if (stage == "auto" and self._last_master is not None) else None
+        if buf is None:
+            buf = {"master": self._last_master, "mix": self._last_mix}.get(stage, self._last_master)
+        if buf is None:
+            buf = self._last_mix
+        if buf is None or self._last_sr is None:
+            return {"ok": False, "error": "Nessun render disponibile da esportare."}
+
+        default_name = "master.wav" if buf is self._last_master else "mix.wav"
+        result = self._window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=default_name,
+            file_types=('WAV (*.wav)', 'FLAC (*.flac)', 'OGG (*.ogg)'),
+        )
+        if not result:
+            return {"ok": False, "error": "Esportazione annullata."}
+        dest = result if isinstance(result, str) else result[0]
+
+        try:
+            sf.write(dest, buf, self._last_sr)
+            self._narrate(f"Esportato: {dest}")
+            return {"ok": True, "path": dest}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
 
     def audition_stage(self, stage: str, loudness_match: bool = False) -> dict:
         """Post-render re-evaluation: play a chunk of one of the three
@@ -628,6 +755,31 @@ class Api:
                 self._narrate(f"Ascolto: {stage}...")
 
             chunk = extract_smart_chunk(playback, self._last_sr)
+            driver.play_chunk(chunk, self._last_sr)
+            return {"ok": True}
+        except Exception as exc:
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
+    def audition_blend(self, stage_a: str, stage_b: str, t: float) -> dict:
+        """Quick-compare slider: NOT a live real-time crossfade (auditionStage
+        plays through native speakers via sd.play, there's no browser-side
+        audio bus to crossfade on) -- instead computes a static (1-t)*a + t*b
+        blend of the two cached buffers in numpy and plays that one blend on
+        request. Each slider release triggers one fresh blend+play, same
+        mechanism as audition_stage just with two sources instead of one."""
+        buffers = {"dry": self._last_dry, "mix": self._last_mix, "master": self._last_master}
+        a, b = buffers.get(stage_a), buffers.get(stage_b)
+        if a is None or b is None or self._last_sr is None:
+            return {"ok": False, "error": "Stadi non disponibili per il confronto."}
+        try:
+            from redline.audition import driver, extract_smart_chunk
+
+            t = max(0.0, min(1.0, float(t)))
+            n = min(a.shape[0], b.shape[0])
+            blend = (1 - t) * a[:n] + t * b[:n]
+            self._narrate(f"Ascolto: confronto {stage_a}/{stage_b} @ {t:.2f}...")
+            chunk = extract_smart_chunk(blend, self._last_sr)
             driver.play_chunk(chunk, self._last_sr)
             return {"ok": True}
         except Exception as exc:

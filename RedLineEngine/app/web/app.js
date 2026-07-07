@@ -1,6 +1,68 @@
 let selectedInput = null;
 let selectedOutput = null;
 
+// --- Progress % + ETA: on_step carries no step-count/total (it's a plain
+// narration string), so this is a fuzzy estimate, not exact tracking --
+// stems announced up front seed an expected step count (empirically ~8
+// onStep calls per stem through the mix chain), and if the real count runs
+// past that guess the estimate grows instead of the bar stalling at 100%.
+let _progressSeen = 0;
+let _progressExpected = 40;
+let _progressStepTimes = [];
+const _PROGRESS_HISTORY = 10;
+const _STEPS_PER_STEM_GUESS = 8;
+
+function resetProgress() {
+  _progressSeen = 0;
+  _progressExpected = 40;
+  _progressStepTimes = [];
+  document.getElementById("progress-wrap")?.classList.remove("hidden");
+  const fill = document.getElementById("progress-fill");
+  const pct = document.getElementById("progress-pct");
+  const eta = document.getElementById("progress-eta");
+  if (fill) fill.style.width = "0%";
+  if (pct) pct.textContent = "0%";
+  if (eta) eta.textContent = "stima tempo rimanente: --";
+}
+
+function bumpProgress(msg) {
+  // Neural Monitor toggle narration reuses the same onStep() channel as
+  // real pipeline steps (see toggle_neural_monitor's _narrate call in
+  // api.py) but isn't a pipeline step at all -- counting it made the bar
+  // creep forward every time the switch was flipped, on or off, mid-render
+  // or not.
+  if (/^Neural Monitor:/.test(msg)) return;
+  const now = performance.now();
+  _progressStepTimes.push(now);
+  if (_progressStepTimes.length > _PROGRESS_HISTORY) _progressStepTimes.shift();
+  _progressSeen += 1;
+
+  const stemCountMatch = msg.match(/Caricati (\d+) stem/);
+  if (stemCountMatch) {
+    _progressExpected = Math.max(20, parseInt(stemCountMatch[1], 10) * _STEPS_PER_STEM_GUESS);
+  }
+  if (_progressSeen > _progressExpected) {
+    _progressExpected = Math.ceil(_progressSeen * 1.15);
+  }
+
+  const pctValue = Math.min(97, (_progressSeen / _progressExpected) * 100);
+  const fill = document.getElementById("progress-fill");
+  const pctEl = document.getElementById("progress-pct");
+  if (fill) fill.style.width = `${pctValue.toFixed(0)}%`;
+  if (pctEl) pctEl.textContent = `${pctValue.toFixed(0)}%`;
+
+  const etaEl = document.getElementById("progress-eta");
+  if (etaEl && _progressStepTimes.length >= 2) {
+    const span = _progressStepTimes[_progressStepTimes.length - 1] - _progressStepTimes[0];
+    const avgPerStep = span / (_progressStepTimes.length - 1);
+    const remaining = Math.max(0, _progressExpected - _progressSeen);
+    const etaSeconds = Math.round((avgPerStep * remaining) / 1000);
+    etaEl.textContent = etaSeconds > 0
+      ? `stima tempo rimanente: ~${etaSeconds}s`
+      : "stima tempo rimanente: quasi fatto";
+  }
+}
+
 function startIdleBreathing() {
   if (window.avatarAPI) window.avatarAPI.setActivity(0.3);
 }
@@ -147,6 +209,7 @@ async function startRun() {
   document.getElementById("result").innerHTML = "";
   eqBands = {};
   redrawEq();
+  resetProgress();
   setAssistantLabel("al lavoro...");
 
   const prefs = {
@@ -256,6 +319,7 @@ function onStep(msg) {
   log.scrollTop = log.scrollHeight;
   if (window.avatarAPI) window.avatarAPI.onStep(msg);
   bumpActivity();
+  bumpProgress(msg);
   wireInteractiveLine(line, msg);
 
   // "Elaborazione stem 'X' (...)" / "  'X': ..." narration lines create or
@@ -300,10 +364,12 @@ function hideEqHoverMarker() {
 
 function triggerGlitch() {
   const rack = document.querySelector(".rack");
-  if (!rack) return;
-  rack.classList.remove("glitch");
-  void rack.offsetWidth;
-  rack.classList.add("glitch");
+  if (rack) {
+    rack.classList.remove("glitch");
+    void rack.offsetWidth;
+    rack.classList.add("glitch");
+  }
+  if (window.avatarAPI) window.avatarAPI.onGlitch();
 }
 
 function setAssistantLabel(text) {
@@ -423,10 +489,47 @@ function startCylonLoop() {
   cylonAnimationId = requestAnimationFrame(sweep);
 }
 
+// --- Web Audio chime: a short tone on render completion/error, so the user
+// can look away during a 40-60s LLM/DSP wait and still notice when it's
+// done. Independent of the native sd.play() audition/monitor path -- this
+// is a browser-side AudioContext beep, no engine audio involved.
+let _chimeCtx = null;
+
+function _getChimeCtx() {
+  if (!_chimeCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) _chimeCtx = new Ctx();
+  }
+  return _chimeCtx;
+}
+
+function playChime(kind) {
+  const ctx = _getChimeCtx();
+  if (!ctx) return;
+  const freqs = kind === "error" ? [220, 175] : [880, 1320];
+  const now = ctx.currentTime;
+  freqs.forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    const start = now + i * 0.11;
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(0.15, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + 0.3);
+  });
+}
+
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
+  document.getElementById("progress-wrap")?.classList.add("hidden");
   const resultEl = document.getElementById("result");
   resultEl.classList.remove("hidden");
+
+  playChime(result && result.ok ? "done" : "error");
 
   if (result && result.ok && result.stage === "mix") {
     // Workflow choice was "stop after mix" (or mastering was skipped
@@ -451,16 +554,20 @@ function onDone(result) {
             Match LUFS
           </label>
         </div>
+        ${_blendSliderHtml("dry", "mix", "Senza mix", "Con mix")}
 
         <div class="feedback-box">
           <label for="feedback-text">Cosa vorresti cambiare nel mix? (es. "voce pi&ugrave; avanti", "pi&ugrave; caldo")</label>
           <textarea id="feedback-text" rows="2" placeholder="Descrivi le modifiche, o lascia vuoto e clicca solo Rielabora"></textarea>
           <button class="btn" onclick="reprocessMix()">Rielabora il mix</button>
+          <button class="btn" onclick="undoLastChange()" title="Ctrl+Z">Annulla</button>
+          <button class="btn" onclick="redoLastChange()" title="Ctrl+Shift+Z">Ripeti</button>
           <div id="feedback-status"></div>
         </div>
 
         <button class="btn btn-accent" onclick="continueToMastering()">Procedi al mastering</button>
         <button class="btn" onclick="openOutput()">Apri cartella risultati</button>
+        <button class="btn" onclick="exportFinal('mix')">Esporta mix...</button>
       </div>`;
     renderDawWaveforms();
     return;
@@ -474,6 +581,7 @@ function onDone(result) {
         <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
         <div>Loudness: ${result.lufs.toFixed(1)} LUFS</div>
         <button class="btn btn-accent" onclick="openOutput()">Apri cartella risultati</button>
+        <button class="btn" onclick="exportFinal('auto')">Esporta...</button>
 
         <div class="audition-abc">
           <div class="audition-abc-label">Riascolta:</div>
@@ -485,6 +593,7 @@ function onDone(result) {
             Match LUFS
           </label>
         </div>
+        ${result.master_path ? _blendSliderHtml("mix", "master", "Solo mix", "Con mastering") : ""}
 
         <div class="feedback-box">
           <label for="feedback-text">Feedback (es. "pi&ugrave; caldo", "pi&ugrave; forte", "pi&ugrave; brillante")</label>
@@ -590,6 +699,31 @@ function _toggleDawTrackDetail(name, lane) {
   lane.classList.add("selected");
 }
 
+// Undo/redo for mix reprocessing: swaps a cached buffer server-side (see
+// undo_mix/redo_mix in api.py) -- no DSP re-render, so this stays fast no
+// matter how long the original "Rielabora il mix" took.
+async function undoLastChange() {
+  if (!window.pywebview) return;
+  const res = await window.pywebview.api.undo_mix();
+  if (res && res.ok) {
+    addEventChip("↩️ Mix: annullato");
+    if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
+  } else if (res) {
+    addEventChip(`ℹ️ ${res.error}`);
+  }
+}
+
+async function redoLastChange() {
+  if (!window.pywebview) return;
+  const res = await window.pywebview.api.redo_mix();
+  if (res && res.ok) {
+    addEventChip("↪️ Mix: ripristinato");
+    if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
+  } else if (res) {
+    addEventChip(`ℹ️ ${res.error}`);
+  }
+}
+
 // "Rielabora il mix": re-runs only render_mix (stems/analysis already
 // cached server-side) with the edited feedback text, then re-shows the
 // mix DAW with the new result.
@@ -625,6 +759,49 @@ function openOutput() {
   window.pywebview.api.open_folder(selectedOutput);
 }
 
+// --- Session History screen: past renders persisted server-side
+// (~/.redline/sessions.json via redline/session_history.py), listed most
+// recent first with the fields that already come back from run_pipeline.
+async function openSessionHistory() {
+  goToScreen("screen-history");
+  const list = document.getElementById("session-history-list");
+  if (!list || !window.pywebview) return;
+  list.innerHTML = `<div class="daw-loading">Carico la cronologia...</div>`;
+  const sessions = await window.pywebview.api.list_sessions();
+  if (!sessions || sessions.length === 0) {
+    list.innerHTML = `<div class="daw-loading">Nessuna sessione precedente.</div>`;
+    return;
+  }
+  list.innerHTML = sessions.map((s) => {
+    const date = new Date(s.timestamp * 1000).toLocaleString("it-IT");
+    const stageLabel = s.stage === "master" ? "Mix + Mastering" : "Solo mix";
+    return `
+      <div class="session-history-row">
+        <div class="session-history-main">
+          <div class="session-history-date">${date}</div>
+          <div>${s.genre || "?"} &middot; BPM ${s.bpm ? s.bpm.toFixed(1) : "?"} &middot; ${s.key || "?"} &middot; ${s.lufs ? s.lufs.toFixed(1) : "?"} LUFS &middot; ${stageLabel}</div>
+        </div>
+        <button class="btn" onclick="openSessionFolder('${s.id}')">Apri cartella</button>
+      </div>`;
+  }).join("");
+}
+
+async function openSessionFolder(id) {
+  if (!window.pywebview) return;
+  const res = await window.pywebview.api.open_session_folder(id);
+  if (res && !res.ok) addEventChip(`⚠️ ${res.error}`);
+}
+
+async function exportFinal(stage) {
+  if (!window.pywebview) return;
+  const res = await window.pywebview.api.export_final(stage || "auto");
+  if (res && res.ok) {
+    addEventChip(`\u{1F4E6} Esportato: ${res.path}`);
+  } else if (res && res.error !== "Esportazione annullata.") {
+    addEventChip(`⚠️ Esportazione fallita: ${res.error}`);
+  }
+}
+
 // --- Post-render re-evaluation: A/B/C audition of the three cached render
 // stages, and free-text feedback that triggers a fast re-mastering-only
 // pass (skips re-running the mix, which is the expensive part).
@@ -638,6 +815,30 @@ async function auditionStage(stage) {
   const res = await window.pywebview.api.audition_stage(stage, lm);
   if (res && !res.ok) {
     addEventChip(`\u{26A0}\u{FE0F} Ascolto non disponibile: ${res.error}`);
+  }
+}
+
+// Quick-Compare slider: not a live crossfade (see audition_blend() in
+// api.py for why) -- dragging just moves the handle, releasing computes one
+// fresh (1-t)*a + t*b blend server-side and plays it once. Honest tradeoff:
+// costs one playback round-trip per release instead of true real-time audio.
+function _blendSliderHtml(stageA, stageB, labelA, labelB) {
+  return `
+    <div class="blend-slider-row">
+      <span class="blend-slider-label">${labelA}</span>
+      <input type="range" class="blend-slider" min="0" max="1" step="0.01" value="0"
+             data-stage-a="${stageA}" data-stage-b="${stageB}"
+             onchange="auditionBlend(this)">
+      <span class="blend-slider-label">${labelB}</span>
+    </div>`;
+}
+
+async function auditionBlend(slider) {
+  if (!window.pywebview) return;
+  const t = parseFloat(slider.value);
+  const res = await window.pywebview.api.audition_blend(slider.dataset.stageA, slider.dataset.stageB, t);
+  if (res && !res.ok) {
+    addEventChip(`\u{26A0}\u{FE0F} Confronto non disponibile: ${res.error}`);
   }
 }
 
@@ -665,17 +866,45 @@ async function submitFeedback() {
 // --- Director Mode: the pipeline is genuinely paused on a Python thread
 // (threading.Event) waiting for this exact button click -- nothing here is
 // simulated, approveDirectorCheckpoint() really does unblock render_mix().
+// Each stem gets a role/layer/register dropdown pre-selected to what the
+// engine already guessed, so confirming without touching anything is a
+// single click (sends {}, no corrections) and fixing a wrong guess is a
+// couple more clicks, not retyping everything by hand.
+const ROLE_ICONS = { vocal: "\u{1F3A4}", bass: "\u{1F3B8}", drums: "\u{1F941}", other: "\u{1F3B9}" };
+const ROLE_OPTIONS = ["vocal", "bass", "drums", "other"];
+const ROLE_LABELS = { vocal: "Voce", bass: "Basso", drums: "Batteria", other: "Altro" };
+const LAYER_OPTIONS = ["primary", "double"];
+const LAYER_LABELS = { primary: "Principale", double: "Doppia" };
+// Only these actually change the engine's per-register DSP recipe
+// (vocalstack.py) -- "-- auto --" leaves the engine's own pitch-based
+// classification in charge, same as not touching the dropdown at all.
+const REGISTER_OPTIONS = ["", "low", "unison", "high", "falsetto"];
+const REGISTER_LABELS = { "": "-- auto --", low: "Basso", unison: "Unisono", high: "Alto", falsetto: "Falsetto" };
+
+function _selectHtml(id, options, labels, current) {
+  const opts = options
+    .map((v) => `<option value="${v}"${v === current ? " selected" : ""}>${labels[v] ?? v}</option>`)
+    .join("");
+  return `<select id="${id}">${opts}</select>`;
+}
+
 function showDirectorCheckpoint(evt) {
   const panel = document.getElementById("director-panel");
   const list = document.getElementById("director-stems");
   if (!panel || !list) return;
 
-  const roleIcons = { vocal: "\u{1F3A4}", bass: "\u{1F3B8}", drums: "\u{1F941}", other: "\u{1F3B9}" };
   list.innerHTML = evt.stems
-    .map((s) => {
-      const icon = roleIcons[s.role] || "\u{2753}";
-      const detail = [s.role, s.layer !== "primary" ? s.layer : null, s.register].filter(Boolean).join(" / ");
-      return `<div class="director-stem-row">${icon} <strong>${s.name}</strong> &mdash; ${detail}</div>`;
+    .map((s, i) => {
+      const icon = ROLE_ICONS[s.role] || "\u{2753}";
+      return `
+        <div class="director-stem-row stem-correction-row" data-stem="${s.name}">
+          <span class="stem-correction-name">${icon} <strong>${s.name}</strong></span>
+          <span class="stem-correction-fields">
+            ${_selectHtml(`stem-role-${i}`, ROLE_OPTIONS, ROLE_LABELS, s.role)}
+            ${_selectHtml(`stem-layer-${i}`, LAYER_OPTIONS, LAYER_LABELS, s.layer)}
+            ${_selectHtml(`stem-register-${i}`, REGISTER_OPTIONS, REGISTER_LABELS, s.register || "")}
+          </span>
+        </div>`;
     })
     .join("");
 
@@ -685,10 +914,24 @@ function showDirectorCheckpoint(evt) {
 
 function approveDirectorCheckpoint() {
   const panel = document.getElementById("director-panel");
-  if (panel) panel.classList.add("hidden");
+  const corrections = {};
+  if (panel) {
+    panel.querySelectorAll(".stem-correction-row").forEach((row, i) => {
+      const stem = row.dataset.stem;
+      const role = document.getElementById(`stem-role-${i}`)?.value;
+      const layer = document.getElementById(`stem-layer-${i}`)?.value;
+      const register = document.getElementById(`stem-register-${i}`)?.value;
+      const fix = {};
+      if (role) fix.role = role;
+      if (layer) fix.layer = layer;
+      if (register) fix.register = register;
+      if (Object.keys(fix).length > 0) corrections[stem] = fix;
+    });
+    panel.classList.add("hidden");
+  }
   if (window.avatarAPI) window.avatarAPI.onApprove();
   if (window.pywebview) {
-    window.pywebview.api.approve_director_checkpoint();
+    window.pywebview.api.approve_director_checkpoint(corrections);
   }
 }
 
@@ -774,11 +1017,30 @@ function redrawEq() {
   document.getElementById("eq-path").setAttribute("d", d);
 }
 
+// VU meter: maps a LUFS value (typical mix range -30..0) to a 0-100% fill.
+// Updated only on discrete events (qc_report, loudness_gain) -- there is no
+// continuous audio level stream from the engine to drive a "live" meter.
+function updateVuMeter(lufs, label) {
+  const fill = document.getElementById("vu-fill");
+  const detail = document.getElementById("vu-detail");
+  if (!fill) return;
+  const pct = Math.max(0, Math.min(100, ((lufs + 30) / 30) * 100));
+  fill.style.width = `${pct.toFixed(0)}%`;
+  if (detail) detail.textContent = label || `${lufs.toFixed(1)} LUFS`;
+}
+
 function flashDetail(id, text) {
   const el = document.getElementById(id);
   el.textContent = text;
   el.classList.add("flash");
   setTimeout(() => el.classList.remove("flash"), 400);
+
+  const module = el.closest(".module");
+  if (module) {
+    module.classList.add("module-active");
+    clearTimeout(module._activeTimer);
+    module._activeTimer = setTimeout(() => module.classList.remove("module-active"), 500);
+  }
 }
 
 // --- Per-stem breakdown rows: one row per track for the whole render,
@@ -854,7 +1116,69 @@ function getOrCreateStemRow(name) {
   container.appendChild(row);
   const entry = { row, badges, detail };
   stemRows.set(name, entry);
+  _makeStemRowDraggable(row, name);
+  _applySavedStemOrder();
   return entry;
+}
+
+// --- Drag-to-reorder stem rows: HTML5 drag & drop, order persisted in
+// localStorage per output folder so it survives across runs on the same
+// project (a fresh run on a different folder starts unsorted again).
+const STEM_ORDER_KEY = "redline_stem_order";
+
+function _stemOrderKey() {
+  return `${STEM_ORDER_KEY}:${selectedOutput || "default"}`;
+}
+
+function _makeStemRowDraggable(row, name) {
+  row.draggable = true;
+  row.dataset.stemName = name;
+
+  row.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", name);
+    row.classList.add("dragging");
+  });
+  row.addEventListener("dragend", () => row.classList.remove("dragging"));
+  row.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    const container = document.getElementById("stem-rows");
+    const dragging = container.querySelector(".dragging");
+    if (!dragging || dragging === row) return;
+    const rect = row.getBoundingClientRect();
+    const after = (e.clientY - rect.top) > rect.height / 2;
+    container.insertBefore(dragging, after ? row.nextSibling : row);
+  });
+  row.addEventListener("drop", (e) => {
+    e.preventDefault();
+    _persistStemOrder();
+  });
+}
+
+function _persistStemOrder() {
+  const container = document.getElementById("stem-rows");
+  if (!container) return;
+  const order = Array.from(container.children).map((el) => el.dataset.stemName).filter(Boolean);
+  try {
+    localStorage.setItem(_stemOrderKey(), JSON.stringify(order));
+  } catch (e) { /* localStorage unavailable -- reordering just won't persist */ }
+}
+
+function _applySavedStemOrder() {
+  const container = document.getElementById("stem-rows");
+  if (!container) return;
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(_stemOrderKey()) || "null");
+  } catch (e) {
+    return;
+  }
+  if (!Array.isArray(saved) || saved.length === 0) return;
+
+  const rowsByName = new Map(Array.from(container.children).map((el) => [el.dataset.stemName, el]));
+  for (const name of saved) {
+    const el = rowsByName.get(name);
+    if (el) container.appendChild(el);
+  }
 }
 
 function touchStemRow(name) {
@@ -1059,6 +1383,7 @@ function onEvent(evt) {
 
     case "loudness_gain":
       addEventChip(`\u{1F50A} ${evt.current_lufs} LUFS -> ${evt.target_lufs} LUFS (${evt.gain_db}dB)`);
+      updateVuMeter(evt.target_lufs, `${evt.current_lufs} -> ${evt.target_lufs} LUFS`);
       break;
 
     case "soft_clip":
@@ -1086,6 +1411,7 @@ function onEvent(evt) {
         "qc-detail",
         `${evt.lufs} LUFS, peak ${evt.true_peak_db}dB, mono ${evt.mono_compatibility} — ${evt.passed ? "OK" : "corretto"}`
       );
+      updateVuMeter(evt.lufs, `${evt.lufs} LUFS (QC)`);
       setAssistantLabel(evt.passed ? "tutto ok" : "corretto");
       break;
     }
@@ -1137,6 +1463,7 @@ function onEvent(evt) {
       addEventChip(`\u{1F525} ${evt.stem}: saturazione (drive ${evt.drive})`);
       flashDetail("saturation-detail", `${evt.stem}: drive ${evt.drive}`);
       markStemStage(evt.stem, "saturation");
+      if (window.avatarAPI) window.avatarAPI.onSaturation(evt.drive);
       break;
 
     case "reverb_send":
@@ -1247,6 +1574,62 @@ function initThreeAvatar() {
     window.avatarAPI.init('fx-canvas');
   }
 }
+
+// --- Keyboard shortcuts: Space=play/pause (Neural Monitor toggle),
+// Ctrl+S=save preset (wizard screen only), Escape=close checkpoint panels,
+// Ctrl+Z/Ctrl+Shift+Z=undo/redo (see undoLastChange/redoLastChange below).
+// Ignored while typing in a text field so shortcuts don't fight normal
+// editing (space in a textarea, browser-native Ctrl+Z in a text input).
+document.addEventListener("keydown", (e) => {
+  const tag = document.activeElement?.tagName;
+  const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+  if (e.key === "Escape") {
+    document.getElementById("director-panel")?.classList.add("hidden");
+    document.getElementById("instrument-questions-panel")?.classList.add("hidden");
+    return;
+  }
+
+  if (isTyping) return;
+
+  if (e.key === " ") {
+    const switchEl = document.getElementById("audition-switch");
+    if (switchEl) {
+      e.preventDefault();
+      switchEl.checked = !switchEl.checked;
+      toggleAudition();
+    }
+    return;
+  }
+
+  if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+    if (document.getElementById("screen-wizard")?.classList.contains("active")) {
+      e.preventDefault();
+      saveCurrentPreset();
+    }
+    return;
+  }
+
+  if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (typeof undoLastChange === "function") undoLastChange();
+    return;
+  }
+
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (typeof redoLastChange === "function") redoLastChange();
+    return;
+  }
+
+  // Easter egg: Ctrl+Alt+R ("RedLine") draws a Lissajous curve over the
+  // avatar for a few seconds -- purely decorative, no functional purpose.
+  if (e.ctrlKey && e.altKey && e.key.toLowerCase() === "r") {
+    e.preventDefault();
+    if (window.avatarAPI) window.avatarAPI.onEasterEgg();
+    return;
+  }
+});
 
 // Wire preset dropdown change event (delegated so it works even if the
 // dropdown is populated after DOMContentLoaded).

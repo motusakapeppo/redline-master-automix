@@ -122,6 +122,44 @@ html, body {
   z-index: 2;
 }
 
+.easter-egg-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.easter-egg-label {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #fff;
+  text-shadow: 0 0 6px var(--accent), 0 0 16px var(--accent);
+  pointer-events: none;
+  opacity: 0;
+  white-space: nowrap;
+}
+
+.easter-egg-label.playing {
+  animation: easter-egg-label-pulse 4s ease-in-out;
+}
+
+@keyframes easter-egg-label-pulse {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  85% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+}
+
 /* #avatar-panel is the virtual "camera" for the idle-look-around 3D head
    turn (see randomLookAround() in app.js) -- without a perspective on the
    containing block, rotationX/rotationY just squash the head like paper
@@ -408,33 +446,173 @@ select { width: auto; }
 
 .hidden { display: none !important; }
 
+.progress-wrap {
+  margin: 0 0 10px;
+}
+
+.progress-bar {
+  position: relative;
+  width: 100%;
+  height: 18px;
+  background: #141414;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.progress-fill {
+  position: relative;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #b4002a, var(--accent) 55%, #ff5c86);
+  border-radius: 999px 0 0 999px;
+  box-shadow: 0 0 12px rgba(255, 0, 63, 0.55), 0 0 2px rgba(255, 0, 63, 0.9);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.4s ease;
+  animation: progress-pulse 1.8s ease-in-out infinite;
+  overflow: hidden;
+}
+
+/* Diagonal shimmer sweeping left-to-right across the filled portion --
+   the "it's actively working" read, not just a static gradient. */
+.progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.35) 45%,
+    rgba(255, 255, 255, 0.35) 55%,
+    transparent 80%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.6s linear infinite;
+}
+
+@keyframes progress-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -20% 0; }
+}
+
+@keyframes progress-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 0, 63, 0.45), 0 0 2px rgba(255, 0, 63, 0.8); }
+  50% { box-shadow: 0 0 18px rgba(255, 0, 63, 0.8), 0 0 4px rgba(255, 0, 63, 1); }
+}
+
+.progress-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 5px;
+}
+
+/* Fixed 3-column grid instead of auto-fit -- with exactly 9 modules,
+   auto-fit's column count depends on container width and regularly left an
+   orphan module alone on its own row (disordered, asymmetric). A hard
+   3-column grid always resolves to clean, even 3x3 rows; it steps down at
+   narrower widths instead of ever leaving a lone trailing card. */
 .rack {
   display: grid;
-  /* Was a fixed repeat(4, 1fr) -- fine for exactly 4 modules, but adding
-     Riverbero/Saturazione/Master/Mid-Side (6 total) pushed the row wider
-     than the panel and forced a horizontal scrollbar that cropped the last
-     column. auto-fit + minmax wraps to however many columns actually fit. */
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 12px;
-  margin: 16px 0 10px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 18px 0 10px;
+}
+
+@media (max-width: 900px) {
+  .rack { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .rack { grid-template-columns: 1fr; }
 }
 
 .module {
-  background: var(--bg-panel);
+  position: relative;
+  background: linear-gradient(180deg, #171717 0%, var(--bg-panel) 100%);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 10px;
+  padding: 14px 14px 12px;
   min-height: 150px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  transition: transform 0.2s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* Thin gradient accent bar along the top of every module -- a small
+   recurring "studio rack" motif that reads as one coherent unit, sitting
+   quiet by default and brightening when that module's own flash fires. */
+.module::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+}
+
+.module:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 0, 63, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 14px rgba(255, 0, 63, 0.12);
+}
+
+.module:hover::before {
+  opacity: 0.8;
+}
+
+/* Fired alongside flashDetail() -- a real DSP value just landed on this
+   exact module, briefly lighting up the whole card instead of only the
+   detail text underneath. */
+.module.module-active {
+  border-color: rgba(255, 0, 63, 0.7);
+  box-shadow: 0 0 22px rgba(255, 0, 63, 0.25), inset 0 0 20px rgba(255, 0, 63, 0.06);
+}
+
+.module.module-active::before {
+  opacity: 1;
+  height: 3px;
 }
 
 .module-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.module-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--accent);
+  font-size: 12px;
+  text-shadow: 0 0 6px rgba(255, 0, 63, 0.6);
 }
 
 .module-detail {
@@ -447,6 +625,7 @@ select { width: auto; }
 
 .module-detail.flash {
   color: var(--accent);
+  text-shadow: 0 0 8px rgba(255, 0, 63, 0.5);
 }
 
 .eq-svg {
@@ -501,6 +680,36 @@ select { width: auto; }
   0% { transform: scale(1); }
   40% { transform: scale(1.15); }
   100% { transform: scale(1); }
+}
+
+/* VU meter: a horizontal bar that jumps to a new position on each discrete
+   qc_report/loudness_gain event carrying a LUFS value -- named and styled
+   as event-driven, not a continuous real-time meter (the engine only emits
+   LUFS at those two points, not a streaming level). */
+.vu-meter {
+  width: 100%;
+  height: 14px;
+  background: #1c1c1c;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.vu-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #33cc66, var(--accent) 85%, #ff3355);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.vu-zero-marker {
+  position: absolute;
+  top: 0;
+  right: 8%;
+  width: 1px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .module-qc { position: relative; overflow: hidden; }
@@ -657,6 +866,15 @@ select { width: auto; }
   border-color: var(--accent);
 }
 
+.stem-row {
+  cursor: grab;
+}
+
+.stem-row.dragging {
+  opacity: 0.4;
+  border-style: dashed;
+}
+
 /* Channel-strip detail panel: forced onto its own line below the label +
    badges (not squeezed into the same flex row) via the 100% basis. */
 .stem-row-detail {
@@ -786,6 +1004,39 @@ select { width: auto; }
   font-size: 11px;
 }
 
+/* Stem classification row: same select styling as the instrument-question
+   row above (kept as one shared rule so future edits to one stay in sync
+   with the other), but three dropdowns per row (role/layer/register)
+   instead of one -- grouped so they wrap together on narrow widths instead
+   of drifting apart from the stem name. */
+.stem-correction-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stem-correction-name {
+  white-space: nowrap;
+}
+
+.stem-correction-fields {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stem-correction-fields select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
 .result-title {
   font-size: 16px;
   font-weight: 700;
@@ -825,6 +1076,23 @@ select { width: auto; }
 .loudness-match-label input[type="checkbox"] {
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+.blend-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.blend-slider-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.blend-slider {
+  flex: 1;
 }
 
 /* Real per-track waveform timeline (DAW view) -- was previously just a
@@ -930,6 +1198,35 @@ select { width: auto; }
 
 .feedback-box .btn {
   align-self: flex-start;
+}
+
+.session-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.session-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.session-history-main {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.session-history-date {
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 3px;
 }
 
 #feedback-status {

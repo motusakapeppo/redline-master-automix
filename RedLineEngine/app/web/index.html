@@ -41,6 +41,14 @@ window.addEventListener('error', function(e) {
       <button class="btn btn-primary" onclick="chooseFile()">Scegli file audio...</button>
       <div id="input-path" class="path-display"></div>
       <button id="btn-next" class="btn btn-accent" onclick="goToScreen('screen-wizard')" disabled>Avanti</button>
+      <button class="btn" onclick="openSessionHistory()">Cronologia sessioni</button>
+    </div>
+
+    <div id="screen-history" class="screen">
+      <h1>Cronologia sessioni</h1>
+      <p class="hint">Render passati, salvati localmente (non sincronizzati altrove).</p>
+      <div id="session-history-list" class="session-history-list"></div>
+      <button class="btn" onclick="goToScreen('screen-input')">Indietro</button>
     </div>
 
     <div id="screen-wizard" class="screen">
@@ -125,9 +133,19 @@ window.addEventListener('error', function(e) {
       <h1>Al lavoro...</h1>
       <div id="spinner" class="spinner"><div class="spinner-ring"></div></div>
 
+      <div id="progress-wrap" class="progress-wrap">
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+          <span class="progress-bar-label" id="progress-pct">0%</span>
+        </div>
+        <div class="progress-meta">
+          <span id="progress-eta">stima tempo rimanente: --</span>
+        </div>
+      </div>
+
       <div class="rack">
         <div class="module">
-          <div class="module-title">EQ</div>
+          <div class="module-title"><span class="module-icon">◧</span>EQ</div>
           <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
             <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
             <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
@@ -137,40 +155,46 @@ window.addEventListener('error', function(e) {
         </div>
 
         <div class="module">
-          <div class="module-title">Compressore</div>
+          <div class="module-title"><span class="module-icon">▤</span>Compressore</div>
           <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
           <div class="module-detail" id="comp-detail">in attesa...</div>
         </div>
 
         <div class="module">
-          <div class="module-title">De-esser</div>
+          <div class="module-title"><span class="module-icon">◎</span>De-esser</div>
           <div class="deess-dial" id="deess-dial">&mdash;</div>
           <div class="module-detail" id="deess-detail">in attesa...</div>
         </div>
 
+        <div class="module">
+          <div class="module-title"><span class="module-icon">▮</span>VU (a eventi LUFS)</div>
+          <div class="vu-meter"><div class="vu-fill" id="vu-fill"></div><div class="vu-zero-marker"></div></div>
+          <div class="module-detail" id="vu-detail">in attesa...</div>
+        </div>
+
         <div class="module module-qc">
-          <div class="module-title">Ascolto / QC</div>
+          <div class="module-title"><span class="module-icon">◈</span>Ascolto / QC</div>
           <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
           <div class="module-detail" id="qc-detail">in attesa...</div>
         </div>
 
         <div class="module">
-          <div class="module-title">Riverbero / Spazio</div>
+          <div class="module-title"><span class="module-icon">〜</span>Riverbero / Spazio</div>
           <div class="module-detail" id="reverb-detail">in attesa...</div>
         </div>
 
         <div class="module">
-          <div class="module-title">Saturazione</div>
+          <div class="module-title"><span class="module-icon">▲</span>Saturazione</div>
           <div class="module-detail" id="saturation-detail">in attesa...</div>
         </div>
 
         <div class="module">
-          <div class="module-title">Master (Multiband/Limiter)</div>
+          <div class="module-title"><span class="module-icon">◆</span>Master (Multiband/Limiter)</div>
           <div class="module-detail" id="master-detail">in attesa...</div>
         </div>
 
         <div class="module">
-          <div class="module-title">Mid/Side</div>
+          <div class="module-title"><span class="module-icon">↔</span>Mid/Side</div>
           <div class="module-detail" id="midside-detail">in attesa...</div>
         </div>
       </div>
@@ -188,7 +212,8 @@ window.addEventListener('error', function(e) {
            actually paused waiting for approval (director_checkpoint event),
            hidden the rest of the time. -->
       <div id="director-panel" class="director-panel hidden">
-        <h3>Director Mode: conferma la classificazione</h3>
+        <h3>Director Mode: conferma o correggi la classificazione</h3>
+        <p class="instrument-questions-hint">Va bene così? Premi ENGAGE. Altrimenti cambia ruolo/tipo/registro dai menu prima di premere ENGAGE.</p>
         <div id="director-stems" class="director-stems"></div>
         <button class="btn btn-accent" onclick="approveDirectorCheckpoint()">ENGAGE</button>
       </div>
@@ -211,6 +236,11 @@ window.addEventListener('error', function(e) {
   <div id="avatar-panel">
     <div id="assistant" class="assistant">
       <canvas id="fx-canvas" class="fx-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
+      <!-- Separate 2D overlay for the easter-egg Lissajous curve -- fx-canvas
+           already owns a WebGL context for the Three.js avatar, and a canvas
+           can only ever bind one context type, so this can't reuse it. -->
+      <canvas id="easter-egg-canvas" width="190" height="240" class="easter-egg-canvas"></canvas>
+      <div id="easter-egg-label" class="easter-egg-label hidden">◉ REDLINE MODE</div>
       <svg id="avatar-svg" viewBox="0 0 200 320" class="assistant-svg">
         <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="320" opacity="0.15" preserveAspectRatio="xMidYMid slice" />
 

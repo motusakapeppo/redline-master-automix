@@ -123,6 +123,17 @@ def _noop_event(_evt: dict) -> None:
     pass
 
 
+# Director Mode stem-classification correction: what a GUI-side fix is
+# allowed to set. RECIPES.keys() (vocalstack.py) are the register names the
+# real per-register DSP recipe lookup understands (low/unison/high/falsetto)
+# -- distinct from StemDescriptor.register, which is only ever a cosmetic
+# filename-parsed hint (naming.py) never consulted for an actual DSP
+# decision, so accepting the same vocabulary here means a manual register
+# correction actually changes the double's processing, not just its label.
+VALID_STEM_ROLES = ("vocal", "bass", "drums", "other")
+VALID_STEM_LAYERS = ("primary", "double")
+VALID_REGISTER_OVERRIDES = frozenset(RECIPES.keys())
+
 DRUM_HPF_HZ = 40.0  # was 30 -- 40Hz clears more sub-rumble without touching kick fundamental (~50-80Hz)
 LEAD_PRESENCE_FREQ_HZ = 3000.0
 LEAD_PRESENCE_GAIN_DB = 3.0  # was 1.5 -- too subtle to read as real presence against a full instrumental bed
@@ -630,16 +641,41 @@ def render_mix(
     # specifically to catch a wrong guess before it's expensive to undo.
     # Callers that genuinely want a non-interactive render (tests, a future
     # headless CLI mode) simply don't pass a director_gate.
+    register_overrides: dict[str, str] = {}
     if director_gate is not None:
         on_step("In attesa di conferma sulla classificazione degli stem...")
         stem_summary = [
             {"name": name, "role": d.role, "layer": d.layer, "register": d.register}
             for name, d in descriptors.items()
         ]
-        approved = director_gate.request_approval(
+        corrections = director_gate.request_answer(
             "stem_classification", {"stems": stem_summary}, on_event, timeout=None
         )
-        on_step("Confermato, proseguo." if approved else "Timeout, proseguo comunque.")
+        if corrections:
+            applied = []
+            for name, fix in corrections.items():
+                if name not in descriptors or not isinstance(fix, dict):
+                    continue
+                d = descriptors[name]
+                new_role = fix.get("role") if fix.get("role") in VALID_STEM_ROLES else d.role
+                new_layer = fix.get("layer") if fix.get("layer") in VALID_STEM_LAYERS else d.layer
+                new_register = fix.get("register") if fix.get("register") in VALID_REGISTER_OVERRIDES else d.register
+                if (new_role, new_layer, new_register) == (d.role, d.layer, d.register):
+                    continue
+                descriptors[name] = StemDescriptor(
+                    raw_name=d.raw_name, role=new_role, layer=new_layer, pan=d.pan,
+                    section=d.section, register=new_register, role_confidence=1.0,
+                )
+                if fix.get("register") in RECIPES:
+                    register_overrides[name] = fix["register"]
+                applied.append(name)
+            if applied:
+                on_step("Corretti manualmente: " + ", ".join(applied))
+                on_event({"type": "director_corrections", "stems": applied})
+            # roles/lead_names/double_names below are derived from
+            # `descriptors` and must reflect any corrections just applied.
+            roles = {name: d.role for name, d in descriptors.items()}
+        on_step("Confermato, proseguo.")
 
     # --- Instrument identity questions: for "other"-role stems where
     # neither the filename nor the conservative spectral fallback could
@@ -917,7 +953,10 @@ def render_mix(
             audio = working_tracks[name]
             double_fundamental = estimate_fundamental(audio, sr)
             hf_ratio = high_frequency_ratio(audio, sr)
-            register = classify_register(double_fundamental, lead_fundamental, hf_ratio=hf_ratio)
+            if name in register_overrides:
+                register = register_overrides[name]
+            else:
+                register = classify_register(double_fundamental, lead_fundamental, hf_ratio=hf_ratio)
             out = _process_double_stem(name, audio, sr, register, _guarded_step, _guarded_event)
             return double_fundamental, hf_ratio, register, out
 

@@ -38,6 +38,11 @@ let particleOrbitSpeed = 0.0008;
 const skullVibrateOffset = new THREE.Vector3();
 let systemReadyPulse = 0;
 let celebrationWave = 0;
+// Sustained eye-glow boost for the RedLine Mode easter egg -- unlike the
+// other one-shot effects below, this needs to hold near-full brightness for
+// several seconds rather than decay immediately, hence a duration-driven
+// end time instead of a per-frame multiplicative decay.
+let raveEyeGlowUntil = 0;
 let auditionTilt = 0;
 let idleFloatPhase = 0;
 // Punch-scale: a quick squash/stretch impulse on hard hits (glue
@@ -873,6 +878,10 @@ function updateEyes(time) {
     intensity += bpmPulse * 0.15;
   }
 
+  if (time < raveEyeGlowUntil) {
+    intensity += 5.5;
+  }
+
   eyeLeft.material.emissiveIntensity = intensity;
   eyeRight.material.emissiveIntensity = intensity;
 }
@@ -1122,6 +1131,139 @@ function onAuditionState(state) {
   }
 }
 
+// Reuses the natural-glance state machine (updateNaturalLook above) instead
+// of a separate animation path -- forces an immediate 'turn' toward a side
+// biased by the saturation drive amount, same easing as an organic glance.
+function onSaturation(drive) {
+  if (!skull) return;
+  const amount = Math.max(0, Math.min(1, (drive || 0) / 4));
+  const time = clock.elapsedTime;
+  lookPhase = 'turn';
+  lookFromY = lookCurrentY;
+  lookFromX = lookCurrentX;
+  lookTargetY = (Math.random() < 0.5 ? -1 : 1) * (0.35 + amount * 0.35);
+  lookTargetX = 0.05;
+  lookPhaseStartTime = time;
+  lookPhaseEndTime = time + 0.5 + amount * 0.3;
+  if (eyeLeft) eyeLeft.material.emissiveIntensity = 3.0;
+  if (eyeRight) eyeRight.material.emissiveIntensity = 3.0;
+  setTimeout(() => {
+    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
+    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+  }, 260);
+}
+
+// Distinct from the rack's CSS glitch (app.js triggerGlitch) -- this is the
+// avatar's own reaction to a DSP-level anomaly/correction: a sharp color
+// flash + tiny punch, no head movement (a glitch reads as sudden, not as
+// a considered glance).
+function onGlitch() {
+  ringColorTarget.set('#FFFFFF');
+  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 90);
+  punchScale = Math.max(punchScale, 0.25);
+}
+
+// Easter egg ("RedLine Mode"): secret key combo (Ctrl+Alt+R, see app.js
+// keydown listener) triggers a ~4.5s celebratory burst -- eyes burning at
+// full red intensity, a particle burst, the skull's own Dance clip, a
+// glowing red Lissajous curve over the avatar, and a fading "REDLINE MODE"
+// label. Kept monochrome red (the house color) rather than a rainbow
+// sweep -- purely decorative, no DSP data behind any of it.
+let _lissajousRafId = null;
+
+function onEasterEgg() {
+  const canvas = document.getElementById('easter-egg-canvas');
+  const label = document.getElementById('easter-egg-label');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  if (_lissajousRafId !== null) cancelAnimationFrame(_lissajousRafId);
+
+  const durationMs = 4500;
+
+  // Label: retrigger the CSS fade-in/out animation from the start even if
+  // the combo is mashed repeatedly mid-animation.
+  if (label) {
+    label.classList.remove('playing');
+    void label.offsetWidth;
+    label.classList.add('playing');
+  }
+
+  // Skull celebration: same Dance clip as a finished render, plus a punch
+  // and a particle burst (mirrors onDone's burst, scaled a bit larger).
+  playSkullAction('Dance');
+  punchScale = 1.0;
+
+  // Eyes burn bright red for the whole duration -- routed through
+  // updateEyes()'s per-frame formula (raveEyeGlowUntil), not a direct
+  // assignment: updateEyes() overwrites emissiveIntensity every single
+  // frame from its own state flags, so a one-off direct set here would
+  // have been clobbered again within the next ~16ms and never actually
+  // seen.
+  raveEyeGlowUntil = clock.elapsedTime + durationMs / 1000;
+
+  if (particles) {
+    const pos = particles.geometry.attributes.position;
+    const array = pos.array;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const idx = i * 3;
+      array[idx] *= 1.6;
+      array[idx + 1] *= 1.6;
+      array[idx + 2] *= 1.6;
+    }
+    pos.needsUpdate = true;
+  }
+
+  // Ring flashes to white-hot for an instant, then settles back to the
+  // house accent color -- same beat as onGlueCompression's slam, just held
+  // a little longer to match the eyes/particle burst.
+  ringColorTarget.set('#FFFFFF');
+  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 300);
+
+  // Single Lissajous figure in the house red, drawn thicker with a strong
+  // glow -- monochrome to match the eyes/ring instead of a rainbow sweep.
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h / 2;
+  const figures = [
+    { a: 3, b: 2, r: 0.36, speed: 0.0016, color: '#FF003F' },
+  ];
+  const startTime = performance.now();
+
+  function draw(now) {
+    const t = now - startTime;
+    if (t > durationMs) {
+      ctx.clearRect(0, 0, w, h);
+      _lissajousRafId = null;
+      return;
+    }
+    ctx.clearRect(0, 0, w, h);
+    const fadeOut = t > durationMs - 500 ? (durationMs - t) / 500 : 1;
+    for (const fig of figures) {
+      const r = Math.min(w, h) * fig.r;
+      const phase = t * fig.speed;
+      ctx.save();
+      ctx.globalAlpha = 0.9 * fadeOut;
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = fig.color;
+      ctx.strokeStyle = fig.color;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      const points = 300;
+      for (let i = 0; i <= points; i++) {
+        const theta = (i / points) * Math.PI * 2;
+        const x = cx + r * Math.sin(fig.a * theta + phase);
+        const y = cy + r * Math.sin(fig.b * theta);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    _lissajousRafId = requestAnimationFrame(draw);
+  }
+  _lissajousRafId = requestAnimationFrame(draw);
+}
+
 function setActivity(level) {
   activityLevel = Math.max(0, Math.min(1, level));
   if (!listeningMode && !deepScanMode) {
@@ -1195,5 +1337,8 @@ window.avatarAPI = {
   onApprove,
   onReject,
   onInstrument,
+  onSaturation,
+  onGlitch,
+  onEasterEgg,
   setActivity,
 };
