@@ -245,8 +245,8 @@ class Api:
 
     def answer_instrument_questions(self, answers: dict) -> None:
         """Called by the GUI's instrument-question form -- unblocks the
-        "instrument_questions" Director Mode checkpoint (MANUAL mode only)
-        with the user's chosen category per undetermined stem. `answers` is
+        "instrument_questions" Director Mode checkpoint with the user's
+        chosen category per undetermined stem. `answers` is
         {stem_name: category}; render_mix ignores anything not in its own
         undetermined list, so an empty or partial dict is always safe."""
         self.director_gate.answer(answers)

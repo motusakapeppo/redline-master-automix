@@ -593,7 +593,7 @@ function approveDirectorCheckpoint() {
   }
 }
 
-// --- Instrument-identity questions (MANUAL mode): mixengine.py's
+// --- Instrument-identity questions: mixengine.py's
 // render_mix() is genuinely blocked on a Python thread waiting for
 // answer_instrument_questions(), same pausing mechanism as the role
 // checkpoint above, just carrying back an actual answer per stem instead

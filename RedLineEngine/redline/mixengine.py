@@ -276,18 +276,21 @@ def _process_stem(
     on_step: StepCallback,
     on_event: EventCallback,
     instrument_overrides: dict[str, str] | None = None,
+    instrument_cache: dict[str, str] | None = None,
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
     just "is a double". `instrument_overrides` carries any answers from the
     Director Mode instrument-identity questions (see render_mix) -- checked
-    before falling back to the normal name/spectral classification."""
+    before falling back to the normal name/spectral classification.
+    `instrument_cache` avoids re-running spectral analysis on stems already
+    classified earlier in the same render."""
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
 
     instrument_recipe = None
     if role == "other":
-        instrument_kind = (instrument_overrides or {}).get(name) or classify_instrument(name, audio, sr)
+        instrument_kind = (instrument_overrides or {}).get(name) or (instrument_cache or {}).get(name) or classify_instrument(name, audio, sr)
         instrument_recipe = INSTRUMENT_RECIPES[instrument_kind]
         on_step(f"  '{name}': trattato come '{instrument_kind}'")
         on_event({"type": "instrument_chain", "stem": name, "instrument": instrument_kind})
@@ -629,11 +632,19 @@ def render_mix(
     # instrument_overrides, consulted at both places that classify an
     # instrument below instead of re-guessing for the rest of this render.
     instrument_overrides: dict[str, str] = {}
+    # Cache the first classify_instrument result per stem so the three
+    # lookups (undetermined detection, _process_stem, reverb bias) don't
+    # re-run spectral analysis on the same audio.
+    _instrument_cache: dict[str, str] = {}
     if director_gate is not None:
-        undetermined = [
-            name for name, d in descriptors.items()
-            if d.role == "other" and classify_instrument(name, stems.tracks[name], sr) == GENERIC
-        ]
+        undetermined = []
+        for name, d in descriptors.items():
+            if d.role != "other":
+                continue
+            kind = classify_instrument(name, stems.tracks[name], sr)
+            _instrument_cache[name] = kind
+            if kind == GENERIC:
+                undetermined.append(name)
         if undetermined:
             on_step(f"Domande sugli strumenti: {len(undetermined)} stem non identificati con certezza...")
             questions = [
@@ -718,7 +729,7 @@ def render_mix(
 
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(solo_names)))) as pool:
         futures = {
-            name: pool.submit(_process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event, instrument_overrides)
+            name: pool.submit(_process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event, instrument_overrides, _instrument_cache)
             for name in solo_names
         }
         for name, future in futures.items():
@@ -764,7 +775,7 @@ def render_mix(
             # pads) sit better wetter than depth.py's generic default, others
             # (synth leads) drier, independent of which depth bucket they
             # landed in.
-            instrument_kind = instrument_overrides.get(name) or classify_instrument(name, processed[name], sr)
+            instrument_kind = instrument_overrides.get(name) or _instrument_cache.get(name) or classify_instrument(name, processed[name], sr)
             reverb_bias = INSTRUMENT_RECIPES[instrument_kind].reverb_send_bias
 
             if d.pan != 0.0:
