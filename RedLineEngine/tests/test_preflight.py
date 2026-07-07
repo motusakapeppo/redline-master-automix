@@ -46,10 +46,13 @@ def test_detects_false_stereo():
 
 
 def test_detects_silence():
+    # Warning, not blocking: a stem genuinely tacet for an entire section
+    # export (e.g. "Horn" silent throughout the Intro) is normal and must
+    # not stop the whole load.
     audio = np.zeros((4410, 2), dtype=np.float32)
     report = PreFlightValidator.check_audio(audio, 44100, "vocals")
-    assert report.passed is False
-    assert any("silenzio" in i for i in report.issues)
+    assert report.passed is True
+    assert any("silenzio" in w for w in report.warnings)
 
 
 def test_detects_dc_offset():

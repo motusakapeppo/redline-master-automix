@@ -65,9 +65,13 @@ class PreFlightValidator:
 
         peak = float(np.max(np.abs(audio)))
         if _to_db(peak) < _SILENCE_DBFS:
-            report.passed = False
-            report.issues.append(f"{name}: silenzio totale (picco {_to_db(peak):.1f}dBFS)")
-            return report
+            # WARNING, not blocking: a stem being entirely silent is a real,
+            # normal case for section-split exports (e.g. "Horn" genuinely
+            # doesn't play at all during the Intro) -- confirmed in practice
+            # with a real multi-instrument section-split session where
+            # several legitimately tacet stems tripped this as a hard
+            # failure and stopped the whole load.
+            report.warnings.append(f"{name}: silenzio totale (picco {_to_db(peak):.1f}dBFS)")
 
         if peak > 1.0:
             report.warnings.append(f"{name}: clipping rilevato (picco {peak:.3f}, {_to_db(peak):.1f}dBFS)")
