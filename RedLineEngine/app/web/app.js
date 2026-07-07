@@ -370,9 +370,12 @@ function onDone(result) {
     // mix or continue on to mastering.
     lastRunResult = result;
     resultEl.innerHTML = `
-      <div class="result-card">
+      <div class="result-card daw-card">
         <div class="result-title">Mix pronto</div>
         <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
+
+        <div id="daw-waveforms" class="daw-waveforms"><div class="daw-loading">Carico le tracce...</div></div>
+        <div id="daw-track-detail" class="stem-row-detail hidden"></div>
 
         <div class="audition-abc">
           <div class="audition-abc-label">Riascolta:</div>
@@ -390,6 +393,7 @@ function onDone(result) {
         <button class="btn btn-accent" onclick="continueToMastering()">Procedi al mastering</button>
         <button class="btn" onclick="openOutput()">Apri cartella risultati</button>
       </div>`;
+    renderDawWaveforms();
     return;
   }
 
@@ -428,6 +432,90 @@ function onDone(result) {
 }
 
 let lastRunResult = null;
+
+// --- Real waveform DAW view: was previously just a plugin-parameter list
+// with no audio shown at all -- this renders an actual per-track waveform
+// on a shared timeline (so misalignment between takes is visible at a
+// glance, same as any real DAW's track view), backed by
+// api.get_waveform_peaks() (downsampled min/max envelopes, never raw
+// sample data). Clicking a lane reuses the same recorded-parameter data
+// the per-stem rows' channel strip already collects (see
+// stemEventParams/_describeStemEvent above).
+async function renderDawWaveforms() {
+  const container = document.getElementById("daw-waveforms");
+  if (!container || !window.pywebview) return;
+  const data = await window.pywebview.api.get_waveform_peaks(600);
+  if (!data || !data.ok) {
+    container.innerHTML = `<div class="daw-loading">Forme d'onda non disponibili.</div>`;
+    return;
+  }
+
+  const names = Object.keys(data.tracks).filter((n) => n !== "__MIX__");
+  const orderedNames = data.tracks["__MIX__"] ? ["__MIX__", ...names] : names;
+
+  container.innerHTML = "";
+  for (const name of orderedNames) {
+    const lane = document.createElement("div");
+    lane.className = "daw-track-lane" + (name === "__MIX__" ? " daw-track-lane-mix" : "");
+
+    const label = document.createElement("div");
+    label.className = "daw-track-label";
+    label.textContent = name === "__MIX__" ? "MIX (riferimento)" : name;
+    label.title = name;
+    lane.appendChild(label);
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "daw-track-canvas";
+    canvas.width = 600;
+    canvas.height = 40;
+    lane.appendChild(canvas);
+
+    _drawWaveform(canvas, data.tracks[name]);
+
+    if (name !== "__MIX__") {
+      lane.addEventListener("click", () => _toggleDawTrackDetail(name, lane));
+    }
+
+    container.appendChild(lane);
+  }
+}
+
+function _drawWaveform(canvas, peaks) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height, mid = h / 2;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "#FF003F";
+  ctx.lineWidth = 1;
+  if (!peaks || peaks.length === 0) return;
+  const step = w / peaks.length;
+  ctx.beginPath();
+  for (let i = 0; i < peaks.length; i++) {
+    const [lo, hi] = peaks[i];
+    const x = i * step;
+    ctx.moveTo(x, mid - hi * mid);
+    ctx.lineTo(x, mid - lo * mid);
+  }
+  ctx.stroke();
+}
+
+function _toggleDawTrackDetail(name, lane) {
+  const detail = document.getElementById("daw-track-detail");
+  if (!detail) return;
+  document.querySelectorAll(".daw-track-lane.selected").forEach((l) => l.classList.remove("selected"));
+  const wasOpenForThisTrack = !detail.classList.contains("hidden") && detail.dataset.track === name;
+  if (wasOpenForThisTrack) {
+    detail.classList.add("hidden");
+    return;
+  }
+  const params = stemEventParams.get(name) || {};
+  const lines = Object.entries(params).map(([type, evt]) => _describeStemEvent(type, evt));
+  detail.innerHTML = lines.length
+    ? `<div class="stem-row-detail-line"><strong>${name}</strong></div>` + lines.map((l) => `<div class="stem-row-detail-line">${l}</div>`).join("")
+    : `<div class="stem-row-detail-line">Nessun parametro registrato per questa traccia.</div>`;
+  detail.dataset.track = name;
+  detail.classList.remove("hidden");
+  lane.classList.add("selected");
+}
 
 // "Rielabora il mix": re-runs only render_mix (stems/analysis already
 // cached server-side) with the edited feedback text, then re-shows the

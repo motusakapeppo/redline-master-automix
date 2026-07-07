@@ -25,6 +25,23 @@ from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
 
 
+def _downsample_peaks(audio: np.ndarray, points: int) -> list[list[float]]:
+    """[min, max] pair per chunk, mono-summed -- a cheap, honest waveform
+    envelope for canvas rendering without shipping raw sample data to JS."""
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    n = mono.shape[0]
+    if n == 0:
+        return []
+    chunk = max(1, n // max(1, points))
+    peaks = []
+    for i in range(0, n, chunk):
+        seg = mono[i:i + chunk]
+        if seg.size == 0:
+            continue
+        peaks.append([round(float(np.min(seg)), 4), round(float(np.max(seg)), 4)])
+    return peaks
+
+
 def _sanitize_for_json(data):
     """The engine hands back real numpy scalars everywhere (LUFS, true peak,
     band ratios, etc. from librosa/scipy/pyloudnorm) — json.dumps chokes on
@@ -395,6 +412,31 @@ class Api:
         except Exception as exc:
             traceback.print_exc()
             self._narrate(f"Errore: {exc}")
+            return {"ok": False, "error": str(exc)}
+
+    def get_waveform_peaks(self, points: int = 600) -> dict:
+        """Downsampled min/max waveform envelope for every cached stem
+        (the raw dry take, not yet DSP-processed) plus the mixed bus, so
+        the DAW screen can render real per-track waveforms on a shared
+        timeline -- letting the user actually see relative timing/alignment
+        at a glance, not just a plugin parameter list with no audio shown
+        at all. Raw arrays are never sent to JS (a multi-minute stereo
+        stem is tens of MB) -- only a few hundred min/max pairs per track."""
+        if self._last_stems is None:
+            return {"ok": False, "error": "Nessuno stem in cache."}
+        try:
+            tracks = {name: _downsample_peaks(audio, points) for name, audio in self._last_stems.tracks.items()}
+            if self._last_mix is not None:
+                tracks["__MIX__"] = _downsample_peaks(self._last_mix, points)
+            duration_sec = float(self._last_mix.shape[0]) / self._last_sr if self._last_mix is not None and self._last_sr else None
+            return _sanitize_for_json({
+                "ok": True,
+                "sr": self._last_sr,
+                "duration_sec": duration_sec,
+                "tracks": tracks,
+            })
+        except Exception as exc:
+            traceback.print_exc()
             return {"ok": False, "error": str(exc)}
 
     def continue_to_mastering(self, prefs: dict) -> dict:
