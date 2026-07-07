@@ -105,6 +105,9 @@ echo '{"ENABLE_BLUEPRINT_CHAINS": true}' > .flags.json
 
 # 6. Debug GUI (opens Chrome DevTools alongside the window)
 REDLINE_DEBUG_GUI=1 python app/main.py
+
+# 7. Export intermediate buses alongside the mix (vocal_main, vocal_doubles, music, parallel, reverb)
+python -m redline.cli --folder /path/to/stems --out /path/to/out --export-buses
 ```
 
 ### Configuration: Feature Flags
@@ -129,6 +132,8 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
 | `ENABLE_LLM_ADVISORY` | off | Local LLM (llama.cpp, `redline/llm_classifier.py`) fallback for low-confidence stem naming, validated through `redline/director_safety.py` |
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — real dry/wet A/B playback of the master bus glue compression through your speakers (`redline/audition.py`). Toggled live from the GUI switch |
 | `ENABLE_DIRECTOR_MODE` | off | Pauses `render_mix` after stem role/register recognition and waits for GUI approval (`redline/director.py`) before any DSP runs |
+| `ENABLE_FEEDBACK_DELAY` | off | Tape-style feedback delay applied to the full mix bus (`redline/feedback_delay.py`) — low-pass filter recurses inside the feedback loop so repeats darken progressively |
+| `ENABLE_BUS_EXPORT` | off | Reserved for a future GUI toggle; the CLI already exposes bus export unconditionally via `--export-buses` regardless of this flag |
 
 ### Creative Brief (free-text → LLM interpretation)
 
@@ -216,6 +221,12 @@ This is backend-only for now (no chat UI wired up yet) and, being a second LLM-d
 | `config.py` | Feature flag system with `.flags.json` + environment variable overrides. Reads flags on startup, watches for file changes (future: hot-reload). |
 | `metrics.py` | In-memory per-stage timing instrumentation. Logs `[METRIC] stage: Xs` for every pipeline stage. Used for performance profiling and regression detection. |
 | `dsp_utils.py` | Shared DSP utilities: envelope follower (RMS with configurable window), duck gain curves (linear/exponential), band gain curves, saturation (soft-clip/tanh), panning (equal-power), Mid/Side encoding/decoding. |
+| `preflight.py` | Entry gate for every stem before it reaches the pipeline: blocks NaN/Inf samples, total silence, sub-256-sample clips, out-of-range or mismatched sample rates; warns on DC offset, clipping, false stereo, extreme duration, long paths, >2 channels. Wired into `input_loader.load_auto()` — a failed check raises `ValueError` before any DSP runs. |
+| `pipeline_rollback.py` | `PipelineRollback` — snapshot/guard utility that lets a pipeline step fail without aborting the whole render: `guard()` catches the exception, logs it, and the pipeline continues from the last good snapshot. |
+| `watchdog.py` | `WatchdogTimer` — detects (does not guarantee interruption of) a pipeline step overrunning a duration-proportional time budget. Python can't reliably kill a thread blocked inside a C call, so this is best-effort detection + logging, not a hard kill switch. |
+| `schema_validator.py` | Validates preset/config JSON against `PRESET_SCHEMA` before use — missing fields fall back to defaults, out-of-range numeric values are clamped, unknown fields are ignored with a warning, type mismatches are rejected outright. |
+| `feedback_delay.py` | Tape-style feedback delay: a one-pole low-pass filter recurses *inside* the feedback loop (via a cascade of `scipy.signal.lfilter` passes, mathematically equivalent to a circular buffer re-filtered every iteration), so repeats darken progressively instead of staying uniformly bright like `pedalboard.Delay`'s native feedback. Behind `ENABLE_FEEDBACK_DELAY` (off by default). |
+| `bus_exporter.py` | `export_buses()` renders the mix once and captures the intermediate buses (`vocal_main`, `vocal_doubles`, `music`, `parallel`, `reverb`) via a purely observational `on_bus_ready` callback on `render_mix()`, alongside the finished stereo mix. Exposed from the CLI via `--export-buses`. |
 
 ### Performance
 
@@ -352,6 +363,12 @@ The system has multiple layers of protection to prevent bad mixes, blown speaker
 | **Try-except everywhere** | All modules | Single module failure taking down the entire render |
 | **QC auto-correction** | `qc.py` (LUFS/true-peak check) | Master not meeting loudness targets |
 | **Feature flags off by default** | `config.py` (default=False) | Experimental code affecting production mixes |
+| **PreFlight validation** | `preflight.py`, wired into `input_loader.load_auto()` | NaN/Inf/silent/corrupt stems propagating as garbage through a dozen DSP stages before failing somewhere unrelated |
+| **Pipeline rollback** | `pipeline_rollback.py` | A single failed step aborting the whole render instead of continuing from the last good state |
+| **Watchdog timeout detection** | `watchdog.py` (best-effort, does not guarantee interruption of C-level calls) | A corrupted file or runaway DSP call hanging the pipeline indefinitely with no signal to the user |
+| **Schema validation** | `schema_validator.py` | Malformed preset JSON crashing mid-render with a bare `KeyError`/`TypeError` instead of falling back to defaults |
+| **Golden reference tests** | `tests/golden_reference.py`, `tests/test_golden_reference.py` | Silent regressions in sweep/impulse/noise-floor handling across DSP tuning changes |
+| **Determinism test** | `tests/test_pipeline_smoke.py::test_pipeline_is_deterministic` | Unseeded RNG or timing-dependent branches making the same input produce different output on every run |
 
 ### Verification Suite
 
@@ -711,6 +728,9 @@ echo '{"ENABLE_BLUEPRINT_CHAINS": true}' > .flags.json
 
 # 6. GUI con debug (apre Chrome DevTools insieme alla finestra)
 REDLINE_DEBUG_GUI=1 python app/main.py
+
+# 7. Esporta i bus intermedi insieme al mix (vocal_main, vocal_doubles, music, parallel, reverb)
+python -m redline.cli --folder /percorso/stem --out /percorso/uscita --export-buses
 ```
 
 ### Configurazione: Flag Sperimentali
@@ -734,6 +754,8 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
 | `ENABLE_RT60_CALIBRATION` | off | Calibrazione automatica del decadimento dei bus riverbero Room/Plate dall'analisi onset/decay di un riferimento (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | LLM locale (llama.cpp, `redline/llm_classifier.py`) per classificazione stem ambigui, validato da `redline/director_safety.py` |
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — ascolto A/B dry/wet in tempo reale della glue compression del master bus attraverso le casse (`redline/audition.py`). Attivabile live dall'interruttore GUI |
+| `ENABLE_FEEDBACK_DELAY` | off | Feedback delay tape-style applicato all'intero bus mix (`redline/feedback_delay.py`) — il filtro low-pass ricorre dentro il loop di feedback, le ripetizioni si scuriscono progressivamente |
+| `ENABLE_BUS_EXPORT` | off | Riservato per un futuro interruttore GUI; il CLI espone già l'export dei bus incondizionatamente via `--export-buses`, a prescindere da questo flag |
 
 ### Note Libere (testo libero → interpretazione LLM)
 
@@ -821,6 +843,12 @@ Per ora è solo backend (nessuna UI chat ancora collegata) e, essendo una second
 | `config.py` | Sistema di flag con `.flags.json` + override da variabili d'ambiente. Legge i flag all'avvio, osserva modifiche ai file (futuro: hot-reload). |
 | `metrics.py` | Strumentazione timing in-memory per stadio. Logga `[METRIC] stage: Xs` per ogni fase della pipeline. Usato per profilazione delle performance e rilevamento regressioni. |
 | `dsp_utils.py` | Utility DSP condivise: envelope follower (RMS con finestra configurabile), curve di gain duck (lineari/esponenziali), curve di gain per banda, saturazione (soft-clip/tanh), panning (equal-power), codifica/decodifica Mid/Side. |
+| `preflight.py` | Gate di ingresso per ogni stem prima che raggiunga la pipeline: blocca campioni NaN/Inf, silenzio totale, clip sotto i 256 campioni, sample rate fuori range o misti tra stem; avvisa su DC offset, clipping, falso stereo, durata estrema, path lunghi, >2 canali. Innestato in `input_loader.load_auto()` — un controllo fallito solleva `ValueError` prima che parta qualsiasi DSP. |
+| `pipeline_rollback.py` | `PipelineRollback` — utility snapshot/guard che permette a un passo della pipeline di fallire senza interrompere l'intero render: `guard()` cattura l'eccezione, la logga, e la pipeline continua dall'ultimo snapshot valido. |
+| `watchdog.py` | `WatchdogTimer` — rileva (senza garantire l'interruzione) un passo della pipeline che supera un budget di tempo proporzionale alla durata. Python non può killare in modo affidabile un thread bloccato dentro una chiamata C, quindi è rilevamento + log best-effort, non un interruttore forzato. |
+| `schema_validator.py` | Valida preset/config JSON contro `PRESET_SCHEMA` prima dell'uso — i campi mancanti ricadono sui default, i valori numerici fuori range vengono clampati, i campi sconosciuti vengono ignorati con warning, i tipi sbagliati vengono rifiutati esplicitamente. |
+| `feedback_delay.py` | Feedback delay tape-style: un filtro low-pass a un polo ricorre *dentro* il loop di feedback (via una cascata di passaggi `scipy.signal.lfilter`, matematicamente equivalente a un buffer circolare rifiltrato a ogni iterazione), così le ripetizioni si scuriscono progressivamente invece di restare uniformemente brillanti come il feedback nativo di `pedalboard.Delay`. Dietro `ENABLE_FEEDBACK_DELAY` (disattivo di default). |
+| `bus_exporter.py` | `export_buses()` renderizza il mix una volta e cattura i bus intermedi (`vocal_main`, `vocal_doubles`, `music`, `parallel`, `reverb`) tramite un callback `on_bus_ready` puramente osservativo su `render_mix()`, insieme al mix stereo finito. Esposto dal CLI via `--export-buses`. |
 
 ### Performance
 
@@ -934,6 +962,12 @@ Il sistema ha molteplici strati di protezione per prevenire mix scadenti, casse 
 | **Try-except ovunque** | Tutti i moduli | Fallimento di un singolo modulo che abbatte l'intero render |
 | **Auto-correzione QC** | `qc.py` (check LUFS/true-peak) | Master che non raggiunge i target di loudness |
 | **Flag sperimentali off di default** | `config.py` (default=False) | Codice sperimentale che influenza mix di produzione |
+| **Validazione PreFlight** | `preflight.py`, innestato in `input_loader.load_auto()` | Stem NaN/Inf/silenziosi/corrotti che si propagano come spazzatura attraverso una dozzina di stadi DSP prima di fallire in un punto scollegato |
+| **Rollback della pipeline** | `pipeline_rollback.py` | Un singolo passo fallito che interrompe l'intero render invece di continuare dall'ultimo stato valido |
+| **Rilevamento timeout watchdog** | `watchdog.py` (best-effort, non garantisce l'interruzione di chiamate a livello C) | Un file corrotto o una chiamata DSP fuori controllo che blocca la pipeline indefinitamente senza segnale all'utente |
+| **Validazione schema** | `schema_validator.py` | Preset JSON malformato che crasha a metà render con un `KeyError`/`TypeError` grezzo invece di ricadere sui default |
+| **Test golden reference** | `tests/golden_reference.py`, `tests/test_golden_reference.py` | Regressioni silenziose nella gestione di sweep/impulso/rumore di fondo attraverso modifiche di tuning DSP |
+| **Test di determinismo** | `tests/test_pipeline_smoke.py::test_pipeline_is_deterministic` | RNG non seedato o rami dipendenti dal timing che fanno produrre output diversi allo stesso input a ogni run |
 
 ### Suite di Verifica
 

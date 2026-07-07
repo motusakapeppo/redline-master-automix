@@ -65,6 +65,22 @@ def test_pipeline_produces_nonzero_changed_output():
     assert qc_events[-1]["true_peak_db"] <= -0.9
 
 
+def test_pipeline_is_deterministic():
+    """Same input processed twice must produce bit-identical output.
+    Bit-identical, not np.allclose with a tiny tolerance: float32 tolerances
+    below its own representable precision would just mask real
+    non-determinism (unseeded RNG, timing-dependent branches) instead of
+    catching it."""
+    stems = _make_synthetic_stems()
+    analysis = analyze(stems)
+    prefs = MixPreferences()
+
+    mixed_1 = render_mix(stems, analysis, prefs)
+    mixed_2 = render_mix(stems, analysis, prefs)
+
+    assert np.array_equal(mixed_1, mixed_2)
+
+
 def test_analysis_fields_are_populated():
     stems = _make_synthetic_stems()
     analysis = analyze(stems)
