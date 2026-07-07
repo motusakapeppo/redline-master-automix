@@ -1082,9 +1082,22 @@ def render_mix(
     other_names = [n for n, r in roles.items() if r == "other"]
     music_bus = None
     if other_names:
+        # Power-preserving scale (1/sqrt(N)), same principle already used
+        # for concurrent vocal takes (leveling.py) and for the instrumental
+        # bed as a whole (instrumental_gain below) -- but that outer scale
+        # only ever treats this whole bus as "1 layer" no matter how many
+        # "other" stems feed it. A real session can easily have 10-15+
+        # instrumental layers (arps, pads, bells, choir, brass, keys...)
+        # summed here completely unweighted; without this, whichever stems
+        # happen to have the most natural energy dominate the pile while
+        # quieter texture layers get buried under it -- heard as "the
+        # instrumental is unbalanced, some instruments barely there".
+        other_gain = 1.0 if len(other_names) <= 2 else float(np.sqrt(2.0 / len(other_names)))
+        if len(other_names) > 2:
+            on_step(f"Bilanciamento strumenti 'other': {len(other_names)} strati -> {20 * np.log10(other_gain):+.1f}dB")
         music_bus = np.zeros((n, 2), dtype=np.float32)
         for name in other_names:
-            music_bus += processed[name]
+            music_bus += processed[name] * other_gain
         mid = (music_bus[:, 0] + music_bus[:, 1]) * 0.5
         side = (music_bus[:, 0] - music_bus[:, 1]) * 0.5
         mid = Pedalboard([PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=MUSIC_BUS_MID_DIP_DB, q=1.0)])(mid.reshape(1, -1), sr).reshape(-1)

@@ -45,7 +45,16 @@ SYNTH_LEAD = "synth_lead"
 GENERIC = "generic"  # fallback -- the old one-size-fits-all treatment, kept as a safe default
 
 _NAME_HINTS: dict[str, tuple[str, ...]] = {
-    STRINGS: ("string", "strings", "violin", "viola", "cello", "archi", "violino", "orchestra", "orchestral"),
+    # Bells/chimes (found in a real session's stems: "Bell 1", "Bell
+    # reverb", "Church bell") weren't covered by any category at all and
+    # fell through to the spectral fallback. Bucketed with STRINGS rather
+    # than a plucky synth lead -- a bell's long, airy, decay-rich tone is
+    # closer to what STRINGS' recipe is tuned for (air shelf boost, more
+    # generous reverb send) than a dry, fast-attack pluck treatment.
+    STRINGS: (
+        "string", "strings", "violin", "viola", "cello", "archi", "violino", "orchestra", "orchestral",
+        "bell", "bells", "campana", "campane", "chime", "chimes",
+    ),
     GUITAR_ACOUSTIC: ("acoustic gtr", "acoustic guitar", "chitarra acustica", "ac gtr", "acgtr"),
     GUITAR_ELECTRIC: (
         "electric gtr", "electric guitar", "chitarra elettrica", "elgtr", "e gtr",
