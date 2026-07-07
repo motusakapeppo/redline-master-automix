@@ -104,6 +104,14 @@ def _align(named: dict[str, tuple[np.ndarray, int]]) -> Stems:
             data = np.concatenate([data, pad], axis=0)
         aligned[name] = data
 
+    # --- Diagnostic log: print actual sample rate and duration of every stem
+    # after resample+pad, to detect rate mismatches that cause cumulative drift.
+    # If two stems have the same nominal SR but different actual durations
+    # (after resample), one of them was read at the wrong rate by sf.read.
+    for name, arr in aligned.items():
+        dur_s = arr.shape[0] / target_sr
+        logger.info("[TIMING] %s: SR=%d, campioni=%d, durata=%.3fs", name, target_sr, arr.shape[0], dur_s)
+
     return Stems(sample_rate=target_sr, tracks=aligned)
 
 

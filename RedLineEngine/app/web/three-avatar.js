@@ -281,21 +281,41 @@ function buildSkull(onReady) {
       // deep-scan pulse, etc.) -- positioned at an approximate eye-socket
       // location relative to the model's own (now-normalized) bounding box
       // rather than baked-in coordinates tuned for the old procedural mesh.
+      // depthTest: false + a high renderOrder guarantee these draw on top
+      // of the cranium mesh no matter what -- the eye position above is
+      // only an approximation from the model's bounding box (there's no
+      // named eye-socket bone/mesh to anchor to), so without this the
+      // marker can end up sitting just inside the skull's own geometry and
+      // be fully occluded: visually indistinguishable from "the eye glow
+      // does nothing at all", which is exactly what was reported.
       const eyeMat = new THREE.MeshStandardMaterial({
         color: '#FF003F',
         emissive: '#FF003F',
         emissiveIntensity: 0.5,
+        depthTest: false,
       });
-      const eyeY = scaledBox.max.y * 0.35;
-      const eyeZ = scaledBox.max.z * 0.7;
+      // scaledBox/scaledCenter were measured BEFORE model.position.sub()
+      // shifted the model into centered space above -- using scaledBox.max
+      // directly here (as an earlier version did) ignored that shift and
+      // placed the markers well above actual eye level, reading as
+      // eyebrows instead. Re-express the box edges relative to the same
+      // center that was just subtracted from the model.
+      const centeredMaxY = scaledBox.max.y - scaledCenter.y;
+      const centeredMinY = scaledBox.min.y - scaledCenter.y;
+      const centeredMaxZ = scaledBox.max.z - scaledCenter.z;
+      const headHeight = centeredMaxY - centeredMinY;
+      const eyeY = centeredMaxY - headHeight * 0.42; // ~42% down from the crown -- eye level, not brow level
+      const eyeZ = centeredMaxZ * 0.85;
       const eyeX = size.x * scale * 0.16;
 
-      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat);
+      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat);
       eyeLeft.position.set(-eyeX, eyeY, eyeZ);
+      eyeLeft.renderOrder = 999;
       group.add(eyeLeft);
 
-      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat.clone());
+      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat.clone());
       eyeRight.position.set(eyeX, eyeY, eyeZ);
+      eyeRight.renderOrder = 999;
       group.add(eyeRight);
 
       // Set up the baked animation clips on the model's own armature.
@@ -324,12 +344,14 @@ function buildSkull(onReady) {
         new THREE.MeshStandardMaterial({ color: SKULL_TINT, metalness: 0.15, roughness: 0.65 })
       );
       group.add(placeholder);
-      const eyeMat = new THREE.MeshStandardMaterial({ color: '#FF003F', emissive: '#FF003F', emissiveIntensity: 0.5 });
-      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat);
+      const eyeMat = new THREE.MeshStandardMaterial({ color: '#FF003F', emissive: '#FF003F', emissiveIntensity: 0.5, depthTest: false });
+      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat);
       eyeLeft.position.set(-0.22, 0.15, 0.6);
+      eyeLeft.renderOrder = 999;
       group.add(eyeLeft);
-      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), eyeMat.clone());
+      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat.clone());
       eyeRight.position.set(0.22, 0.15, 0.6);
+      eyeRight.renderOrder = 999;
       group.add(eyeRight);
       if (typeof onReady === 'function') onReady();
     }
