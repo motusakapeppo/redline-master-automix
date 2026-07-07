@@ -46,3 +46,32 @@ def test_main_rap_takes_are_primary_centered_vocal():
     assert d.role == "vocal"
     assert d.layer == "primary"
     assert d.pan == 0.0
+
+
+def test_italian_voci_folder_is_recognized_as_vocal():
+    # "Voci" (Italian plural of "voce") is a natural real-world folder name
+    # that "voce" (singular) alone did not match as a substring -- confirmed
+    # in practice with a real multi-section session where Main/Double takes
+    # under a "Voci" folder fell through to role="other" and were processed
+    # as generic instrumental stems instead of vocals.
+    main = parse_stem("Intro - Stems Voci/Main")
+    double = parse_stem("Intro - Stems Voci/Double dx")
+    assert main.role == "vocal"
+    assert main.layer == "primary"
+    assert double.role == "vocal"
+    assert double.layer == "double"
+
+
+def test_horn_stem_is_not_misread_as_vocal_double():
+    # "cor" as a DOUBLE_HINTS token used to match by substring inside "Corno"
+    # (French horn) -- an instrumental stem, wrongly classified as a vocal
+    # double and pulled into the vocal bus.
+    d = parse_stem("Intro - Stems Instrumental/Corno")
+    assert d.role == "other"
+    assert d.layer == "primary"
+
+
+def test_coro_takes_are_still_recognized_as_vocal_doubles():
+    d = parse_stem("vocals stems/Coro - Armonizz. Rit dx")
+    assert d.role == "vocal"
+    assert d.layer == "double"

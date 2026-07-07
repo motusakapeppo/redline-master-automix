@@ -15,13 +15,16 @@ from dataclasses import dataclass
 # because in real projects the *folder* often says "vocals stems" while the
 # individual take names (e.g. "Main (Rap) - Special.wav") don't mention
 # "vocal" at all.
-VOCAL_ROLE_HINTS = ("vocal", "vox", "voice", "voce", "canto", "cantante")
+VOCAL_ROLE_HINTS = ("vocal", "vox", "voice", "voce", "voci", "canto", "cantante")
 BASS_ROLE_HINTS = ("bass", "sub", "basso")
 DRUM_ROLE_HINTS = ("drum", "kick", "snare", "perc", "batteria", "cassa", "rullante")
 
 # Take-layer hints, meaningful for vocal stems: a "double"/harmony sits under
 # and beside the lead, not centered and not as loud.
-DOUBLE_HINTS = ("double", "armonizz", "harmony", "backing", "cor")
+# "coro"/"cori" (choir), not the truncated "cor" -- that substring falsely
+# matched inside unrelated instrument names (e.g. "Corno", French horn,
+# confirmed in practice landing a horn stem in the vocal double bus).
+DOUBLE_HINTS = ("double", "armonizz", "harmony", "backing", "coro", "cori")
 MAIN_HINTS = ("main", "lead")
 
 SECTION_HINTS = {
