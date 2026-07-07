@@ -123,9 +123,14 @@ def _noop_event(_evt: dict) -> None:
     pass
 
 
+DRUM_HPF_HZ = 40.0  # was 30 -- 40Hz clears more sub-rumble without touching kick fundamental (~50-80Hz)
 LEAD_PRESENCE_FREQ_HZ = 3000.0
 LEAD_PRESENCE_GAIN_DB = 3.0  # was 1.5 -- too subtle to read as real presence against a full instrumental bed
-VOCAL_DUCK_BAND_HZ = (1000.0, 4000.0)  # the band a lead vocal actually occupies most
+# Was (1000, 4000) at up to 8dB -- narrowed toward the ~2.5kHz presence
+# notch and capped at 4dB after listening feedback that the wider band/
+# deeper duck was scooping too much of the instrumental's own body whenever
+# the vocal sang, not just the frequencies actually competing with it.
+VOCAL_DUCK_BAND_HZ = (2000.0, 3200.0)  # centered ~2.5kHz, the vocal's actual presence notch
 # Was 0.22 -- research on modern vocal/pop mixing consistently puts parallel
 # ("New York") blends in the 10-20% range; 22% combined with the parallel
 # bus's own 8:1 hard compression on vocal+drums was tipping transient
@@ -327,7 +332,7 @@ def _process_stem(
             if cut.kind not in ("highpass", "lowpass"):
                 on_event({"type": "instrument_eq", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1), "kind": cut.kind})
     elif role == "drums":
-        board_fx.append(HighpassFilter(cutoff_frequency_hz=30.0))
+        board_fx.append(HighpassFilter(cutoff_frequency_hz=DRUM_HPF_HZ))
     # bass: no HPF — it's the one element allowed to own the low end
 
     # --- Adaptive resonance suppression: cut only where THIS stem's energy
@@ -995,7 +1000,7 @@ def render_mix(
     # broadband sidechain compression while still making room for the vocal.
     if lead_names:
         vocal_key = sum(processed[n] for n in lead_names)
-        duck_amount_db = 3.0 + prefs.aggressiveness * 1.0
+        duck_amount_db = min(4.0, 2.0 + prefs.aggressiveness * 0.5)
         on_step(f"Ducking spettrale ({VOCAL_DUCK_BAND_HZ[0]:.0f}-{VOCAL_DUCK_BAND_HZ[1]:.0f}Hz): strumentale/batteria si abbassano solo lì quando canta la voce")
         on_event({"type": "spectral_duck", "band_low_hz": VOCAL_DUCK_BAND_HZ[0], "band_high_hz": VOCAL_DUCK_BAND_HZ[1], "amount_db": round(duck_amount_db, 1)})
         gain_curve = duck_gain_curve(vocal_key, sr, amount_db=duck_amount_db)

@@ -41,7 +41,7 @@ _PROFILES: dict[str, dict] = {
             EQBand(3000, 2.0, 1.0, "peak"),
             EQBand(10000, 2.5, 0.7, "high_shelf"),
         ],
-        attack_ms=3.0, release_ms=80.0, ratio=5.0, threshold_db=-22.0, parallel_mix=0.20,
+        attack_ms=12.0, release_ms=80.0, ratio=3.5, threshold_db=-18.0, parallel_mix=0.20,
     ),
     "Pop / Rock": dict(
         bus_eq=[
@@ -51,7 +51,7 @@ _PROFILES: dict[str, dict] = {
             EQBand(3000, 3.0, 1.0, "peak"),
             EQBand(12000, 2.5, 0.7, "high_shelf"),
         ],
-        attack_ms=8.0, release_ms=120.0, ratio=3.5, threshold_db=-18.0, parallel_mix=0.30,
+        attack_ms=18.0, release_ms=120.0, ratio=3.5, threshold_db=-18.0, parallel_mix=0.30,
     ),
     "Acoustic / Classical": dict(
         bus_eq=[
@@ -71,7 +71,7 @@ _PROFILES: dict[str, dict] = {
             EQBand(3000, 1.5, 0.8, "peak"),
             EQBand(10000, 0.5, 0.7, "high_shelf"),
         ],
-        attack_ms=12.0, release_ms=200.0, ratio=2.5, threshold_db=-18.0, parallel_mix=0.25,
+        attack_ms=18.0, release_ms=200.0, ratio=2.5, threshold_db=-18.0, parallel_mix=0.25,
     ),
     "Hip-Hop": dict(
         bus_eq=[
@@ -81,7 +81,7 @@ _PROFILES: dict[str, dict] = {
             EQBand(3500, 2.5, 0.8, "peak"),
             EQBand(10000, 2.0, 0.7, "high_shelf"),
         ],
-        attack_ms=5.0, release_ms=100.0, ratio=4.0, threshold_db=-20.0, parallel_mix=0.20,
+        attack_ms=10.0, release_ms=100.0, ratio=4.0, threshold_db=-17.0, parallel_mix=0.20,
     ),
     "Balanced": dict(
         bus_eq=[

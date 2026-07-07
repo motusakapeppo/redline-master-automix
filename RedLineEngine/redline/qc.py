@@ -16,9 +16,11 @@ from dataclasses import dataclass
 
 import numpy as np
 from pedalboard import Pedalboard, PeakFilter, LowShelfFilter, HighShelfFilter
+from scipy.signal import butter, sosfiltfilt
 
 from .analysis.loudness import spectral_band_energies, SPECTRAL_BANDS
 from .targets import load_measured_target
+from .correlometer import measure_bass_phase_shift_deg_abs, DEFAULT_PHASE_THRESHOLD_DEG, DEFAULT_BAND_HZ
 
 # name -> approximate target energy ratio per band (sub_bass, bass, low_mid, mid, high_mid, air)
 # These are the FALLBACK heuristics — if a measured reference profile exists
@@ -53,6 +55,7 @@ class QcReport:
     lufs: float
     true_peak_db: float
     mono_compatibility: float  # 1.0 = perfect, lower = more cancellation risk
+    bass_phase_shift_deg: float  # L/R phase misalignment below 60Hz, see correlometer.py
     band_deviations: dict[str, float]
     corrections_applied: list[str]
     passed: bool
@@ -69,6 +72,26 @@ def _mono_compatibility(signal: np.ndarray) -> float:
     if stereo_energy < 1e-12:
         return 1.0
     return float(np.clip(mono_energy / stereo_energy, 0.0, 1.5))
+
+
+def _mono_fold_bass(signal: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+    """Forces everything below `cutoff_hz` to mono (L=R in that band only),
+    leaving the rest of the spectrum untouched. This is the standard, blunt
+    mastering fix for L/R phase misalignment in the sub-bass -- there's no
+    earlier pipeline state worth "rolling back" to at this point (mastering
+    already ran), so instead of an ineffective revert this applies the
+    actual corrective DSP move and re-measures to confirm it worked."""
+    if signal.ndim == 1 or signal.shape[1] < 2:
+        return signal
+    nyquist = sr / 2.0
+    sos = butter(4, cutoff_hz / nyquist, btype="low", output="sos")
+    low_l = sosfiltfilt(sos, signal[:, 0].astype(np.float64))
+    low_r = sosfiltfilt(sos, signal[:, 1].astype(np.float64))
+    low_mono = (low_l + low_r) * 0.5
+    corrected = signal.astype(np.float64).copy()
+    corrected[:, 0] += low_mono - low_l
+    corrected[:, 1] += low_mono - low_r
+    return corrected.astype(np.float32)
 
 
 def _build_correction_board(deviations: dict[str, float]) -> tuple[Pedalboard | None, list[str]]:
@@ -110,6 +133,7 @@ def run_qc(
     lufs = _analysis_pkg.integrated_lufs(mastered, sr)
     true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
     mono_compat = _mono_compatibility(mastered)
+    bass_phase_shift = measure_bass_phase_shift_deg_abs(mastered, sr)
 
     bands = spectral_band_energies(mastered, sr)
     target = resolve_target(genre_name)
@@ -140,10 +164,17 @@ def run_qc(
         deviations = {name: bands_after[name] - target[name] for name in target}
         true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
 
+    if bass_phase_shift > DEFAULT_PHASE_THRESHOLD_DEG:
+        corrected = _mono_fold_bass(corrected, sr, DEFAULT_BAND_HZ[1])
+        bass_phase_shift = measure_bass_phase_shift_deg_abs(corrected, sr)
+        notes.append(f"bass mono-fold below {DEFAULT_BAND_HZ[1]:.0f}Hz (phase shift was over {DEFAULT_PHASE_THRESHOLD_DEG:.0f}°)")
+        true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
+
     passed = (
         abs(final_lufs - target_lufs) < 1.0
         and true_peak_db <= true_peak_ceiling_db + 0.1
         and mono_compat > 0.6
+        and bass_phase_shift <= DEFAULT_PHASE_THRESHOLD_DEG
         and all(abs(d) < DEVIATION_THRESHOLD * 2 for d in deviations.values())
     )
 
@@ -151,6 +182,7 @@ def run_qc(
         lufs=final_lufs,
         true_peak_db=true_peak_db,
         mono_compatibility=mono_compat,
+        bass_phase_shift_deg=bass_phase_shift,
         band_deviations=deviations,
         corrections_applied=notes,
         passed=passed,

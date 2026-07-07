@@ -219,6 +219,7 @@ def render_master(
         "lufs": round(report.lufs, 1),
         "true_peak_db": round(report.true_peak_db, 2),
         "mono_compatibility": round(report.mono_compatibility, 2),
+        "bass_phase_shift_deg": round(report.bass_phase_shift_deg, 1),
         "corrections": report.corrections_applied,
         "passed": report.passed,
     })
