@@ -114,7 +114,16 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
     # analysis rate, then window over the *original* signal.
     analysis_positions = np.arange(len(frame_map_samples), dtype=np.float64)
     window_samples = int(_WINDOW_SECONDS * sr)
-    n_windows = max(1, n // window_samples)
+    # 50%-overlap Hann OLA: was non-overlapping tiles with only the *rising*
+    # half of a Hann window as "fade" -- every 0.4s window boundary was a
+    # real amplitude discontinuity (each window faded in from near-silence
+    # but never faded back out before the next one started), which could
+    # swallow or smear a transient landing near a boundary. Overlapping
+    # windows + a full symmetric Hann + coverage normalization is standard
+    # overlap-add and actually satisfies the "windows overlap-add cleanly"
+    # goal the old comment already claimed but the tiling didn't deliver.
+    hop_samples = max(1, window_samples // 2)
+    starts = list(range(0, n, hop_samples)) if n > 0 else []
 
     out_channels = []
     channels = double_signal.shape[1] if double_signal.ndim == 2 else 1
@@ -123,11 +132,11 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
     for ch in range(channels):
         chan = double_signal[:, ch] if double_signal.ndim == 2 else double_signal
         out = np.zeros(n, dtype=np.float32)
-        window_fn = np.hanning(2 * window_samples)[:window_samples] if window_samples > 1 else np.ones(1)
+        coverage = np.zeros(n, dtype=np.float32)
+        window_fn = np.hanning(window_samples) if window_samples > 1 else np.ones(1, dtype=np.float32)
 
-        for w in range(n_windows):
+        for start in starts:
             total += 1
-            start = w * window_samples
             end = min(start + window_samples, n)
             if end <= start:
                 continue
@@ -176,7 +185,13 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
 
             fade = window_fn[:seg_len] if window_fn.size >= seg_len else np.ones(seg_len, dtype=np.float32)
             out[start:end] += stretched_segment * fade
+            coverage[start:end] += fade
 
+        # Normalize by actual window coverage (proper OLA) rather than
+        # assuming the windows summed to exactly 1.0 -- the edges (where the
+        # first/last window isn't fully overlapped by a neighbor) and the
+        # short final partial window wouldn't satisfy COLA exactly otherwise.
+        out = out / np.maximum(coverage, 1e-6)
         out_channels.append(out)
 
     aligned = np.stack(out_channels, axis=1) if double_signal.ndim == 2 else out_channels[0]

@@ -58,3 +58,33 @@ def test_short_signal_is_noop():
     result = elastic_align(short, short, sr)
     assert result.windows_total == 0
     assert np.array_equal(result.audio, short)
+
+
+def test_transients_survive_window_boundaries():
+    # Regression test: the old non-overlapping-window implementation used
+    # only the *rising* half of a Hann window as its "fade" (0 -> ~1, never
+    # back down), so a transient landing near a ~0.4s window boundary could
+    # be attenuated well below its original amplitude -- confirmed in
+    # practice via a full-pipeline click-track test where only 6 of 11
+    # clicks in a double vocal survived above a 50%-of-peak threshold.
+    # Proper overlap-add (50% overlap, full Hann, coverage-normalized) must
+    # preserve every click's amplitude regardless of where it falls.
+    sr = 22050
+    seconds = 8.0
+    click_times = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+
+    lead = _click_track(sr, seconds, click_times, amp=0.5)
+    # Small, consistently-safe timing offset so most windows are eligible
+    # to be stretched (exercising the windowing path this test targets).
+    double = _click_track(sr, seconds, [c + 0.01 for c in click_times], amp=0.5)
+    stereo_double = np.stack([double, double], axis=1)
+    stereo_lead = np.stack([lead, lead], axis=1)
+
+    result = elastic_align(stereo_double, stereo_lead, sr)
+    out = result.audio[:, 0]
+
+    original_peak = float(np.max(np.abs(double)))
+    for ct in click_times:
+        center = int(ct * sr)
+        window = out[max(0, center - 500): center + 1000]
+        assert np.max(np.abs(window)) > 0.5 * original_peak, f"click at {ct}s was attenuated below 50% of its original amplitude"
