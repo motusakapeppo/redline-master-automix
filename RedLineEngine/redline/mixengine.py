@@ -803,6 +803,23 @@ def render_mix(
             if on_stem_audition is not None:
                 on_stem_audition(name, working_tracks[name], processed[name], sr)
 
+    # --- Post-processing re-alignment: the per-stem DSP chain above
+    # (pedalboard IIR filters) introduces frequency-dependent group delay
+    # that differs per stem (lead vocal has 3-4 IIR stages, drums 1-2,
+    # bass 0-1). The initial alignment (lines 728-754) was on the dry
+    # signal, so after processing the stems are no longer sample-aligned.
+    # Re-align each non-lead stem to the processed lead reference.
+    if lead_names:
+        lead_processed = sum(processed[n] for n in lead_names if n in processed)
+        for name in solo_names:
+            if name in lead_names:
+                continue
+            aligned, delay = align_to_reference(processed[name], lead_processed, sr)
+            if abs(delay) > 0:
+                processed[name] = aligned
+                _guarded_on_step(f"  '{name}' ri-allineata dopo processing ({delay / sr * 1000:+.1f}ms)")
+                _guarded_on_event({"type": "post_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
+
     # --- Automatic stereo panning for instrumental ("other") stems: there
     # was no panning strategy for these at all -- naming.py only read a
     # dx/sx hint for vocal doubles, and everything else defaulted to dead

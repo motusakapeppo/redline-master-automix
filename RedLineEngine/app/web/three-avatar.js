@@ -878,8 +878,12 @@ function updateEyes(time) {
     intensity += bpmPulse * 0.15;
   }
 
+  // Capped at the same magnitude as the de-esser's proven-visible flash
+  // (deesserFlash * 2.5, max ~2.5) rather than a bigger jump -- a much
+  // higher boost pushes this saturated red material's rendered color
+  // toward white under ACES tone mapping instead of reading as "more red".
   if (time < raveEyeGlowUntil) {
-    intensity += 5.5;
+    intensity += 2.8;
   }
 
   eyeLeft.material.emissiveIntensity = intensity;
@@ -1164,21 +1168,13 @@ function onGlitch() {
 }
 
 // Easter egg ("RedLine Mode"): secret key combo (Ctrl+Alt+R, see app.js
-// keydown listener) triggers a ~4.5s celebratory burst -- eyes burning at
-// full red intensity, a particle burst, the skull's own Dance clip, a
-// glowing red Lissajous curve over the avatar, and a fading "REDLINE MODE"
-// label. Kept monochrome red (the house color) rather than a rainbow
-// sweep -- purely decorative, no DSP data behind any of it.
-let _lissajousRafId = null;
-
+// keydown listener) triggers a ~4.5s celebratory burst -- eyes burning red,
+// a particle burst, the skull's own Dance clip, a white-to-red ring flash,
+// and a fading "REDLINE MODE" label. No canvas overlay drawing (an earlier
+// version drew a Lissajous curve here; dropped per feedback -- read as
+// distracting neon circles rather than a clean reaction).
 function onEasterEgg() {
-  const canvas = document.getElementById('easter-egg-canvas');
   const label = document.getElementById('easter-egg-label');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  if (_lissajousRafId !== null) cancelAnimationFrame(_lissajousRafId);
-
   const durationMs = 4500;
 
   // Label: retrigger the CSS fade-in/out animation from the start even if
@@ -1219,49 +1215,6 @@ function onEasterEgg() {
   // a little longer to match the eyes/particle burst.
   ringColorTarget.set('#FFFFFF');
   setTimeout(() => { ringColorTarget.set('#FF003F'); }, 300);
-
-  // Single Lissajous figure in the house red, drawn thicker with a strong
-  // glow -- monochrome to match the eyes/ring instead of a rainbow sweep.
-  const w = canvas.width, h = canvas.height;
-  const cx = w / 2, cy = h / 2;
-  const figures = [
-    { a: 3, b: 2, r: 0.36, speed: 0.0016, color: '#FF003F' },
-  ];
-  const startTime = performance.now();
-
-  function draw(now) {
-    const t = now - startTime;
-    if (t > durationMs) {
-      ctx.clearRect(0, 0, w, h);
-      _lissajousRafId = null;
-      return;
-    }
-    ctx.clearRect(0, 0, w, h);
-    const fadeOut = t > durationMs - 500 ? (durationMs - t) / 500 : 1;
-    for (const fig of figures) {
-      const r = Math.min(w, h) * fig.r;
-      const phase = t * fig.speed;
-      ctx.save();
-      ctx.globalAlpha = 0.9 * fadeOut;
-      ctx.shadowBlur = 16;
-      ctx.shadowColor = fig.color;
-      ctx.strokeStyle = fig.color;
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      const points = 300;
-      for (let i = 0; i <= points; i++) {
-        const theta = (i / points) * Math.PI * 2;
-        const x = cx + r * Math.sin(fig.a * theta + phase);
-        const y = cy + r * Math.sin(fig.b * theta);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
-    _lissajousRafId = requestAnimationFrame(draw);
-  }
-  _lissajousRafId = requestAnimationFrame(draw);
 }
 
 function setActivity(level) {

@@ -20,6 +20,7 @@ import librosa
 from .analysis.loudness import to_mono
 
 MAX_SHIFT_MS = 100.0  # doubles/parallel mics are milliseconds apart, not more
+MIN_DELAY_MS = 5.0    # below this, stems are already aligned — don't shift
 
 
 def find_sample_delay(signal_a: np.ndarray, signal_b: np.ndarray, sr: int, max_shift_ms: float = MAX_SHIFT_MS) -> int:
@@ -27,7 +28,10 @@ def find_sample_delay(signal_a: np.ndarray, signal_b: np.ndarray, sr: int, max_s
     `apply_sample_delay(signal_b, delay)` to bring signal_b into alignment
     with signal_a — i.e. if signal_b already lags signal_a, this comes back
     negative (shift b earlier to catch up). Computed on a downsampled mono
-    copy for speed, since sample-accurate resolution isn't needed."""
+    copy for speed, since sample-accurate resolution isn't needed.
+
+    If the detected delay is below MIN_DELAY_MS, returns 0 — the stems are
+    already aligned and shifting would only introduce timing errors."""
     mono_a = to_mono(signal_a).astype(np.float32)
     mono_b = to_mono(signal_b).astype(np.float32)
     n = min(mono_a.shape[0], mono_b.shape[0])
@@ -59,7 +63,16 @@ def find_sample_delay(signal_a: np.ndarray, signal_b: np.ndarray, sr: int, max_s
     best_idx = int(np.argmax(window)) + lo
     lag_ds_samples = best_idx - center  # positive: b should shift forward (delay) to match a
 
-    return int(round(lag_ds_samples * (sr / analysis_sr)))
+    delay_samples = int(round(lag_ds_samples * (sr / analysis_sr)))
+
+    # --- MIN_DELAY guard: if the detected delay is below threshold, the
+    # stems are already aligned — don't shift. Prevents false positives
+    # from noise correlation on already-time-aligned tracks.
+    min_delay_samples = int(MIN_DELAY_MS / 1000.0 * sr)
+    if abs(delay_samples) < min_delay_samples:
+        return 0
+
+    return delay_samples
 
 
 def apply_sample_delay(signal: np.ndarray, delay_samples: int) -> np.ndarray:
