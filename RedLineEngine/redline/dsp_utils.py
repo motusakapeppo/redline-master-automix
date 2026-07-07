@@ -4,6 +4,7 @@ ducking, simple stereo utilities, band-limited processing, mid-side)."""
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 from numba import njit
 from scipy.signal import butter, sosfiltfilt
@@ -186,3 +187,155 @@ def pan_stereo(signal: np.ndarray, pan: float) -> np.ndarray:
     left_gain = np.cos(angle)
     right_gain = np.sin(angle)
     return np.stack([mono * left_gain, mono * right_gain], axis=1).astype(np.float32)
+
+
+def stereo_widen(audio: np.ndarray, sr: int, width: float = 0.3, mono_crossover_hz: float = 120.0) -> np.ndarray:
+    """Mid/Side stereo widening. `width` 0=mono, 1=original, >1=wider.
+    Frequencies below mono_crossover_hz stay mono to preserve bass compatibility.
+    Uses to_mid_side/from_mid_side already in this module.
+    Guard: if audio is mono (1D or 2D with 1 channel), return unchanged."""
+    if audio.ndim == 1 or (audio.ndim == 2 and audio.shape[1] == 1):
+        return audio
+    if audio.ndim != 2 or audio.shape[1] != 2:
+        return audio  # not stereo, return unchanged
+
+    width = float(width)
+    if width <= 0.0:
+        # Sum to mono
+        mono = audio.mean(axis=1, keepdims=True)
+        return np.repeat(mono, 2, axis=1).astype(np.float32)
+
+    mid, side = to_mid_side(audio)
+
+    # Apply width to side signal
+    widened_side = side * width
+
+    # Frequencies below mono_crossover_hz stay mono: zero the side content
+    # in that range by high-pass filtering the widened side
+    nyquist = sr / 2.0
+    if mono_crossover_hz > 0.0 and mono_crossover_hz < nyquist:
+        from scipy.signal import butter, sosfiltfilt
+
+        # High-pass the widened side at the crossover frequency
+        sos = butter(4, mono_crossover_hz / nyquist, btype="highpass", output="sos")
+        side_high = sosfiltfilt(sos, widened_side.astype(np.float64)).astype(np.float32)
+        # Low frequencies keep the original (unwidened) side content
+        sos_low = butter(4, mono_crossover_hz / nyquist, btype="lowpass", output="sos")
+        side_low_orig = sosfiltfilt(sos_low, side.astype(np.float64)).astype(np.float32)
+        widened_side = side_high + side_low_orig
+
+    return from_mid_side(mid, widened_side)
+
+
+def transient_shaper(audio: np.ndarray, sr: int, attack_gain_db: float = 3.0, sustain_gain_db: float = -2.0, attack_time_ms: float = 5.0) -> np.ndarray:
+    """Envelope follower separates attack from sustain.
+    `attack_gain_db` boosts the transient, `sustain_gain_db` reduces the tail.
+    `attack_time_ms` sets the split point between attack and sustain.
+    Uses envelope_follower already in this module.
+    Guard: clamp gain to ±12dB."""
+    attack_gain_db = float(np.clip(attack_gain_db, -12.0, 12.0))
+    sustain_gain_db = float(np.clip(sustain_gain_db, -12.0, 12.0))
+    attack_time_ms = float(max(attack_time_ms, 0.5))
+
+    # Work on summed mono for envelope detection
+    if audio.ndim == 2:
+        mono = audio.mean(axis=1)
+    else:
+        mono = audio
+
+    # Two envelopes: a fast one that catches the transient peak, and a slow
+    # one that tracks the body/sustain. The ratio between them determines
+    # how much of each sample is "attack" vs "sustain".
+    fast_env = envelope_follower(np.abs(mono), sr, attack_ms=attack_time_ms * 0.3, release_ms=attack_time_ms * 2.0)
+    slow_env = envelope_follower(np.abs(mono), sr, attack_ms=attack_time_ms * 3.0, release_ms=attack_time_ms * 6.0)
+
+    # Ensure same length (envelope_follower returns same-length signal)
+    n = mono.shape[0]
+    if fast_env.shape[0] != n:
+        fast_env = np.interp(np.arange(n, dtype=np.float64),
+                             np.linspace(0, n, fast_env.shape[0], dtype=np.float64),
+                             fast_env.astype(np.float64)).astype(np.float32)
+    if slow_env.shape[0] != n:
+        slow_env = np.interp(np.arange(n, dtype=np.float64),
+                             np.linspace(0, n, slow_env.shape[0], dtype=np.float64),
+                             slow_env.astype(np.float64)).astype(np.float32)
+
+    # Transient blend: where fast exceeds slow, we're in the attack phase.
+    # The ratio fast/slow gives a continuous blend 0..1+ for attack vs sustain.
+    slow_env = np.maximum(slow_env, 1e-12)
+    transient_ratio = np.clip(fast_env / slow_env - 1.0, 0.0, 1.0)
+
+    # Convert gains to linear
+    attack_gain_linear = db_to_gain(attack_gain_db)
+    sustain_gain_linear = db_to_gain(sustain_gain_db)
+
+    # Blend gain: at peak transient (ratio=1) use attack_gain, at sustain (ratio=0) use sustain_gain
+    gain_curve = (1.0 - transient_ratio) * sustain_gain_linear + transient_ratio * attack_gain_linear
+
+    # Smooth the gain curve to avoid clicks (~1ms moving average)
+    smooth_samples = max(1, int(sr * 0.001))
+    kernel = np.ones(smooth_samples, dtype=np.float32) / smooth_samples
+    gain_curve = np.convolve(gain_curve, kernel, mode="same").astype(np.float32)
+
+    if audio.ndim == 2:
+        return (audio * gain_curve[:, None]).astype(np.float32)
+    return (audio * gain_curve).astype(np.float32)
+
+
+def loudness_match(audio: np.ndarray, target_lufs: float = -16.0) -> np.ndarray:
+    """Normalizza l'audio al target LUFS specificato usando pyloudnorm.
+
+    Se pyloudnorm non è disponibile, ritorna l'audio invariato con un warning
+    loggato. Se l'audio è silenzioso (RMS < 0.001), ritorna l'audio invariato.
+    Il gain applicato è clampato a ±12dB per sicurezza.
+
+    Parameters
+    ----------
+    audio : np.ndarray
+        Segnale mono (1D) o stereo (2D, shape [n_samples, n_channels]).
+    target_lufs : float
+        LUFS target di normalizzazione (default -16.0, standard Apple Music).
+
+    Returns
+    -------
+    np.ndarray
+        Audio normalizzato (stesso dtype dell'input).
+    """
+    log = logging.getLogger(__name__)
+
+    # Silent audio guard
+    rms = np.sqrt(np.mean(audio**2))
+    if rms < 0.001:
+        log.warning("loudness_match: audio silenzioso (RMS=%.6f), ritorno invariato", rms)
+        return audio
+
+    try:
+        import pyloudnorm as pyln
+    except ImportError:
+        log.warning("loudness_match: pyloudnorm non installato, ritorno audio invariato")
+        return audio
+
+    # pyloudnorm expects (n_samples, n_channels) — 1D arrays need reshaping
+    if audio.ndim == 1:
+        data = audio[:, np.newaxis]
+    else:
+        data = audio
+
+    # Measure integrated LUFS. pyloudnorm's Meter uses the rate for gating
+    # block duration; 48000 Hz is a safe default — the measurement error from
+    # using 48000 for a 44100 signal is <0.1 LUFS.
+    meter = pyln.Meter(48000.0)  # rate in Hz
+    measured_lufs = meter.integrated_loudness(data)
+
+    # Compute gain, clamp to ±12 dB
+    gain_db = target_lufs - measured_lufs
+    gain_db = float(np.clip(gain_db, -12.0, 12.0))
+    gain_linear = 10.0 ** (gain_db / 20.0)
+
+    result = audio * gain_linear
+
+    log.debug(
+        "loudness_match: %.2f LUFS -> %.2f LUFS (gain %.2f dB)",
+        measured_lufs, target_lufs, gain_db,
+    )
+    return result.astype(audio.dtype)

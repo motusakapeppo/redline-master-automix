@@ -154,6 +154,9 @@ async function startRun() {
     aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
     warmth: parseFloat(document.getElementById("warmth").value),
     vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
+    stereo_width: parseFloat(document.getElementById("stereo_width").value),
+    transient_attack: parseFloat(document.getElementById("transient_attack").value),
+    transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
     genre_override: document.getElementById("genre_override").value,
     do_mastering: document.getElementById("do_mastering").checked,
     platform: document.getElementById("platform").value,
@@ -162,6 +165,82 @@ async function startRun() {
 
   const result = await window.pywebview.api.run_pipeline(selectedInput, prefs, selectedOutput);
   onDone(result);
+}
+
+// --- Preset system: load/save named MixPreferences configurations
+// via the Python PresetManager bridge.
+
+let presetNames = [];
+
+async function loadPresets() {
+  if (!window.pywebview) return;
+  try {
+    presetNames = await window.pywebview.api.list_presets();
+  } catch (e) {
+    presetNames = [];
+  }
+  const sel = document.getElementById("preset-select");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">-- Carica preset --</option>';
+  for (const name of presetNames) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  if (current && presetNames.includes(current)) sel.value = current;
+}
+
+async function onPresetSelect(name) {
+  if (!name || !window.pywebview) return;
+  const result = await window.pywebview.api.load_preset(name);
+  if (!result || !result.ok) {
+    addEventChip(`\u26A0\uFE0F Preset: ${result ? result.error : "errore sconosciuto"}`);
+    return;
+  }
+  // Update all slider/input values
+  const agg = document.getElementById("aggressiveness");
+  const warm = document.getElementById("warmth");
+  const vocal = document.getElementById("vocal_prominence");
+  const sw = document.getElementById("stereo_width");
+  const ta = document.getElementById("transient_attack");
+  const ts = document.getElementById("transient_sustain");
+  const genre = document.getElementById("genre_override");
+  const master = document.getElementById("do_mastering");
+
+  if (agg) { agg.value = result.aggressiveness; document.getElementById("aggressiveness-val").textContent = result.aggressiveness; }
+  if (warm) warm.value = result.warmth;
+  if (vocal) vocal.value = result.vocal_prominence;
+  if (sw) sw.value = result.stereo_width || 0;
+  if (ta) ta.value = result.transient_attack || 0;
+  if (ts) ts.value = result.transient_sustain || 0;
+  if (genre) genre.value = result.genre_override || "";
+  if (master) master.checked = result.do_mastering;
+
+  addEventChip(`\u{1F4CB} Preset caricato: ${name}`);
+}
+
+async function saveCurrentPreset() {
+  const name = prompt("Nome del preset:");
+  if (!name || !name.trim()) return;
+  const prefs = {
+    aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
+    warmth: parseFloat(document.getElementById("warmth").value),
+    vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
+    stereo_width: parseFloat(document.getElementById("stereo_width").value),
+    transient_attack: parseFloat(document.getElementById("transient_attack").value),
+    transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
+    genre_override: document.getElementById("genre_override").value,
+    do_mastering: document.getElementById("do_mastering").checked,
+  };
+  const result = await window.pywebview.api.save_preset(name.trim(), prefs);
+  if (result && result.ok) {
+    addEventChip(`\u{1F4BE} Preset salvato: ${name.trim()}`);
+    await loadPresets();
+  } else {
+    addEventChip(`\u26A0\uFE0F Errore salvataggio preset: ${result ? result.error : "sconosciuto"}`);
+  }
 }
 
 function onStep(msg) {
@@ -367,6 +446,10 @@ function onDone(result) {
           <div class="audition-abc-label">Riascolta:</div>
           <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
           <button class="btn" onclick="auditionStage('mix')">Con mix</button>
+          <label class="loudness-match-label" title="Confronto a parit&agrave; di volume (LUFS)">
+            <input type="checkbox" id="loudness-match-switch" onchange="toggleLoudnessMatch()">
+            Match LUFS
+          </label>
         </div>
 
         <div class="feedback-box">
@@ -397,6 +480,10 @@ function onDone(result) {
           <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
           <button class="btn" onclick="auditionStage('mix')">Con mix</button>
           <button class="btn" onclick="auditionStage('master')" ${result.master_path ? "" : "disabled"}>Con mastering</button>
+          <label class="loudness-match-label" title="Confronto a parit&agrave; di volume (LUFS)">
+            <input type="checkbox" id="loudness-match-switch" onchange="toggleLoudnessMatch()">
+            Match LUFS
+          </label>
         </div>
 
         <div class="feedback-box">
@@ -541,11 +628,23 @@ function openOutput() {
 // --- Post-render re-evaluation: A/B/C audition of the three cached render
 // stages, and free-text feedback that triggers a fast re-mastering-only
 // pass (skips re-running the mix, which is the expensive part).
+
+let _lastAuditionStage = null;
+
 async function auditionStage(stage) {
   if (!window.pywebview) return;
-  const res = await window.pywebview.api.audition_stage(stage);
+  _lastAuditionStage = stage;
+  const lm = document.getElementById("loudness-match-switch")?.checked || false;
+  const res = await window.pywebview.api.audition_stage(stage, lm);
   if (res && !res.ok) {
     addEventChip(`\u{26A0}\u{FE0F} Ascolto non disponibile: ${res.error}`);
+  }
+}
+
+function toggleLoudnessMatch() {
+  const lm = document.getElementById("loudness-match-switch")?.checked || false;
+  if (_lastAuditionStage && window.pywebview) {
+    window.pywebview.api.audition_stage(_lastAuditionStage, lm);
   }
 }
 
@@ -1108,6 +1207,16 @@ function onEvent(evt) {
       flashDetail("saturation-detail", `Basso: split 2-banda + saturazione armonica`);
       break;
 
+    case "stereo_widen":
+      addEventChip(`\u{2194}\u{FE0F} Stereo widening: width=${evt.width}`);
+      flashDetail("midside-detail", `Stereo width: ${evt.width}`);
+      break;
+
+    case "transient_shaper":
+      addEventChip(`\u{26A1} Transient shaper: attack=${evt.attack_gain_db}dB, sustain=${evt.sustain_gain_db}dB`);
+      flashDetail("comp-detail", `Transient: attack ${evt.attack_gain_db}dB / sustain ${evt.sustain_gain_db}dB`);
+      break;
+
     default:
       // Every backend event is meant to be seen -- a silently dropped case
       // here is exactly why effects the engine actually uses (reverb,
@@ -1124,9 +1233,13 @@ function onEvent(evt) {
 
 // Initialize Three.js avatar when DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initThreeAvatar);
+  document.addEventListener('DOMContentLoaded', () => {
+    initThreeAvatar();
+    loadPresets();
+  });
 } else {
   initThreeAvatar();
+  loadPresets();
 }
 
 function initThreeAvatar() {
@@ -1134,3 +1247,11 @@ function initThreeAvatar() {
     window.avatarAPI.init('fx-canvas');
   }
 }
+
+// Wire preset dropdown change event (delegated so it works even if the
+// dropdown is populated after DOMContentLoaded).
+document.addEventListener("change", (e) => {
+  if (e.target.id === "preset-select") {
+    onPresetSelect(e.target.value);
+  }
+});

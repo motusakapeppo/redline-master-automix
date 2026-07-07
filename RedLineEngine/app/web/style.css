@@ -325,6 +325,26 @@ h1 {
   margin-bottom: 22px;
 }
 
+.effects-section {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.effects-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.effects-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .field label {
   display: block;
   font-size: 13px;
@@ -791,6 +811,20 @@ select { width: auto; }
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.loudness-match-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.loudness-match-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* Real per-track waveform timeline (DAW view) -- was previously just a

@@ -20,6 +20,10 @@ import json
 import os
 import re
 
+from redline.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 MODEL_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "qwen2.5-1.5b-instruct-q4_0.gguf"
 )
@@ -42,6 +46,7 @@ def _get_model():
 
         _model = Llama(model_path=MODEL_PATH, n_ctx=2048, n_threads=os.cpu_count() or 4, verbose=False)
     except Exception:
+        logger.warning("Failed to load LLM model — advisory classifier unavailable", exc_info=True)
         _load_failed = True
         _model = None
     return _model
@@ -107,6 +112,7 @@ def classify_ambiguous_stems(stem_infos: list[dict], on_token=None) -> dict[str,
         parsed = json.loads(match.group(0))
         return {name: category for name, category in parsed.items() if category in BUS_CATEGORIES}
     except Exception:
+        logger.warning("LLM stem classification failed — returning empty", exc_info=True)
         return {}
 
 
@@ -244,6 +250,7 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
             and any(kw in lowered_brief for kw in _BRIEF_RELEVANCE_KEYWORDS[k])
         }
     except Exception:
+        logger.warning("LLM creative brief interpretation failed — returning empty", exc_info=True)
         return {}
 
 
@@ -321,4 +328,5 @@ def interpret_dsp_request(user_text: str, structure_map: list[dict], on_token=No
             return None
         return json.loads(match.group(0))
     except Exception:
+        logger.warning("LLM DSP request interpretation failed — returning None", exc_info=True)
         return None

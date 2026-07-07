@@ -10,6 +10,10 @@ from __future__ import annotations
 import json
 import os
 
+from redline.logging_setup import get_logger, setup_logging
+
+logger = get_logger(__name__)
+
 _FLAGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".flags.json")
 
 DEFAULTS = {
@@ -18,7 +22,13 @@ DEFAULTS = {
     "ENABLE_LLM_ADVISORY": False,
     "ENABLE_BLUEPRINT_CHAINS": False,
     "ENABLE_LIVE_AUDITION": False,
+    "ENABLE_STEREO_WIDENING": False,
+    "ENABLE_TRANSIENT_SHAPER": False,
 }
+
+# Logging configuration (not feature flags — always available)
+LOG_LEVEL = "WARNING"
+LOG_DIR: str | None = None  # set to a path to enable file logging
 
 _cache: dict | None = None
 
@@ -27,6 +37,8 @@ def _load() -> dict:
     global _cache
     if _cache is not None:
         return _cache
+
+    setup_logging(log_dir=LOG_DIR, level=LOG_LEVEL)
 
     flags = dict(DEFAULTS)
     if os.path.exists(_FLAGS_PATH):
@@ -37,7 +49,7 @@ def _load() -> dict:
                 if key in flags:
                     flags[key] = bool(value)
         except Exception:
-            pass  # malformed flags file -> fall back to all-off defaults, never crash on this
+            logger.warning("Malformed .flags.json — falling back to all-off defaults", exc_info=True)
 
     # Environment variables override the file, for quick one-off testing:
     # REDLINE_ENABLE_LTAS_MATCHING=1 python -m redline.cli ...

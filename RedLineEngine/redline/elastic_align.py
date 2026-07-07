@@ -23,7 +23,10 @@ from dataclasses import dataclass
 import numpy as np
 import librosa
 
+from redline.logging_setup import get_logger
 from .dsp_utils import envelope_follower
+
+logger = get_logger(__name__)
 
 # If DTW says a window needs to stretch/compress by more than this fraction,
 # the take's timing was too different from the lead to trust a correction —
@@ -104,6 +107,7 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
     try:
         frame_map_samples = _dtw_time_map(d_ds, l_ds, analysis_sr)
     except Exception:
+        logger.warning("DTW time map failed — returning double unchanged", exc_info=True)
         return ElasticAlignResult(audio=double_signal, windows_total=0, windows_stretched=0, windows_skipped_unsafe=0)
 
     # Convert the analysis-rate frame map to a time-ratio curve at the
@@ -157,6 +161,7 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
                     stretched_segment = librosa.effects.time_stretch(segment.astype(np.float32), rate=local_ratio)
                     stretched += 1
                 except Exception:
+                    logger.warning("Time-stretch failed for window %d — leaving as-is", w, exc_info=True)
                     stretched_segment = segment
 
             # time_stretch changes length — always force back to the window's

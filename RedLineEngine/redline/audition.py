@@ -10,6 +10,10 @@ from __future__ import annotations
 import numpy as np
 import sounddevice as sd
 
+from redline.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 
 TARGET_PEAK = 0.85  # -1.4dBFS — loud enough to hear over desktop speakers,
                      # but leaves headroom so a DSP spike can't clip.
@@ -80,7 +84,7 @@ class AudioDriver:
         except Exception as exc:
             # A missing/busy audio device must never take down the render --
             # audition is a nice-to-have, not a pipeline dependency.
-            print(f"[AUDITION ERROR] {exc}")
+            logger.exception("Audio playback failed — missing or busy device")
 
 
 def extract_smart_chunk(audio_array: np.ndarray, sr: int, duration_sec: float = 2.0) -> np.ndarray:

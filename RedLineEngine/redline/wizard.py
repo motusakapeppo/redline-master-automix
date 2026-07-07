@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from redline.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class MixPreferences:
@@ -13,6 +17,10 @@ class MixPreferences:
     vocal_prominence: float = 0.0 # -1 (buried) .. +1 (forward/lead)
     genre_override: str | None = None
     do_mastering: bool = True
+    platform: str = "auto"       # "auto" | "spotify" | "apple" | "youtube" | "club"
+    stereo_width: float = 0.0    # 0=off, 0.1-1.0 range
+    transient_attack: float = 0.0 # 0=off, -6..+6 range
+    transient_sustain: float = 0.0 # 0=off, -6..+6 range
 
     def __post_init__(self) -> None:
         # Defense in depth: the GUI's range inputs already constrain these
@@ -27,6 +35,12 @@ class MixPreferences:
         self.aggressiveness = int(max(1, min(5, self.aggressiveness)))
         self.warmth = float(max(-1.0, min(1.0, self.warmth)))
         self.vocal_prominence = float(max(-1.0, min(1.0, self.vocal_prominence)))
+        self.stereo_width = float(max(0.0, min(1.0, self.stereo_width)))
+        self.transient_attack = float(max(-6.0, min(6.0, self.transient_attack)))
+        self.transient_sustain = float(max(-6.0, min(6.0, self.transient_sustain)))
+        valid_platforms = ("auto", "spotify", "apple", "youtube", "club")
+        if self.platform not in valid_platforms:
+            self.platform = "auto"
 
 
 def _ask_choice(prompt: str, options: dict[str, tuple[str, float]], default_key: str) -> float:
@@ -46,7 +60,7 @@ def _ask_choice(prompt: str, options: dict[str, tuple[str, float]], default_key:
         if 0 <= idx < len(keys):
             return options[keys[idx]][1]
     except ValueError:
-        pass
+        logger.warning("Invalid menu choice — using default")
     print("Scelta non valida, uso il default.")
     return options[default_key][1]
 

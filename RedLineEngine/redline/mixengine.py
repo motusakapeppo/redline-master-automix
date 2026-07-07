@@ -70,6 +70,8 @@ from .dsp_utils import (
     saturate,
     db_to_gain,
     pan_stereo,
+    stereo_widen,
+    transient_shaper,
 )
 from . import config
 from .naming import parse_stem, StemDescriptor
@@ -1083,6 +1085,21 @@ def render_mix(
     if reverb_out is not None:
         mix_bus += reverb_out
         on_event({"type": "reverb_bus_render", "buses": [b for b, s in reverb_bus._sums.items() if s is not None]})
+
+    # --- Stereo widening (experimental): applied to the full mix bus before
+    # bus EQ/compression, only when the feature flag is enabled and width > 0.
+    if config.is_enabled("ENABLE_STEREO_WIDENING") and prefs.stereo_width > 0.0:
+        on_step(f"Stereo widening: width={prefs.stereo_width:.2f}")
+        on_event({"type": "stereo_widen", "width": round(prefs.stereo_width, 2)})
+        mix_bus = stereo_widen(mix_bus, sr, width=prefs.stereo_width)
+
+    # --- Transient shaper (experimental): applied to the full mix bus before
+    # bus EQ/compression, only when the feature flag is enabled and either
+    # attack or sustain gain is non-zero.
+    if config.is_enabled("ENABLE_TRANSIENT_SHAPER") and (prefs.transient_attack != 0.0 or prefs.transient_sustain != 0.0):
+        on_step(f"Transient shaper: attack={prefs.transient_attack:+.1f}dB, sustain={prefs.transient_sustain:+.1f}dB")
+        on_event({"type": "transient_shaper", "attack_gain_db": round(prefs.transient_attack, 1), "sustain_gain_db": round(prefs.transient_sustain, 1)})
+        mix_bus = transient_shaper(mix_bus, sr, attack_gain_db=prefs.transient_attack, sustain_gain_db=prefs.transient_sustain)
 
     # --- Pre-glue headroom: summing many buses can leave mix_bus several dB
     # over 0dBFS before the glue compressor even runs. A gentle glue ratio

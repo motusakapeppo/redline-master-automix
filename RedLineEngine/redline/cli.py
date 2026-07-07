@@ -31,6 +31,7 @@ from .wizard import run_wizard
 from .mixengine import render_mix
 from .masterengine import render_master, render_master_reference
 from .metrics import Metrics
+from .batch import BatchProcessor
 
 
 def _narrate(msg: str) -> None:
@@ -44,6 +45,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     src.add_argument("--stems-dir", help="Folder with an arbitrary number of named stem files")
     src.add_argument("--vocals", help="Path to a pre-mixed vocals track (pair with --instrumental)")
     src.add_argument("--input", help="Single mixed file — auto-separated via Demucs")
+    src.add_argument("--batch", help="Directory of project subfolders to process in batch mode")
     p.add_argument("--instrumental", help="Path to a pre-mixed instrumental track (pairs with --vocals)")
     p.add_argument("--out", required=True, help="Output directory")
     p.add_argument("--reference", help="Optional reference track for reference-matched mastering")
@@ -58,6 +60,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.vocals and not args.instrumental:
         print("--vocals richiede anche --instrumental", file=sys.stderr)
         return 1
+
+    if args.batch:
+        os.makedirs(args.out, exist_ok=True)
+        processor = BatchProcessor(on_step=_narrate)
+        processor.run(
+            batch_dir=args.batch,
+            out_dir=args.out,
+            platform=args.platform,
+            non_interactive=args.non_interactive,
+            reference=args.reference,
+        )
+        return 0
 
     os.makedirs(args.out, exist_ok=True)
     metrics = Metrics()

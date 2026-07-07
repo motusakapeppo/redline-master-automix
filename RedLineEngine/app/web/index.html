@@ -51,6 +51,14 @@ window.addEventListener('error', function(e) {
         <textarea id="creative_brief" rows="3" placeholder="es. vorrei un suono più caldo, quasi da vinile, e la voce un po' più protagonista — lascia vuoto per usare solo le impostazioni qui sotto"></textarea>
       </div>
 
+      <div class="field field-row">
+        <label>Preset</label>
+        <select id="preset-select" style="flex:1">
+          <option value="">-- Carica preset --</option>
+        </select>
+        <button class="btn" onclick="saveCurrentPreset()" style="margin:0; white-space:nowrap;">Salva come preset</button>
+      </div>
+
       <div class="field">
         <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
         <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
@@ -65,6 +73,25 @@ window.addEventListener('error', function(e) {
       <div class="field">
         <label>Presenza voce (indietro &larr;&rarr; protagonista)</label>
         <input type="range" id="vocal_prominence" min="-1" max="1" value="0" step="0.1">
+      </div>
+
+      <div class="field effects-section">
+        <div class="effects-label">Effetti <span class="effects-hint">Sperimentale — usa con cautela</span></div>
+      </div>
+
+      <div class="field">
+        <label>Stereo Width (0=mono, 0.5=stretto, 1.0=originale)</label>
+        <input type="range" id="stereo_width" min="0" max="1" value="0" step="0.05">
+      </div>
+
+      <div class="field">
+        <label>Transient Attack (dB, positivo=pi&ugrave; incisivo)</label>
+        <input type="range" id="transient_attack" min="-6" max="6" value="0" step="0.5">
+      </div>
+
+      <div class="field">
+        <label>Transient Sustain (dB, negativo=taglia la coda)</label>
+        <input type="range" id="transient_sustain" min="-6" max="6" value="0" step="0.5">
       </div>
 
       <div class="field">

@@ -6,6 +6,7 @@ target (window.evaluate_js instead of print())."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -20,6 +21,7 @@ from redline import config
 from redline.director import DirectorGate
 from redline.input_loader import load_auto
 from redline.analyze import analyze
+from redline.presets import PresetManager
 from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
@@ -186,6 +188,84 @@ class Api:
         config.set_override("ENABLE_LIVE_AUDITION", is_enabled)
         self._narrate(f"Neural Monitor: {'attivo' if is_enabled else 'disattivo'}")
 
+    # ------------------------------------------------------------------
+    # Preset API
+    # ------------------------------------------------------------------
+
+    def list_presets(self) -> list[str]:
+        """Return all available preset names (built-in + user)."""
+        try:
+            return PresetManager.list()
+        except Exception as exc:
+            log = logging.getLogger(__name__)
+            log.error("list_presets fallito: %s", exc)
+            return []
+
+    def load_preset(self, name: str) -> dict:
+        """Load a preset by name and return its values as a serializable dict.
+
+        Returns an ``{"ok": False, "error": ...}`` dict on failure so the
+        JS side always gets something JSON-safe.
+        """
+        try:
+            prefs = PresetManager.load(name)
+            return {
+                "ok": True,
+                "name": name,
+                "aggressiveness": prefs.aggressiveness,
+                "warmth": prefs.warmth,
+                "vocal_prominence": prefs.vocal_prominence,
+                "genre_override": prefs.genre_override,
+                "do_mastering": prefs.do_mastering,
+                "platform": prefs.platform,
+                "stereo_width": prefs.stereo_width,
+                "transient_attack": prefs.transient_attack,
+                "transient_sustain": prefs.transient_sustain,
+            }
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("load_preset(%r) fallito: %s", name, exc)
+            return {"ok": False, "error": str(exc)}
+
+    def save_preset(self, name: str, prefs: dict) -> dict:
+        """Save current slider values as a named user preset.
+
+        Returns ``{"ok": True}`` or ``{"ok": False, "error": ...}``.
+        """
+        try:
+            mp = MixPreferences(
+                aggressiveness=int(prefs.get("aggressiveness", 3)),
+                warmth=float(prefs.get("warmth", 0.0)),
+                vocal_prominence=float(prefs.get("vocal_prominence", 0.0)),
+                genre_override=prefs.get("genre_override") or None,
+                do_mastering=bool(prefs.get("do_mastering", True)),
+                stereo_width=float(prefs.get("stereo_width", 0.0)),
+                transient_attack=float(prefs.get("transient_attack", 0.0)),
+                transient_sustain=float(prefs.get("transient_sustain", 0.0)),
+            )
+            PresetManager.save(mp, name)
+            return {"ok": True}
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("save_preset(%r) fallito: %s", name, exc)
+            return {"ok": False, "error": str(exc)}
+
+    def delete_preset(self, name: str) -> dict:
+        """Delete a user preset by name.
+
+        Returns ``{"ok": True}`` or ``{"ok": False, "error": ...}``.
+        """
+        try:
+            PresetManager.delete(name)
+            return {"ok": True}
+        except (ValueError, KeyError) as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("delete_preset(%r) fallito: %s", name, exc)
+            return {"ok": False, "error": str(exc)}
+
     def _audition(self, dry: np.ndarray, wet: np.ndarray, sr: int) -> None:
         """Plays a loud/dense before-and-after chunk of the master bus glue
         compression through real speakers, narrating + reflecting avatar
@@ -281,6 +361,9 @@ class Api:
         aggressiveness = float(prefs.get("aggressiveness", 3))
         warmth = float(prefs.get("warmth", 0.0))
         vocal_prominence = float(prefs.get("vocal_prominence", 0.0))
+        stereo_width = float(prefs.get("stereo_width", 0.0))
+        transient_attack = float(prefs.get("transient_attack", 0.0))
+        transient_sustain = float(prefs.get("transient_sustain", 0.0))
 
         creative_brief = (prefs.get("creative_brief") or "").strip()
         if creative_brief:
@@ -307,6 +390,10 @@ class Api:
             vocal_prominence=vocal_prominence,
             genre_override=prefs.get("genre_override") or None,
             do_mastering=bool(prefs.get("do_mastering", True)),
+            platform=str(prefs.get("platform", "auto")),
+            stereo_width=stereo_width,
+            transient_attack=transient_attack,
+            transient_sustain=transient_sustain,
         )
 
     def _do_mastering(self, mixed: np.ndarray, stems, analysis, out_dir: str, prefs: dict) -> str | None:
@@ -515,22 +602,32 @@ class Api:
     def open_folder(self, path: str) -> None:
         os.startfile(path)  # noqa: S606 — Windows-only app, opening a folder the user just produced
 
-    def audition_stage(self, stage: str) -> dict:
+    def audition_stage(self, stage: str, loudness_match: bool = False) -> dict:
         """Post-render re-evaluation: play a chunk of one of the three
         cached stages (dry stems / mixed / mastered) through real speakers
         so the user can A/B them in-app instead of only in a file browser.
         Independent of the live "Neural Monitor" toggle -- this is an
         explicit, one-off listen request, not the automatic before/after
-        during a render."""
+        during a render.
+
+        If ``loudness_match=True``, normalizes the buffer to -16 LUFS before
+        playback so the comparison is at equal perceived loudness."""
         buffers = {"dry": self._last_dry, "mix": self._last_mix, "master": self._last_master}
         buf = buffers.get(stage)
         if buf is None or self._last_sr is None:
             return {"ok": False, "error": "Nessun render disponibile per questo stadio."}
         try:
             from redline.audition import driver, extract_smart_chunk
+            from redline.dsp_utils import loudness_match as lm
 
-            chunk = extract_smart_chunk(buf, self._last_sr)
-            self._narrate(f"Ascolto: {stage}...")
+            playback = buf
+            if loudness_match:
+                self._narrate(f"Ascolto: {stage} (LUFS normalizzato)...")
+                playback = lm(buf, target_lufs=-16.0)
+            else:
+                self._narrate(f"Ascolto: {stage}...")
+
+            chunk = extract_smart_chunk(playback, self._last_sr)
             driver.play_chunk(chunk, self._last_sr)
             return {"ok": True}
         except Exception as exc:

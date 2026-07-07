@@ -24,8 +24,11 @@ import sys
 import numpy as np
 import soundfile as sf
 
+from redline.logging_setup import get_logger
 from .analysis.loudness import spectral_band_energies, SPECTRAL_BANDS
 from .targets import TARGETS_DIR, genre_slug, target_path
+
+logger = get_logger(__name__)
 
 AUDIO_EXTENSIONS = (".wav", ".flac", ".aiff", ".aif", ".mp3", ".ogg")
 BAND_NAMES = [name for name, _lo, _hi in SPECTRAL_BANDS]
@@ -35,6 +38,7 @@ def _profile_file(path: str) -> dict[str, float] | None:
     try:
         data, sr = sf.read(path, dtype="float32", always_2d=True)
     except Exception:
+        logger.warning("Failed to read audio file: %s", path, exc_info=True)
         return None
     if data.shape[0] < sr:  # under a second, not worth profiling
         return None

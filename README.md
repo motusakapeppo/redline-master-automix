@@ -534,7 +534,30 @@ Triggered by real user feedback that renders were crackling, the vocal was nearl
 - **Panning from filename for all stems** (`naming.py`): `_pan_from_name()` was previously gated to `layer == "double"` only — a `dx`/`sx` hint in an instrumental stem's name (e.g. `Chitarra_dx.wav`) was silently ignored and the stem defaulted to dead center. Now honored for any stem that has it, matching the real-world convention that `dx`/`sx` is generic, not vocal-specific.
 - **DAW workflow**: the pipeline can now stop after the mix stage (`stop_after_mix` option) and show a review screen with per-track waveform thumbnails (`get_waveform_peaks`), A/B/C audition of dry/mix/master, a free-text feedback box for describing changes, and buttons to either re-run just the mix stage (`reprocess_mix`, skips demucs/analysis) or continue to mastering (`continue_to_mastering`). After a full run, the final screen has "MIX" and "MASTERING" buttons that reopen the respective DAW views at any time.
 
+**Recent hardening (July 2026, part 5 — preset matrix, batch, logging, A/B, stereo tools):**
+- **Expanded preset system** (`presets.py`): from 5 to 22 built-in presets organized as a genre × platform × style matrix. Each preset sets aggressiveness, warmth, vocal_prominence, genre_override, platform target, stereo width, and transient shaper parameters. Presets like "Rock - Spotify", "EDM - Club", "Hip-Hop - Apple Music", "Acoustic - Apple Music" let the user pick both genre and delivery platform in one click. Falls back to auto genre detection when no preset is selected. User presets are saved as JSON in `~/.redline/presets/`.
+- **Batch processing** (`batch.py`): `BatchProcessor` class that scans a directory of project subfolders and processes each through the full pipeline (load → analyze → mix → master). Failures in one project don't block the batch. Saves a JSON summary report. Accessible via `--batch` flag in `cli.py`.
+- **Structured logging** (`logging_setup.py`): all 13 bare `except Exception: pass` sites replaced with `logger.warning()` or `logger.exception()`. Rotating JSON log files (10MB, 5 backups) with timestamp, level, logger, message, and exception traceback. Configurable via `REDLINE_LOG_LEVEL` and `REDLINE_LOG_DIR` environment variables.
+- **A/B comparison with loudness matching** (`dsp_utils.py`): new `loudness_match()` function normalizes audio to a target LUFS using pyloudnorm (ITU-R BS.1770-4), so dry/mix/master comparisons are level-consistent and the louder one doesn't automatically "sound better". Toggleable via "Match LUFS" checkbox in the audition UI. Falls back gracefully if pyloudnorm is not installed.
+- **Stereo widening + transient shaper** (`dsp_utils.py`): two new DSP modules behind feature flags (`ENABLE_STEREO_WIDENING`, `ENABLE_TRANSIENT_SHAPER`). `stereo_widen()` applies Mid/Side processing with a mono crossover at 120Hz to preserve bass compatibility. `transient_shaper()` uses a dual-envelope follower to separate attack from sustain with independent gain control. Both exposed as sliders in the wizard UI (default off).
+- **Research report** (`docs/research_report.md`): industry-standard EQ/compression/LUFS values by genre compared against current code constants, with specific recommended changes and file:line references.
+
 ### Known Issues & Troubleshooting
+
+| # | Issue | Status | Note |
+|---|-------|--------|------|
+| 1 | **Mix output quality still needs calibration** | **OPEN** | The research report (`docs/research_report.md`) documents discrepancies between current code constants and industry standards. A second calibration pass on varied material (rock, pop, jazz, electronic, classical) is needed before the output is consistently professional. |
+| 2 | **`pyloudnorm` not in requirements.txt** | **OPEN** | `loudness_match()` falls back gracefully if pyloudnorm is not installed, but for proper A/B loudness matching it should be added to `requirements.txt`. |
+| 3 | **No test for `DirectorGate.request_answer()`/`answer()`** | **OPEN** | The new checkpoint API (instrument-identity questions) has no unit test. The existing `test_director.py` only covers `request_approval()`/`approve()`. |
+| 4 | **`classify_instrument` cache not tested** | **MINOR** | `_instrument_cache` in `mixengine.py` avoids redundant spectral analysis but has no dedicated test. |
+| 5 | **Research report discrepancies not applied** | **OPEN** | The report lists specific recommended changes (Hip-Hop presence at 2000Hz too low, Pop warmth cut instead of boost, Classical air shelf too aggressive) — none have been applied to the code yet. |
+| 6 | **Stereo widening / transient shaper not calibrated** | **OPEN** | Both modules work correctly on synthetic test audio but have not been tuned on real music. Default values may need adjustment. |
+| 7 | **Preset system UI not tested in real app** | **OPEN** | The preset dropdown and save button work in the code but have not been verified in the running pywebview application. |
+| 8 | **CLI `--batch` mode not tested with real audio** | **OPEN** | Batch processing tests use synthetic audio. Real-world performance with Demucs separation and full DSP pipeline is untested. |
+| 9 | **librosa warning in batch tests** | **MINOR** | `n_fft=1024 is too large for input signal of length=690` — harmless, caused by synthetic test audio being too short for librosa's default FFT size. |
+| 10 | **WebView2 black window** | **FIXED** | `Api.window` → `Api._window` rename. See detailed diagnosis below. |
+| 11 | **Neural Monitor no audio** | **FIXED** | WASAPI sample rate mismatch resolved, makeup gain added. |
+| 12 | **File picker not showing audio files** | **FIXED** | Added `pick_input_file()` with audio file type filters. |
 
 #### Black/blank window on launch
 
@@ -1083,7 +1106,30 @@ Innescato da un feedback reale dell'utente: i render gracchiavano, la voce era q
 - **Panning da nome file per tutti gli stem** (`naming.py`): `_pan_from_name()` era limitato a `layer == "double"` — un hint `dx`/`sx` nel nome di uno stem strumentale (es. `Chitarra_dx.wav`) veniva ignorato e lo stem restava al centro. Ora onorato per qualsiasi stem, riconoscendo che la convenzione `dx`/`sx` è generica, non solo vocale.
 - **Workflow DAW**: la pipeline può ora fermarsi dopo la fase di mix (`stop_after_mix`) e mostrare una schermata di revisione con miniature delle forme d'onda per traccia (`get_waveform_peaks`), ascolto A/B/C di dry/mix/master, una casella di testo libero per descrivere modifiche, e pulsanti per ri-eseguire solo la fase mix (`reprocess_mix`, salta demucs/analisi) o proseguire al mastering (`continue_to_mastering`). Dopo un'esecuzione completa, la schermata finale ha pulsanti "MIX" e "MASTERING" che riaprono le rispettive viste DAW in qualsiasi momento.
 
+**Indurimento recente (Luglio 2026, parte 5 — matrice preset, batch, logging, A/B, strumenti stereo):**
+- **Matrice preset ampliata** (`presets.py`): da 5 a 22 preset predefiniti organizzati come matrice genere × piattaforma × stile. Ogni preset imposta aggressiveness, warmth, vocal_prominence, genre_override, piattaforma di destinazione, stereo width e transient shaper. Preset come "Rock - Spotify", "EDM - Club", "Hip-Hop - Apple Music" permettono di scegliere genere e piattaforma in un click. Ricade sul rilevamento automatico del genere quando nessun preset è selezionato. I preset utente sono salvati come JSON in `~/.redline/presets/`.
+- **Elaborazione batch** (`batch.py`): classe `BatchProcessor` che scandisce una directory di progetti e processa ciascuno attraverso l'intera pipeline. Gli errori in un progetto non bloccano il batch. Salva un report JSON riepilogativo. Accessibile tramite flag `--batch` in `cli.py`.
+- **Logging strutturato** (`logging_setup.py`): tutti i 13 `except Exception: pass` sostituiti con `logger.warning()` o `logger.exception()`. File di log JSON con rotazione (10MB, 5 backup) con timestamp, livello, logger, messaggio e traceback. Configurabile via variabili d'ambiente `REDLINE_LOG_LEVEL` e `REDLINE_LOG_DIR`.
+- **Confronto A/B con loudness matching** (`dsp_utils.py`): nuova funzione `loudness_match()` che normalizza l'audio a un target LUFS usando pyloudnorm (ITU-R BS.1770-4), così i confronti dry/mix/master sono a parità di volume percepito. Attivabile tramite checkbox "Match LUFS" nella UI di audition. Ricade gracefulmente se pyloudnorm non è installato.
+- **Stereo widening + transient shaper** (`dsp_utils.py`): due nuovi moduli DSP dietro feature flag (`ENABLE_STEREO_WIDENING`, `ENABLE_TRANSIENT_SHAPER`). `stereo_widen()` applica elaborazione Mid/Side con crossover mono a 120Hz per preservare la compatibilità bassi. `transient_shaper()` usa un envelope follower a doppia velocità per separare attack da sustain con controllo di gain indipendente. Esposti come slider nella UI wizard (default disabilitati).
+- **Report di ricerca** (`docs/research_report.md`): valori standard di EQ/compressione/LUFS per genere confrontati con le costanti attuali del codice, con raccomandazioni specifiche e riferimenti file:linea.
+
 ### Problemi Noti e Risoluzione
+
+| # | Problema | Stato | Nota |
+|---|----------|-------|------|
+| 1 | **Qualità output mix ancora da calibrare** | **APERTO** | Il report di ricerca (`docs/research_report.md`) documenta discrepanze tra le costanti attuali e gli standard di settore. Serve un secondo giro di calibrazione su materiale variato (rock, pop, jazz, elettronica, classica). |
+| 2 | **`pyloudnorm` non in requirements.txt** | **APERTO** | `loudness_match()` ricade gracefulmente se pyloudnorm non è installato, ma per un corretto loudness matching A/B va aggiunto a `requirements.txt`. |
+| 3 | **Nessun test per `DirectorGate.request_answer()`/`answer()`** | **APERTO** | La nuova API checkpoint (domande identità strumenti) non ha test unitari. `test_director.py` copre solo `request_approval()`/`approve()`. |
+| 4 | **Cache `classify_instrument` non testata** | **MINORE** | `_instrument_cache` in `mixengine.py` evita analisi spettrale ridondante ma non ha test dedicati. |
+| 5 | **Discrepanze report ricerca non applicate** | **APERTO** | Il report elenca modifiche raccomandate (presenza Hip-Hop a 2000Hz troppo bassa, taglio warmth Pop invece di boost, air shelf Classical troppo aggressivo) — nessuna ancora applicata. |
+| 6 | **Stereo widening / transient shaper non calibrati** | **APERTO** | Entrambi i moduli funzionano su audio sintetico ma non sono stati tarati su musica reale. |
+| 7 | **UI preset non testata in app reale** | **APERTO** | Dropdown e pulsante preset funzionano nel codice ma non verificati nell'app pywebview in esecuzione. |
+| 8 | **CLI `--batch` non testata con audio reale** | **APERTO** | I test batch usano audio sintetico. Performance con Demucs e pipeline DSP completa non testata. |
+| 9 | **Warning librosa nei test batch** | **MINORE** | `n_fft=1024 is too large for input signal of length=690` — innocuo, causato da audio sintetico troppo corto. |
+| 10 | **Finestra nera WebView2** | **RISOLTO** | Rinomina `Api.window` → `Api._window`. Vedi diagnosi dettagliata sotto. |
+| 11 | **Neural Monitor senza audio** | **RISOLTO** | Mismatch sample rate WASAPI risolto, makeup gain aggiunto. |
+| 12 | **File picker non mostra file audio** | **RISOLTO** | Aggiunto `pick_input_file()` con filtri per tipi di file audio. |
 
 #### Finestra nera all'avvio
 
@@ -1121,6 +1167,23 @@ Uccidere il processo overlay era un workaround precedente (sbagliato) che sembra
 **Soluzione (applicata nel commit `763c564`):**
 - Aggiunto metodo `pick_input_file()` usando `OPEN_DIALOG` con filtri per tipi di file audio
 - Sia selezione cartelle che selezione file singolo sono ora disponibili
+
+### Known Issues / Problemi Noti (July 2026)
+
+| # | Issue | Status | Note |
+|---|-------|--------|------|
+| 1 | **Mix output quality still needs calibration** | **OPEN** | The research report (`docs/research_report.md`) documents discrepancies between current code constants and industry standards. A second calibration pass on varied material (rock, pop, jazz, electronic, classical) is needed before the output is consistently professional. |
+| 2 | **`pyloudnorm` not in requirements.txt** | **OPEN** | `loudness_match()` falls back gracefully if pyloudnorm is not installed, but for proper A/B loudness matching it should be added to `requirements.txt`. |
+| 3 | **No test for `DirectorGate.request_answer()`/`answer()`** | **OPEN** | The new checkpoint API (instrument-identity questions) has no unit test. The existing `test_director.py` only covers `request_approval()`/`approve()`. |
+| 4 | **`classify_instrument` cache not tested** | **MINOR** | `_instrument_cache` in `mixengine.py` avoids redundant spectral analysis but has no dedicated test. |
+| 5 | **Research report discrepancies not applied** | **OPEN** | The report lists specific recommended changes (Hip-Hop presence at 2000Hz too low, Pop warmth cut instead of boost, Classical air shelf too aggressive) — none have been applied to the code yet. |
+| 6 | **Stereo widening / transient shaper not calibrated** | **OPEN** | Both modules work correctly on synthetic test audio but have not been tuned on real music. Default values may need adjustment. |
+| 7 | **Preset system UI not tested in real app** | **OPEN** | The preset dropdown and save button work in the code but have not been verified in the running pywebview application. |
+| 8 | **CLI `--batch` mode not tested with real audio** | **OPEN** | Batch processing tests use synthetic audio. Real-world performance with Demucs separation and full DSP pipeline is untested. |
+| 9 | **librosa warning in batch tests** | **MINOR** | `n_fft=1024 is too large for input signal of length=690` — harmless, caused by synthetic test audio being too short for librosa's default FFT size. |
+| 10 | **WebView2 black window** | **FIXED** | `Api.window` → `Api._window` rename. See detailed diagnosis above. |
+| 11 | **Neural Monitor no audio** | **FIXED** | WASAPI sample rate mismatch resolved, makeup gain added. |
+| 12 | **File picker not showing audio files** | **FIXED** | Added `pick_input_file()` with audio file type filters. |
 
 ---
 

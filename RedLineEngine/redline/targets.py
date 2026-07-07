@@ -16,6 +16,10 @@ import json
 import os
 import re
 
+from redline.logging_setup import get_logger
+
+logger = get_logger(__name__)
+
 TARGETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "targets")
 
 
@@ -44,4 +48,5 @@ def load_measured_target(genre_name: str) -> dict[str, float] | None:
             return None
         return {k: float(v) for k, v in ratios.items()}
     except Exception:
+        logger.warning("Failed to load measured target for '%s'", genre_name, exc_info=True)
         return None

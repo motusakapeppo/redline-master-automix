@@ -33,7 +33,10 @@ import numpy as np
 import librosa
 from scipy.signal import butter, sosfiltfilt
 
+from redline.logging_setup import get_logger
 from .loudness import to_mono
+
+logger = get_logger(__name__)
 
 _PITCH_SR = 22050  # vocal fundamentals sit well under this; keeps pYIN fast
 _MAX_ANALYSIS_SECONDS = 25.0  # a stable median f0 doesn't need the whole song
@@ -51,6 +54,7 @@ def _isolate_voiced_segments(mono: np.ndarray, sr: int, top_db: float = _VAD_TOP
     try:
         intervals = librosa.effects.split(mono, top_db=top_db)
     except Exception:
+        logger.warning("VAD split failed — using full signal", exc_info=True)
         return mono
     if intervals.size == 0:
         return mono
@@ -103,10 +107,12 @@ def estimate_fundamental(signal: np.ndarray, sr: int, fmin: float = 55.0, fmax: 
     except Exception:
         # Fall back to plain YIN if pYIN fails for any reason (very short
         # signals, etc.) — better a possibly-octave-off number than a crash.
+        logger.warning("pYIN estimation failed — falling back to plain YIN", exc_info=True)
         try:
             f0 = librosa.yin(mono, fmin=fmin, fmax=fmax, sr=work_sr)
             voiced_flag = np.isfinite(f0) & (f0 > 0)
         except Exception:
+            logger.warning("Plain YIN also failed — returning default 110 Hz", exc_info=True)
             return 110.0
 
     voiced = f0[np.isfinite(f0) & (voiced_flag if voiced_flag is not None else np.isfinite(f0))]
