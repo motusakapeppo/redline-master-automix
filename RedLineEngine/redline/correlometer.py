@@ -39,12 +39,27 @@ def measure_bass_phase_shift_deg(
     if np.max(np.abs(left)) < 1e-9 or np.max(np.abs(right)) < 1e-9:
         return 0.0
 
-    correlation = np.correlate(left, right, mode="full")
-    lags = np.arange(-len(right) + 1, len(left))
-    center = len(correlation) // 2
-    window = slice(max(0, center - _MAX_LAG_SAMPLES), min(len(correlation), center + _MAX_LAG_SAMPLES + 1))
-    best_idx = window.start + int(np.argmax(correlation[window]))
-    lag_samples = int(lags[best_idx])
+    # Only ever care about lags within +/-_MAX_LAG_SAMPLES (sub-bass phase
+    # shift is at most a handful of samples), so compute the dot product
+    # directly for that small window of candidate lags instead of
+    # `np.correlate(..., mode="full")`, which is O(n^2) over the *entire*
+    # signal length -- on a full mastered track that's tens of billions of
+    # multiply-adds to answer a question that only needs ~129 of them.
+    best_lag = 0
+    best_score = -np.inf
+    for lag in range(-_MAX_LAG_SAMPLES, _MAX_LAG_SAMPLES + 1):
+        if lag >= 0:
+            a, b = left[lag:], right[: len(right) - lag if lag > 0 else None]
+        else:
+            a, b = left[: len(left) + lag], right[-lag:]
+        n = min(len(a), len(b))
+        if n == 0:
+            continue
+        score = float(np.dot(a[:n], b[:n]))
+        if score > best_score:
+            best_score = score
+            best_lag = lag
+    lag_samples = best_lag
 
     center_freq_hz = (band_hz[0] + band_hz[1]) / 2.0
     lag_seconds = lag_samples / sr
