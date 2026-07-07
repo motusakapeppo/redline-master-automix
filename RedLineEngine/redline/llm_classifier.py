@@ -257,11 +257,26 @@ def interpret_creative_brief(brief_text: str, on_token=None) -> dict:
 # The acoustic dictionary the Module 2 prompt is built from -- kept as data
 # (not embedded free-form in the prompt string) so it's the one place to
 # extend if more translations are needed later.
+#
+# Includes the same color/element metaphor vocabulary as
+# _COLOR_TO_KNOB_HINTS above (Module 1), translated to EQ moves instead of
+# warmth/aggressiveness knobs -- a section-scoped "rendi il ritornello più
+# dorato" deserves the same metaphor handling a whole-song creative brief
+# already gets, not a flat rejection just because it landed in the other
+# feature. A metaphor genuinely absent from this list (e.g. "come un
+# elefante che vola nello spazio") still has nothing to map to an EQ move
+# and is correctly rejected -- this dictionary is deliberately not a
+# catch-all for arbitrary imagery, only for vocabulary confirmed to have a
+# real, reasoned acoustic translation.
 _ACOUSTIC_DICTIONARY = """\
 - "Caldo" / "Corpo" / "Pieno": aumento (gain_db positivo) in banda 200-500Hz (type: "bell", freq: 250-400)
 - "Aperto" / "Aria" / "Cristallino": high-shelf positivo sopra i 10kHz (type: "high_shelf", freq: 10000-12000)
 - "Presenza" / "Avanti": aumento in banda 2-5kHz (type: "bell", freq: 3000)
-- "Nasale" / "Inscatolato": taglio (gain_db negativo) intorno a 800-1000Hz (type: "bell", freq: 900)"""
+- "Nasale" / "Inscatolato": taglio (gain_db negativo) intorno a 800-1000Hz (type: "bell", freq: 900)
+- "Oro" / "Dorato" / "Ambra" / "Viola": aumento caldo in banda 200-500Hz (type: "bell", freq: 250-400), come "Caldo"
+- "Blu" / "Ghiaccio" / "Gelo" / "Acciaio": taglio high-shelf sopra i 10kHz (type: "high_shelf", freq: 10000-12000, gain_db negativo), il contrario di "Aperto"
+- "Fuoco" / "Incendia" / "Brucia" / "Fiamma" / "Rosso": aumento deciso in banda 2-5kHz (type: "bell", freq: 3000), come "Presenza" ma più marcato
+- "Eterei" / "Sognante" / "Nuvola": high-shelf positivo delicato sopra i 10kHz (type: "high_shelf", freq: 10000-12000, gain_db piccolo)"""
 
 
 def interpret_dsp_request(user_text: str, structure_map: list[dict], on_token=None) -> dict | None:

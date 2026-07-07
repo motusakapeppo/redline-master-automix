@@ -93,10 +93,26 @@ FREQ_RANGE_HZ = (20.0, 20000.0)
 # "safe" by every check so far but not actually related to what was
 # written). This is the last gate: at least one acoustic-dictionary term
 # must appear in the request, or the whole suggestion is rejected.
+#
+# Also accepts the same color/element metaphor vocabulary Module 1
+# (interpret_creative_brief) already treats as real mixing language --
+# "il colore del suono in blu elettrico" or "incendia il ritornello" are
+# genuine (if metaphorical) requests, not nonsense, and rejecting them here
+# while Module 1 accepts the identical words would just be an inconsistency
+# between the two features, not an actual safety improvement. A metaphor
+# with no entry in _COLOR_TO_SECTION_EQ_HINTS (llm_classifier.py) --
+# "suona come un elefante che vola nello spazio" -- still has nothing to
+# translate to and is still rejected, just for the correct reason (no
+# acoustic *or* metaphorical mapping exists), not merely "no literal term".
 _ACOUSTIC_RELEVANCE_KEYWORDS = (
     "cald", "corpo", "pien", "aperto", "aria", "cristallin",
     "presenz", "avanti", "protagonist", "nasale", "inscatolat",
     "eq", "frequenz", "acut", "grav", "brillante", "scur", "basso", "bassi",
+    # Color/element metaphors (mirrors llm_classifier._BRIEF_RELEVANCE_KEYWORDS)
+    "viola", "oro", "dorat", "ambra", "marrone", "ghiacc", "gelo", "blu",
+    "acciaio", "argent", "metallic", "colore",
+    "fuoco", "incendi", "brucia", "fiamma", "esplo", "rosso", "nero",
+    "eter", "sognante", "nuvola",
 )
 
 
