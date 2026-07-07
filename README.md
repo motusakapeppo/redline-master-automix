@@ -483,7 +483,7 @@ Actively developed. See `.omo/` for planning notes and commit history for progre
 
 **Recent hardening (July 2026, part 2):**
 - **Neural Monitor actually plays audio now**: `sd.OutputStream` was missing the `channels` parameter entirely, so PortAudio opened a mismatched stream and produced silent output with no exception. Fixed in `audition.py`.
-- **AUTO/MANUAL mode**: new GUI toggle next to Neural Monitor. AUTO (default) never interrupts a render for stem-classification approval; MANUAL re-enables the Director Mode checkpoint. Backed by the existing `ENABLE_DIRECTOR_MODE` flag, now off by default.
+- **Director Mode always active**: the stem-classification checkpoint (and the newer instrument-identity questions below) now run whenever a `director_gate` is supplied — which is always true in the desktop app. The old AUTO/MANUAL toggle and its `ENABLE_DIRECTOR_MODE` flag are removed: a user asking for "AUTO" got a pipeline that never asked anything, defeating the point of a human-in-the-loop checkpoint. Callers that genuinely want a non-interactive render (tests, headless CLI) simply don't pass a `director_gate`.
 - **EQ cuts fire more often**: `resonance.py`'s prominence threshold (5.0dB → 3.5dB) and `masking.py`'s overlap thresholds (0.16/0.08 → 0.12/0.06) were tuned tighter than real mixes typically trigger, so masking/resonance corrective cuts almost never fired in practice.
 - **More of the DSP chain surfaced in the GUI**: added Riverbero/Spazio, Saturazione, Master (Multiband/Limiter), and Mid/Side module boxes (previously only EQ/Compressore/De-esser/QC had a dedicated box, even though reverb sends, saturation, multiband glue, limiting, and M/S processing were already running). Unhandled event types now render a generic chip instead of silently vanishing.
 - **Per-stem breakdown rows**: replaced the old scrolling-only log with persistent per-track rows (`#stem-rows`), one per stem for the whole render, with small stage badges (NR/HPF/RES/COMP/DEESS/SAT/MASK/VERB/REG) that light up as that stem's stages fire — revisiting a stem (e.g. a double's register classification finishing on another thread) re-selects its existing row instead of losing earlier progress off the top of the log.
@@ -505,6 +505,13 @@ Triggered by real user feedback that renders were crackling, the vocal was nearl
 - **User controls can't destroy the track**: `MixPreferences` (the sliders + free-text creative-brief target) now clamps `aggressiveness`/`warmth`/`vocal_prominence` in `__post_init__` regardless of caller — defense in depth on top of the GUI's own range-limited inputs and the free-text path's existing `director_safety.clamp_params` validation, so no combination of inputs can push the engine into destructive gain/EQ territory.
 - **Backing vocal doubles get a real low-pass**: the UNISON (same-pitch double) recipe had presence/mud cuts but no high-frequency rolloff at all, so it kept full top-end and fought the lead's own air/presence. Added a 5.5kHz lowpass (a new `EqCut` "lowpass" kind), matching the reference "HPF+LPF window" technique for pushing backing vocals behind the lead.
 - **Plugin quality investigated, not swapped**: confirmed `pedalboard`'s built-in Compressor/Limiter/EQ/Reverb are professional-grade (JUCE-based, the same engine behind many commercial plugins) — the bottleneck was chain design and per-instrument decisions (now fixed above), not the underlying algorithm. Bundling third-party VST3 plugins remains possible (`pedalboard.load_plugin()` can host them) but redistribution licensing is the real constraint; not pursued this round since it wasn't the actual problem.
+
+**Recent hardening (July 2026, part 4 — instrument identity, mid-range masking, DAW workflow):**
+- **Director Mode instrument-identity questions**: when the engine can't identify an "other"-role stem (classifies it as `GENERIC`), it now asks the user directly via a dropdown panel instead of silently applying the flattest recipe forever. `DirectorGate` was extended with `request_answer()`/`answer()` — same threading.Event mechanism as the role checkpoint, but carrying back an actual category per stem instead of a plain yes/no. Answers become `instrument_overrides` that propagate through the rest of the render, so the reverb-send bias and the per-stem DSP chain both use the user's choice.
+- **Mid-range masking 300-800Hz** (`masking.py`): new `find_midrange_masking_cut()` — same principle as the existing presence-band masking check, but targeting the 300-800Hz body/mud band where instrumental clutter muddies vocal clarity without ever showing up in the 2-5kHz presence check. Applied in `mixengine.py` alongside the existing masking cut, on the same loop over "other"-role stems.
+- **Presence boost 1.5→3.0dB**: `LEAD_PRESENCE_GAIN_DB` raised from 1.5 to 3.0 — the old value was too subtle to read as real presence against a full instrumental bed, even with the spectral ducking and music-bus Mid/Side dip already in place.
+- **Panning from filename for all stems** (`naming.py`): `_pan_from_name()` was previously gated to `layer == "double"` only — a `dx`/`sx` hint in an instrumental stem's name (e.g. `Chitarra_dx.wav`) was silently ignored and the stem defaulted to dead center. Now honored for any stem that has it, matching the real-world convention that `dx`/`sx` is generic, not vocal-specific.
+- **DAW workflow**: the pipeline can now stop after the mix stage (`stop_after_mix` option) and show a review screen with per-track waveform thumbnails (`get_waveform_peaks`), A/B/C audition of dry/mix/master, a free-text feedback box for describing changes, and buttons to either re-run just the mix stage (`reprocess_mix`, skips demucs/analysis) or continue to mastering (`continue_to_mastering`). After a full run, the final screen has "MIX" and "MASTERING" buttons that reopen the respective DAW views at any time.
 
 ### Known Issues & Troubleshooting
 
@@ -816,9 +823,9 @@ Stem vocale grezzo
 3. Soppressione risonanze ──── Taglia solo dove l'energia si accumula nella fascia mud
     │                           (100-400Hz). Filtri notch stretti su picchi persistenti.
     ▼
-4. Presenza ────────────────── +1.5dB a 3kHz (Q=1.2)
-    │                           Adattivo per sezione: chorus prende +0.7dB in più,
-    │                           verse prende -0.3dB (meno aggressivo)
+4. Presenza ────────────────── +3.0dB a 3kHz (Q=1.2, era +1.5dB — troppo debole per essere percepita come presenza reale contro un bed strumentale pieno)
+     │                           Adattivo per sezione: chorus prende +0.7dB in più,
+     │                           verse prende -0.3dB (meno aggressivo)
     ▼
 5. Compressione ────────────── Ruolo-specifica con makeup gain automatico
     │                           Modalità blueprint: 2-stadi seriali

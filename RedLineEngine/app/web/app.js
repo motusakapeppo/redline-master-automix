@@ -258,20 +258,6 @@ function toggleAudition() {
   }
 }
 
-// --- AUTO/MANUALE: checkbox CHECKED means AUTO is active (never interrupts
-// the render for stem classification approval) -- the intuitive reading of
-// an "active" toggle. Unchecked means MANUALE, which re-enables the
-// Director Mode checkpoint (pipeline pauses until the user clicks ENGAGE).
-// Checked by default in index.html to match AUTO being the engine default.
-function toggleDirectorMode() {
-  const isAuto = document.getElementById("director-mode-switch").checked;
-  const label = document.getElementById("director-mode-label");
-  if (label) label.textContent = isAuto ? "AUTO" : "MANUALE";
-  if (window.pywebview) {
-    window.pywebview.api.toggle_director_mode(!isAuto);
-  }
-}
-
 // Called directly from Python (api.py's _audition) around each half of the
 // dry/wet playback -- reflects what's coming out of the speakers right now
 // onto the avatar so the A/B comparison reads as one continuous moment,
@@ -604,6 +590,54 @@ function approveDirectorCheckpoint() {
   if (window.avatarAPI) window.avatarAPI.onApprove();
   if (window.pywebview) {
     window.pywebview.api.approve_director_checkpoint();
+  }
+}
+
+// --- Instrument-identity questions (MANUAL mode): mixengine.py's
+// render_mix() is genuinely blocked on a Python thread waiting for
+// answer_instrument_questions(), same pausing mechanism as the role
+// checkpoint above, just carrying back an actual answer per stem instead
+// of a plain yes/no.
+const INSTRUMENT_LABELS = {
+  strings: "Archi", guitar_acoustic: "Chitarra acustica", guitar_electric: "Chitarra elettrica",
+  keys: "Piano/Tastiere", organ: "Organo", brass: "Fiati", percussion: "Percussioni",
+  choir: "Coro", synth_pad: "Synth pad", synth_lead: "Synth lead", generic: "Generico (nessuna preferenza)",
+};
+
+function showInstrumentQuestions(evt) {
+  const panel = document.getElementById("instrument-questions-panel");
+  const list = document.getElementById("instrument-questions-list");
+  if (!panel || !list) return;
+
+  list.innerHTML = (evt.questions || [])
+    .map((q, i) => {
+      const options = q.options
+        .map((opt) => `<option value="${opt}">${INSTRUMENT_LABELS[opt] || opt}</option>`)
+        .join("");
+      return `
+        <div class="director-stem-row instrument-question-row">
+          <strong>${q.stem}</strong>
+          <select id="instrument-answer-${i}" data-stem="${q.stem}">
+            <option value="">-- non so, lascia decidere al motore --</option>
+            ${options}
+          </select>
+        </div>`;
+    })
+    .join("");
+
+  panel.classList.remove("hidden");
+  setAssistantLabel("in attesa di risposta");
+}
+
+function submitInstrumentAnswers() {
+  const panel = document.getElementById("instrument-questions-panel");
+  const answers = {};
+  panel.querySelectorAll("select[data-stem]").forEach((sel) => {
+    if (sel.value) answers[sel.dataset.stem] = sel.value;
+  });
+  if (panel) panel.classList.add("hidden");
+  if (window.pywebview) {
+    window.pywebview.api.answer_instrument_questions(answers);
   }
 }
 
@@ -1046,7 +1080,11 @@ function onEvent(evt) {
       break;
 
     case "director_checkpoint":
-      showDirectorCheckpoint(evt);
+      if (evt.checkpoint === "instrument_questions") {
+        showInstrumentQuestions(evt);
+      } else {
+        showDirectorCheckpoint(evt);
+      }
       break;
 
     case "done":

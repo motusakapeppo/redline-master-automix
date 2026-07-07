@@ -21,6 +21,7 @@ class DirectorGate:
 
     def __init__(self) -> None:
         self._event = threading.Event()
+        self._answer: dict = {}
 
     def request_approval(self, checkpoint: str, payload: dict, on_event: EventCallback, timeout: float | None = None) -> bool:
         """Blocks the calling (pipeline) thread until approve() is called
@@ -37,4 +38,22 @@ class DirectorGate:
         """Called from the GUI thread (app/api.py) when the user confirms
         the current checkpoint -- unblocks whichever request_approval()
         call is currently waiting."""
+        self._event.set()
+
+    def request_answer(self, checkpoint: str, payload: dict, on_event: EventCallback, timeout: float | None = None) -> dict:
+        """Like request_approval, but for a checkpoint that needs actual
+        data back (e.g. "which instrument is this stem?") rather than a
+        plain yes/no. Returns whatever answer() was called with, or {} on
+        timeout -- callers should treat an empty dict the same as "no
+        answer given, proceed with the existing best guess"."""
+        self._event.clear()
+        self._answer = {}
+        on_event({"type": "director_checkpoint", "checkpoint": checkpoint, **payload})
+        self._event.wait(timeout=timeout)
+        return self._answer
+
+    def answer(self, data: dict) -> None:
+        """Called from the GUI thread with the user's answers to an
+        active request_answer() checkpoint -- unblocks it."""
+        self._answer = data
         self._event.set()

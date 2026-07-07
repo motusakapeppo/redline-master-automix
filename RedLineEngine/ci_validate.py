@@ -47,7 +47,6 @@ def _enable_all_flags() -> None:
         "ENABLE_LTAS_MATCHING": True,
         "ENABLE_RT60_CALIBRATION": True,
         "ENABLE_LLM_ADVISORY": True,
-        "ENABLE_DIRECTOR_MODE": True,
     }
     with open(FLAGS_PATH, "w", encoding="utf-8") as f:
         json.dump(all_on, f, indent=4)

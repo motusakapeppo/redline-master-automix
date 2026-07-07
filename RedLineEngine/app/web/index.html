@@ -166,6 +166,17 @@ window.addEventListener('error', function(e) {
         <button class="btn btn-accent" onclick="approveDirectorCheckpoint()">ENGAGE</button>
       </div>
 
+      <!-- Instrument-identity questions (MANUAL mode only): shown when the
+           engine genuinely can't tell what an "other"-role stem is from its
+           name or a conservative spectral guess, instead of silently
+           applying the flattest, least-tailored recipe forever. -->
+      <div id="instrument-questions-panel" class="director-panel hidden">
+        <h3>Che strumento è?</h3>
+        <p class="instrument-questions-hint">Il motore non è sicuro di questi stem — aiutalo a trattarli nel modo giusto.</p>
+        <div id="instrument-questions-list" class="director-stems"></div>
+        <button class="btn btn-accent" onclick="submitInstrumentAnswers()">Conferma</button>
+      </div>
+
       <div id="result" class="hidden"></div>
     </div>
   </div>
@@ -399,11 +410,6 @@ window.addEventListener('error', function(e) {
       <div class="monitor-toggle">
         <label for="audition-switch">NEURAL MONITOR [LIVE A/B]</label>
         <input type="checkbox" id="audition-switch" onchange="toggleAudition()">
-      </div>
-
-      <div class="monitor-toggle">
-        <label for="director-mode-switch">MODALITÀ: <span id="director-mode-label">AUTO</span></label>
-        <input type="checkbox" id="director-mode-switch" checked onchange="toggleDirectorMode()">
       </div>
     </div>
 

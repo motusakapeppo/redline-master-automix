@@ -186,16 +186,6 @@ class Api:
         config.set_override("ENABLE_LIVE_AUDITION", is_enabled)
         self._narrate(f"Neural Monitor: {'attivo' if is_enabled else 'disattivo'}")
 
-    def toggle_director_mode(self, is_manual: bool) -> None:
-        """Called by the GUI's AUTO/MANUALE switch. AUTO (default) is the
-        common case -- the engine classifies stems and proceeds without
-        interrupting the render. MANUAL re-enables the Director Mode
-        checkpoint (pipeline pauses for the user to confirm stem
-        classification before continuing), for sessions where the auto
-        classification needs a human sanity check."""
-        config.set_override("ENABLE_DIRECTOR_MODE", is_manual)
-        self._narrate(f"Modalità: {'MANUALE (conferma richiesta)' if is_manual else 'AUTOMATICA'}")
-
     def _audition(self, dry: np.ndarray, wet: np.ndarray, sr: int) -> None:
         """Plays a loud/dense before-and-after chunk of the master bus glue
         compression through real speakers, narrating + reflecting avatar
@@ -252,6 +242,14 @@ class Api:
         render_mix() checkpoint is currently paused waiting for it. Safe to
         call even if nothing is currently waiting (just a no-op set())."""
         self.director_gate.approve()
+
+    def answer_instrument_questions(self, answers: dict) -> None:
+        """Called by the GUI's instrument-question form -- unblocks the
+        "instrument_questions" Director Mode checkpoint (MANUAL mode only)
+        with the user's chosen category per undetermined stem. `answers` is
+        {stem_name: category}; render_mix ignores anything not in its own
+        undetermined list, so an empty or partial dict is always safe."""
+        self.director_gate.answer(answers)
 
     def pick_input_path(self) -> str | None:
         result = self._window.create_file_dialog(webview.FOLDER_DIALOG)

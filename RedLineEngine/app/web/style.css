@@ -743,6 +743,29 @@ select { width: auto; }
   color: var(--text-dim);
 }
 
+.instrument-questions-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
+.instrument-question-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.instrument-question-row select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
 .result-title {
   font-size: 16px;
   font-weight: 700;

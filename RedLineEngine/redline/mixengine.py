@@ -79,7 +79,7 @@ from .resonance import find_resonance
 from .alignment import align_to_reference
 from .masking import find_masking_cut, find_midrange_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
-from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES, SYNTH_PAD
+from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES, SYNTH_PAD, GENERIC
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
@@ -275,16 +275,19 @@ def _process_stem(
     descriptor: StemDescriptor,
     on_step: StepCallback,
     on_event: EventCallback,
+    instrument_overrides: dict[str, str] | None = None,
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
-    just "is a double"."""
+    just "is a double". `instrument_overrides` carries any answers from the
+    Director Mode instrument-identity questions (see render_mix) -- checked
+    before falling back to the normal name/spectral classification."""
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
 
     instrument_recipe = None
     if role == "other":
-        instrument_kind = classify_instrument(name, audio, sr)
+        instrument_kind = (instrument_overrides or {}).get(name) or classify_instrument(name, audio, sr)
         instrument_recipe = INSTRUMENT_RECIPES[instrument_kind]
         on_step(f"  '{name}': trattato come '{instrument_kind}'")
         on_event({"type": "instrument_chain", "stem": name, "instrument": instrument_kind})
@@ -594,12 +597,20 @@ def render_mix(
         + ", ".join(f"{name} -> {_describe(d)}" for name, d in descriptors.items())
     )
 
-    # --- Director Mode checkpoint: the naming/Z-axis heuristic has now
-    # committed to a role for every stem, and nothing has been processed
-    # yet -- this is the one point where a wrong classification is still
-    # cheap to catch and fix by hand, before any DSP chain runs on it.
-    if director_gate is not None and config.is_enabled("ENABLE_DIRECTOR_MODE"):
-        on_step("Director Mode: in attesa di conferma sulla classificazione degli stem...")
+    # --- Director checkpoint: the naming/Z-axis heuristic has now committed
+    # to a role for every stem, and nothing has been processed yet -- this
+    # is the one point where a wrong classification is still cheap to catch
+    # and fix by hand, before any DSP chain runs on it. Always runs whenever
+    # a director_gate is supplied (real app usage always supplies one) --
+    # previously gated behind an ENABLE_DIRECTOR_MODE AUTO/MANUAL flag, but
+    # that flag had no effect anywhere else in the engine, so a user asking
+    # for AUTO got a pipeline that never asked anything at all, which
+    # defeats the point of a human-in-the-loop checkpoint that exists
+    # specifically to catch a wrong guess before it's expensive to undo.
+    # Callers that genuinely want a non-interactive render (tests, a future
+    # headless CLI mode) simply don't pass a director_gate.
+    if director_gate is not None:
+        on_step("In attesa di conferma sulla classificazione degli stem...")
         stem_summary = [
             {"name": name, "role": d.role, "layer": d.layer, "register": d.register}
             for name, d in descriptors.items()
@@ -607,7 +618,35 @@ def render_mix(
         approved = director_gate.request_approval(
             "stem_classification", {"stems": stem_summary}, on_event, timeout=None
         )
-        on_step("Director Mode: approvato, proseguo." if approved else "Director Mode: timeout, proseguo comunque.")
+        on_step("Confermato, proseguo." if approved else "Timeout, proseguo comunque.")
+
+    # --- Instrument identity questions: for "other"-role stems where
+    # neither the filename nor the conservative spectral fallback could
+    # confidently identify an instrument (instrumentstack.GENERIC), ask the
+    # user directly instead of silently guessing forever with the flattest,
+    # least-tailored recipe. Same rationale as the checkpoint above: always
+    # runs when a director_gate is supplied. Answers become
+    # instrument_overrides, consulted at both places that classify an
+    # instrument below instead of re-guessing for the rest of this render.
+    instrument_overrides: dict[str, str] = {}
+    if director_gate is not None:
+        undetermined = [
+            name for name, d in descriptors.items()
+            if d.role == "other" and classify_instrument(name, stems.tracks[name], sr) == GENERIC
+        ]
+        if undetermined:
+            on_step(f"Domande sugli strumenti: {len(undetermined)} stem non identificati con certezza...")
+            questions = [
+                {"stem": name, "options": sorted(INSTRUMENT_RECIPES.keys())}
+                for name in undetermined
+            ]
+            answers = director_gate.request_answer(
+                "instrument_questions", {"questions": questions}, on_event, timeout=None
+            )
+            for name, chosen in answers.items():
+                if name in undetermined and chosen in INSTRUMENT_RECIPES:
+                    instrument_overrides[name] = chosen
+            on_step(f"Domande sugli strumenti: {len(instrument_overrides)}/{len(undetermined)} risposte applicate.")
 
     lead_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "primary"]
     double_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "double"]
@@ -679,7 +718,7 @@ def render_mix(
 
     with ThreadPoolExecutor(max_workers=min(8, max(1, len(solo_names)))) as pool:
         futures = {
-            name: pool.submit(_process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event)
+            name: pool.submit(_process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event, instrument_overrides)
             for name in solo_names
         }
         for name, future in futures.items():
@@ -725,7 +764,7 @@ def render_mix(
             # pads) sit better wetter than depth.py's generic default, others
             # (synth leads) drier, independent of which depth bucket they
             # landed in.
-            instrument_kind = classify_instrument(name, processed[name], sr)
+            instrument_kind = instrument_overrides.get(name) or classify_instrument(name, processed[name], sr)
             reverb_bias = INSTRUMENT_RECIPES[instrument_kind].reverb_send_bias
 
             if d.pan != 0.0:
