@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+
+# reference audio dropped by the user for redline/reference_profiles.py --
+# large binary files, and often not something we have redistribution rights
+# to even under CC (attribution requirements etc.), so never committed.
+reference_tracks/*/*.wav
+reference_tracks/*/*.flac
+reference_tracks/*/*.aiff
+reference_tracks/*/*.aif
+reference_tracks/*/*.mp3
+reference_tracks/*/*.ogg
+!reference_tracks/**/.gitkeep

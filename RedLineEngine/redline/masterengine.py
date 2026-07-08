@@ -13,9 +13,10 @@ from scipy.signal import butter, sosfiltfilt
 
 from . import config
 from .analyze import AnalysisResult
-from .dsp_utils import to_mid_side, from_mid_side
+from .dsp_utils import to_mid_side, from_mid_side, db_to_gain
 from .ltas import match_ltas
-from .qc import run_qc
+from .qc import run_qc, _mono_compatibility
+from .analysis.loudness import crest_factor
 
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
@@ -55,6 +56,24 @@ MULTIBAND_RECIPES = {
     "mid": dict(threshold_db=-16.0, ratio=1.8, attack_ms=10.0, release_ms=120.0),
     "high": dict(threshold_db=-14.0, ratio=1.6, attack_ms=5.0, release_ms=80.0),
 }
+
+# --- Iterative reference-profile feedback loop (point 2 of the reference-
+# profile upgrade, see reference_profiles.py): after run_qc's own bounded
+# spectral-band correction, this measures LUFS/crest-factor/mono-compatibility
+# against reference_profiles.resolve_perceptual_target() and applies small,
+# director_safety-clamped corrective moves. Tolerances are typical mastering
+# QC conventions (documented in DSP_ENGINE_SPECS.md Sezione 7.2):
+#   - LUFS: +/-0.5 LU (streaming platforms themselves normalize in roughly
+#     this range, so tighter is chasing noise)
+#   - Crest factor: +/-1.5dB (audible loudness-war-vs-dynamics differences
+#     start below this; QC pass shouldn't fight for less than that)
+#   - Mono/stereo-width compatibility: +/-0.08 (qc.py's own pass/fail floor
+#     is a much coarser 0.6, this is a tighter *target* band around the
+#     genre's ideal, not a new safety floor)
+MASTER_CORRECTION_MAX_PASSES = 3
+MASTER_LUFS_TOLERANCE = 0.5
+MASTER_CREST_TOLERANCE_DB = 1.5
+MASTER_MONO_COMPAT_TOLERANCE = 0.08
 
 
 def _target_lufs_for_genre(genre_name: str, platform: str) -> float:
@@ -140,6 +159,132 @@ def _mid_side_polish(signal: np.ndarray, sr: int, on_step: StepCallback, on_even
     return from_mid_side(mid, side_processed)
 
 
+def _measure_perceptual(signal: np.ndarray, sr: int, meter: pyln.Meter) -> dict:
+    mono = signal.mean(axis=1) if signal.ndim == 2 else signal
+    try:
+        lufs = float(meter.integrated_loudness(mono))
+    except ValueError:
+        lufs = -70.0
+    return {
+        "lufs": lufs,
+        "crest_factor": crest_factor(signal),
+        "mono_compatibility": _mono_compatibility(signal),
+    }
+
+
+def _apply_reference_correction(
+    mastered: np.ndarray,
+    sr: int,
+    genre_name: str,
+    ceiling: float,
+    on_step: StepCallback,
+    on_event: EventCallback,
+) -> tuple[np.ndarray, list[str]]:
+    """Bounded iterative feedback loop against reference_profiles.py's
+    non-spectral targets (LUFS, crest factor, mono/stereo-width
+    compatibility) -- complementary to run_qc's own spectral-band (LTAS)
+    correction loop in qc.py. Every corrective move is passed through
+    director_safety.clamp_params() before being applied, so it can never
+    exceed the safe ranges already defined there. Runs up to
+    MASTER_CORRECTION_MAX_PASSES passes, stopping early once every metric is
+    within tolerance or a pass fails to improve on the last (avoids
+    oscillation between two corrections fighting each other)."""
+    from .reference_profiles import resolve_perceptual_target
+    from .director_safety import clamp_params
+
+    target = resolve_perceptual_target(genre_name)
+    meter = pyln.Meter(sr)
+    notes: list[str] = []
+    corrected = mastered
+    prev_total_delta = None
+
+    for pass_idx in range(MASTER_CORRECTION_MAX_PASSES):
+        m = _measure_perceptual(corrected, sr, meter)
+        lufs_delta = target["target_lufs"] - m["lufs"]
+        crest_delta = target["crest_factor"] - m["crest_factor"]
+        width_delta = target["mono_compatibility"] - m["mono_compatibility"]
+        total_delta = abs(lufs_delta) + abs(crest_delta) + abs(width_delta)
+
+        on_step(
+            f"Feedback iterativo mastering (pass {pass_idx + 1}/{MASTER_CORRECTION_MAX_PASSES}): "
+            f"LUFS {m['lufs']:.1f} (target {target['target_lufs']:.1f}), "
+            f"crest {m['crest_factor']:.1f}dB (target {target['crest_factor']:.1f}dB), "
+            f"mono compat {m['mono_compatibility']:.2f} (target {target['mono_compatibility']:.2f})"
+        )
+        on_event({
+            "type": "master_feedback_pass", "pass": pass_idx + 1,
+            "lufs": round(m["lufs"], 2), "crest_factor": round(m["crest_factor"], 2),
+            "mono_compatibility": round(m["mono_compatibility"], 3),
+            "lufs_delta": round(lufs_delta, 2), "crest_delta": round(crest_delta, 2), "width_delta": round(width_delta, 3),
+        })
+
+        within_tolerance = (
+            abs(lufs_delta) < MASTER_LUFS_TOLERANCE
+            and abs(crest_delta) < MASTER_CREST_TOLERANCE_DB
+            and abs(width_delta) < MASTER_MONO_COMPAT_TOLERANCE
+        )
+        if within_tolerance:
+            break
+        if prev_total_delta is not None and total_delta >= prev_total_delta:
+            notes.append(f"feedback loop fermato dopo {pass_idx} pass: nessun ulteriore miglioramento")
+            break
+        prev_total_delta = total_delta
+
+        applied_any = False
+
+        if abs(lufs_delta) >= MASTER_LUFS_TOLERANCE:
+            clamped, _ = clamp_params({"gain_db": lufs_delta})
+            gain_db = clamped["gain_db"]
+            corrected = Pedalboard([Gain(gain_db=gain_db)])(corrected.T, sr).T
+            notes.append(f"pass {pass_idx + 1}: makeup loudness {gain_db:+.2f}dB")
+            applied_any = True
+
+        if crest_delta < -MASTER_CREST_TOLERANCE_DB:
+            # Measured crest factor is higher than the genre target (too
+            # peaky/dynamic) -- a gentle extra glue pass brings it down.
+            # The opposite direction (crest already too LOW/over-compressed)
+            # can't be corrected by adding more DSP -- that needs expansion,
+            # out of scope for a bounded corrective safety pass.
+            clamped, _ = clamp_params({"compressor_ratio": 1.3, "compressor_threshold_db": -10.0})
+            comp = Compressor(
+                threshold_db=clamped["compressor_threshold_db"],
+                ratio=clamped["compressor_ratio"],
+                attack_ms=15.0,
+                release_ms=150.0,
+            )
+            corrected = Pedalboard([comp])(corrected.T, sr).T
+            notes.append(f"pass {pass_idx + 1}: compressione glue extra (crest {m['crest_factor']:.1f}dB oltre target)")
+            applied_any = True
+
+        if abs(width_delta) >= MASTER_MONO_COMPAT_TOLERANCE:
+            # width_delta > 0: target wants MORE mono compatibility than
+            # measured -- narrow the side channel. < 0: target wants a wider
+            # image -- widen it. Reuses director_safety's eq_gain_db safe
+            # range (+/-6dB); there's no dedicated "width" parameter defined
+            # there, and a side-channel gain nudge is functionally the same
+            # kind of bounded gain move.
+            side_gain_db = float(np.clip(-width_delta * 8.0, -6.0, 6.0))
+            clamped, _ = clamp_params({"eq_gain_db": side_gain_db})
+            side_gain_db = clamped["eq_gain_db"]
+            mid, side = to_mid_side(corrected)
+            side = side * db_to_gain(side_gain_db)
+            corrected = from_mid_side(mid, side)
+            notes.append(f"pass {pass_idx + 1}: larghezza stereo {side_gain_db:+.2f}dB (canale Side)")
+            applied_any = True
+
+        # Corrective moves can push over the true-peak ceiling -- re-clamp
+        # every pass, same guarantee render_master already enforces after
+        # the limiter and after run_qc's own correction.
+        peak = np.max(np.abs(corrected)) + 1e-9
+        if peak > ceiling:
+            corrected = corrected * (ceiling / peak)
+
+        if not applied_any:
+            break
+
+    return corrected.astype(np.float32), notes
+
+
 def render_master(
     mixed: np.ndarray,
     sr: int,
@@ -212,6 +357,15 @@ def render_master(
     # exists in the actual output (confirmed in practice: it printed +0.58dB
     # while the saved file was correctly at -1.00dB). Overwrite it with the
     # real final measurement so what's printed matches what's on disk.
+    report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
+
+    on_step("Feedback iterativo: confronto LUFS/crest/larghezza stereo contro il profilo di riferimento del genere...")
+    mastered, feedback_notes = _apply_reference_correction(
+        mastered, sr, analysis.genre.name, ceiling, on_step, on_event
+    )
+    if feedback_notes:
+        report.corrections_applied = list(report.corrections_applied) + feedback_notes
+        report.lufs = _measure_perceptual(mastered, sr, meter)["lufs"]
     report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
 
     on_event({

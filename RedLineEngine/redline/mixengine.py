@@ -1106,6 +1106,28 @@ def render_mix(
         on_step(f"Bus musicale Mid/Side: buco vocale {MUSIC_BUS_MID_DIP_DB:+.1f}dB a {LEAD_PRESENCE_FREQ_HZ:.0f}Hz, lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz")
         on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
 
+        # --- Second masking pass, at bus level: the per-stem masking check
+        # above ran before concurrent-take leveling, the vocal bus mixdown,
+        # spectral ducking and this Mid/Side dip -- all of which shift the
+        # spectral balance. Re-measuring per-stem again here would be
+        # redundant work for stems already cut; instead this checks the
+        # *actual* summed music_bus against the *actual* summed vocal bus,
+        # catching residual overlap that only exists once everything above
+        # is combined (e.g. several individually-clean stems piling up
+        # together in the presence band).
+        if vocal_main_bus is not None:
+            bus_cut = find_masking_cut(music_bus, vocal_main_bus, sr)
+            if bus_cut is not None:
+                on_step(f"  Bus musicale: mascheramento residuo con la voce a {bus_cut.freq:.0f}Hz (dopo leveling/ducking), taglio {bus_cut.gain_db:.1f}dB")
+                on_event({"type": "bus_masking_cut", "bus": "music", "freq_hz": bus_cut.freq, "gain_db": round(bus_cut.gain_db, 1)})
+                music_bus = apply_eq_cut(music_bus, sr, bus_cut.freq, bus_cut.gain_db, bus_cut.q)
+
+            bus_mid_cut = find_midrange_masking_cut(music_bus, vocal_main_bus, sr)
+            if bus_mid_cut is not None:
+                on_step(f"  Bus musicale: accumulo medio-basso residuo a {bus_mid_cut.freq:.0f}Hz (dopo leveling/ducking), taglio {bus_mid_cut.gain_db:.1f}dB")
+                on_event({"type": "bus_midrange_masking_cut", "bus": "music", "freq_hz": bus_mid_cut.freq, "gain_db": round(bus_mid_cut.gain_db, 1)})
+                music_bus = apply_eq_cut(music_bus, sr, bus_mid_cut.freq, bus_mid_cut.gain_db, bus_mid_cut.q)
+
     # Gain-stage vocal prominence: a baseline +3dB priority (see
     # BASE_VOCAL_PROMINENCE_DB above) plus the user's own +/-5dB preference on
     # top (applies to the Vocal_Main and Vocal_Doubles buses, preserving their

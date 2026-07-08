@@ -37,6 +37,9 @@ TARGET_BAND_RATIOS: dict[str, dict[str, float]] = {
 
 DEVIATION_THRESHOLD = 0.05  # ratio points (e.g. 0.05 = 5 percentage points) before correcting
 MAX_CORRECTION_DB = 3.0
+MAX_QC_ITERATIONS = 3  # bounded feedback loop: measure -> correct -> re-measure
+MAX_CUMULATIVE_CORRECTION_DB = 4.5  # per band, across all iterations combined -- stricter than
+# a single pass's MAX_CORRECTION_DB so repeated small nudges can't stack into a large, unsafe EQ move
 
 _BAND_CENTER_HZ = {name: (low + high) / 2.0 for name, low, high in SPECTRAL_BANDS}
 
@@ -94,13 +97,28 @@ def _mono_fold_bass(signal: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray
     return corrected.astype(np.float32)
 
 
-def _build_correction_board(deviations: dict[str, float]) -> tuple[Pedalboard | None, list[str]]:
+def _build_correction_board(
+    deviations: dict[str, float], cumulative_db: dict[str, float] | None = None
+) -> tuple[Pedalboard | None, list[str]]:
+    """cumulative_db tracks how much correction has already been applied to
+    each band across prior iterations of the feedback loop in run_qc, so a
+    band that's still off after two nudges gets a smaller allowance on the
+    third instead of the loop being able to stack unbounded EQ moves."""
+    cumulative_db = cumulative_db if cumulative_db is not None else {}
     fx = []
     notes = []
     for band_name, delta in deviations.items():
         if abs(delta) < DEVIATION_THRESHOLD:
             continue
+        already = cumulative_db.get(band_name, 0.0)
+        remaining = MAX_CUMULATIVE_CORRECTION_DB - abs(already)
+        if remaining <= 0.1:
+            continue
         gain_db = float(np.clip(-delta * 30.0, -MAX_CORRECTION_DB, MAX_CORRECTION_DB))
+        gain_db = float(np.clip(gain_db, -remaining, remaining))
+        if abs(gain_db) < 0.1:
+            continue
+        cumulative_db[band_name] = already + gain_db
         freq = _BAND_CENTER_HZ[band_name]
         if band_name == "sub_bass":
             fx.append(LowShelfFilter(cutoff_frequency_hz=freq, gain_db=gain_db, q=0.7))
@@ -141,11 +159,26 @@ def run_qc(
 
     from . import analysis as _analysis_pkg2  # local import avoids a cycle at module load
 
-    board, notes = _build_correction_board(deviations)
+    # Bounded feedback loop: measure -> correct -> re-measure, up to
+    # MAX_QC_ITERATIONS passes. Most tracks converge (or hit the "nothing left
+    # worth correcting" case) in 1 pass; a couple more passes lets a track
+    # that's off on several bands at once settle closer to target than a
+    # single fixed-size nudge could, while cumulative_db (see
+    # _build_correction_board) keeps the total EQ move per band bounded no
+    # matter how many iterations run.
     corrected = mastered
     final_lufs = lufs
-    if board is not None:
-        corrected = board(mastered.T, sr).T
+    notes: list[str] = []
+    cumulative_db: dict[str, float] = {}
+    iterations_run = 0
+    for iteration in range(MAX_QC_ITERATIONS):
+        board, iter_notes = _build_correction_board(deviations, cumulative_db)
+        if board is None:
+            break
+        iterations_run += 1
+        corrected = board(corrected.T, sr).T
+        notes.extend(iter_notes if iteration == 0 else [f"iter{iteration + 1}: {n}" for n in iter_notes])
+
         # The corrective EQ changes overall energy, which drifts loudness
         # away from the target that was already hit — re-measure and trim
         # gain back to the target instead of just reporting the drift.
@@ -156,13 +189,20 @@ def run_qc(
         if abs(makeup_db) > 0.1:
             corrected = corrected * (10.0 ** (makeup_db / 20.0))
             final_lufs = _analysis_pkg2.integrated_lufs(corrected, sr)
-            notes.append(f"loudness trim {makeup_db:+.1f}dB (post-EQ drift correction)")
+            notes.append(f"loudness trim {makeup_db:+.1f}dB (post-EQ drift correction, iter {iteration + 1})")
 
         # Re-measure spectral deviations and true peak against the corrected,
-        # gain-trimmed signal so the report reflects reality, not intent.
+        # gain-trimmed signal so the next iteration (or the final report)
+        # reflects reality, not intent.
         bands_after = spectral_band_energies(corrected, sr)
         deviations = {name: bands_after[name] - target[name] for name in target}
         true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
+
+        if all(abs(d) < DEVIATION_THRESHOLD for d in deviations.values()):
+            break  # converged -- no point spending another iteration
+
+    if iterations_run > 1:
+        notes.append(f"QC converged after {iterations_run} iterations")
 
     if bass_phase_shift > DEFAULT_PHASE_THRESHOLD_DEG:
         corrected = _mono_fold_bass(corrected, sr, DEFAULT_BAND_HZ[1])
