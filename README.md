@@ -33,6 +33,8 @@ The entire pipeline is **measurement-driven**: every EQ cut, compression ratio, 
 |---|---|
 | ![Channel strip pinned to a clicked stem](RedLineEngine/docs/screenshots/06_channel_strip_pinned.png) | ![Speech bubble above the avatar](RedLineEngine/docs/screenshots/07_speech_bubble.png) |
 
+![Cinematic boot sequence](RedLineEngine/docs/screenshots/08_boot_sequence.png)
+
 ### Project Structure
 
 ```
@@ -278,6 +280,15 @@ Expect the biggest wall-clock improvement on sessions with many stems (backing v
 - **Per-track channel strip** (the rack's real fix for an accumulation bug): the EQ curve and compressor/de-esser/saturation/reverb modules used to show the *sum* of every stem processed so far. They now show exactly one stem's own chain at a time — whichever stem is being processed live, or (after clicking a stem row) that stem pinned for inspection, with any new live event for a *different* stem immediately breaking the pin and resuming live-follow. Bus-level-only events (glue compressor, bus reverb) never overwrite a pinned per-stem reading.
 - **RedLine Mode easter egg** (Ctrl+Alt+R): eyes burn red, a particle burst, the skull's own `Dance` clip, and a white-to-red ring flash. Kept deliberately monochrome (no rainbow sweep, no canvas overlay curve) after early iterations of this reportedly looked like neon circles nobody wanted. The eye-glow fix also uncovered (and fixed) a real rendering bug: the small emissive eye-marker spheres had no anchor to the model's actual eye sockets and were getting fully occluded by the cranium mesh (`depthTest: false` + high `renderOrder` now guarantee they draw on top), and a separate coordinate-space bug placed them at eyebrow height instead of eye level.
 - **Speech bubble**: a plain-language narration layer (`sayBubble`/`simplifyMacroMessage` in `app.js`) that pattern-matches the engine's existing macro-phase narration (not the micro sub-steps, which fire too often to read as anything but noise) into a short friendly sentence ("Sto caricando il tuo brano...", "Ora sto lavorando su: voce"), shown in a bubble above the avatar. Deliberately doesn't rewrite the technical log itself — that log is the engine's own narration strings, several of which other code/tests may depend on verbatim; this is a parallel, friendlier layer for non-expert users instead.
+
+#### Premium Polish Pass
+
+- **Cinematic boot sequence**: a ~1.9s letter-staggered wordmark reveal with a sweeping scanline on first load (click/tap to skip), while the real app (avatar init, preset load) keeps loading underneath the whole time — pure polish, never gates real readiness.
+- **Cascading screen transitions**: `showScreen()` now slides/scales the outgoing and incoming screens (instead of a flat fade) and staggers each direct child of the new screen into place, reading as the screen "assembling itself" rather than popping in as one block.
+- **Button micro-interactions**: a diagonal sheen sweeps across every `.btn` on hover, plus a quick scale-down on press — both skipped automatically on `:disabled` buttons.
+- **Glassmorphism + layered depth**: the log terminal, result cards, and Director Mode panel now use a subtle backdrop blur, layered gradients, and softer/larger shadows instead of flat single-color panels; rack module cards lift and glow more on hover.
+- **UI sound design**: short, quiet `Web Audio` blips for deliberate interactions — button clicks, panel open/close, screen transitions, rack-module hover. Deliberately *not* wired to high-frequency events (per-stem log lines fire dozens of times a second during a render) — that would be a buzz, not a cue.
+- **Progress milestone bubbles**: the speech bubble now also fires flavor lines at 25/50/75% progress ("Si comincia a sentire la forma del pezzo...", "Siamo a metà, e suona già bene..."), independent of the macro-phase bubbles, each firing once per render.
 
 #### Avatar System
 
@@ -719,6 +730,8 @@ L'intera pipeline è **basata su misurazioni**: ogni taglio EQ, ratio di compres
 |---|---|
 | ![Channel strip agganciato a una traccia cliccata](RedLineEngine/docs/screenshots/06_channel_strip_pinned.png) | ![Nuvoletta sopra l'avatar](RedLineEngine/docs/screenshots/07_speech_bubble.png) |
 
+![Sequenza di boot cinematica](RedLineEngine/docs/screenshots/08_boot_sequence.png)
+
 ### Struttura del Progetto
 
 ```
@@ -963,6 +976,15 @@ Il miglioramento maggiore si nota su sessioni con molti stem (stack di cori, bat
 - **Channel strip per traccia** (la vera correzione di un bug di accumulo): la curva EQ e i moduli compressore/de-esser/saturazione/riverbero mostravano la *somma* di tutti gli stem processati fino a quel momento. Ora mostrano esattamente la catena di una sola traccia alla volta — quella in lavorazione dal vivo, oppure (dopo aver cliccato una riga stem) quella traccia agganciata per l'ispezione, con qualsiasi nuovo evento live su una traccia *diversa* che rompe subito l'aggancio e riprende il live-follow. Gli eventi solo di bus (compressore glue, riverbero di bus) non sovrascrivono più una lettura per-traccia agganciata.
 - **Easter egg RedLine Mode** (Ctrl+Alt+R): occhi che si accendono di rosso, un burst di particelle, la clip `Dance` dello skull, e un flash bianco-poi-rosso dell'anello. Deliberatamente monocromatico (niente ciclo arcobaleno, niente curva overlay su canvas) dopo che le prime iterazioni sembravano, a detta dell'utente, cerchi neon non voluti. La correzione del bagliore degli occhi ha anche scoperto (e corretto) un vero bug di rendering: le piccole sfere emissive "occhio" non erano ancorate alle vere cavità oculari del modello e venivano completamente occluse dalla mesh del cranio (`depthTest: false` + `renderOrder` alto ora garantiscono che disegnino sempre sopra), più un secondo bug di spazio di coordinate che le posizionava all'altezza delle sopracciglia invece che degli occhi.
 - **Nuvoletta di dialogo**: un livello di narrazione in linguaggio semplice (`sayBubble`/`simplifyMacroMessage` in `app.js`) che riconosce per pattern la narrazione a macro-fasi già esistente del motore (non i micro-step, troppo frequenti per leggersi come altro che rumore) traducendola in una breve frase amichevole ("Sto caricando il tuo brano...", "Ora sto lavorando su: voce"), mostrata in una nuvoletta sopra l'avatar. Deliberatamente non riscrive il log tecnico stesso — quel log sono le stringhe di narrazione originali del motore, alcune delle quali potrebbero essere lette verbatim da altro codice/test; questo è un livello parallelo più amichevole per utenti non esperti.
+
+#### Passata di Rifinitura Premium
+
+- **Sequenza di boot cinematica**: rivelazione del wordmark a lettere scaglionate (~1.9s) con una scanline che spazza lo schermo al primo avvio (click/tap per saltarla), mentre l'app reale (init avatar, caricamento preset) continua a caricare sotto per tutto il tempo — pura rifinitura, non blocca mai la reale prontezza.
+- **Transizioni di schermata a cascata**: `showScreen()` ora fa scorrere/scalare la schermata in uscita e quella in entrata (invece di un fade piatto) e scaglione ogni figlio diretto della nuova schermata, leggendosi come la schermata che "si assembla da sola" invece di comparire tutta insieme.
+- **Micro-interazioni sui bottoni**: una sfumatura diagonale attraversa ogni `.btn` al passaggio del mouse, più una leggera riduzione di scala alla pressione — entrambe saltate automaticamente sui bottoni `:disabled`.
+- **Glassmorphism e profondità stratificata**: il terminale di log, le result card e il pannello Director Mode ora usano una sfocatura di sfondo sottile, gradienti stratificati e ombre più morbide/ampie invece di pannelli piatti a colore unico; i moduli del rack si sollevano e si illuminano di più al passaggio del mouse.
+- **Sound design dell'interfaccia**: brevi e discreti bip Web Audio per interazioni deliberate — click sui bottoni, apertura/chiusura pannelli, transizioni di schermata, hover sui moduli rack. Deliberatamente *non* collegati a eventi ad alta frequenza (le righe di log per-stem sparano dozzine di volte al secondo durante un render) — sarebbe un ronzio, non un segnale.
+- **Nuvolette ai traguardi di avanzamento**: la nuvoletta di dialogo ora spara anche frasi di atmosfera al 25/50/75% di avanzamento ("Si comincia a sentire la forma del pezzo...", "Siamo a metà, e suona già bene..."), indipendenti dalle nuvolette di macro-fase, ciascuna una sola volta per render.
 
 #### Sistema Avatar
 

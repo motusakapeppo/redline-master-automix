@@ -34,6 +34,92 @@
   background: var(--bg-panel);
 }
 
+/* --- Cinematic boot sequence --------------------------------------------- */
+
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at center, rgba(255, 0, 63, 0.09) 0%, transparent 60%),
+    var(--bg);
+  transition: opacity 0.6s ease, visibility 0.6s ease;
+}
+
+.boot-overlay.boot-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.boot-content {
+  position: relative;
+  text-align: center;
+}
+
+.boot-wordmark {
+  font-size: 54px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #fff;
+  text-shadow: 0 0 24px rgba(255, 0, 63, 0.6);
+}
+
+.boot-wordmark span {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(18px) scale(0.85);
+  animation: boot-letter-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.boot-wordmark span:nth-child(1) { animation-delay: 0.05s; }
+.boot-wordmark span:nth-child(2) { animation-delay: 0.11s; }
+.boot-wordmark span:nth-child(3) { animation-delay: 0.17s; }
+.boot-wordmark span:nth-child(4) { animation-delay: 0.23s; }
+.boot-wordmark span:nth-child(5) { animation-delay: 0.29s; }
+.boot-wordmark span:nth-child(6) { animation-delay: 0.35s; }
+.boot-wordmark span:nth-child(7) { animation-delay: 0.41s; }
+
+@keyframes boot-letter-in {
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.boot-subtitle {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5em;
+  color: var(--text-dim);
+  opacity: 0;
+  animation: boot-subtitle-in 0.6s ease 0.7s forwards;
+}
+
+@keyframes boot-subtitle-in {
+  from { opacity: 0; letter-spacing: 0.8em; }
+  to { opacity: 1; letter-spacing: 0.5em; }
+}
+
+.boot-scanline {
+  position: absolute;
+  left: -40px;
+  right: -40px;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0;
+  animation: boot-scan 1.3s ease 0.15s forwards;
+}
+
+@keyframes boot-scan {
+  0% { opacity: 0; transform: scaleX(0.3); }
+  15% { opacity: 1; }
+  85% { opacity: 0.6; }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -366,8 +452,14 @@ html, body {
 }
 
 h1 {
-  font-size: 22px;
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   margin: 8px 0 4px;
+  background: linear-gradient(135deg, #fff 40%, #cfcfcf 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .hint {
@@ -377,6 +469,8 @@ h1 {
 }
 
 .btn {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--text);
@@ -386,12 +480,36 @@ h1 {
   cursor: pointer;
   margin-right: 10px;
   margin-top: 8px;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.15s ease, background 0.15s ease;
+}
+
+/* Diagonal sheen sweeping across on hover -- a small, tasteful "premium
+   surface" cue rather than a flat color-swap hover state. */
+.btn::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(115deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.5s ease;
+  pointer-events: none;
+}
+
+.btn:hover:not(:disabled)::before {
+  left: 130%;
 }
 
 .btn:hover:not(:disabled) {
   background: #1c1c1c;
   transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 0.05s;
 }
 
 .btn:disabled {
@@ -603,7 +721,7 @@ select { width: auto; }
 
 .module {
   position: relative;
-  background: linear-gradient(180deg, #171717 0%, var(--bg-panel) 100%);
+  background: linear-gradient(180deg, #1a1a1a 0%, var(--bg-panel) 100%);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 14px 12px;
@@ -611,7 +729,8 @@ select { width: auto; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: transform 0.2s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 /* Thin gradient accent bar along the top of every module -- a small
@@ -630,9 +749,9 @@ select { width: auto; }
 }
 
 .module:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px) scale(1.012);
   border-color: rgba(255, 0, 63, 0.45);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 14px rgba(255, 0, 63, 0.12);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 0, 63, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .module:hover::before {
@@ -824,7 +943,9 @@ select { width: auto; }
    phases ("Elaborazione stem 'X'...") and DSP-event chips visually
    distinguished by weight/color rather than physically separated. */
 .log {
-  background: var(--bg-panel);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), rgba(20, 20, 20, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px 16px;
@@ -833,6 +954,7 @@ select { width: auto; }
   overflow-x: hidden;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12.5px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .log-line {
@@ -1001,9 +1123,10 @@ select { width: auto; }
 .result-card {
   margin-top: 20px;
   padding: 18px;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  background: var(--bg-panel);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.03), transparent 50%), var(--bg-panel);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
   animation: fade-in 0.4s ease forwards;
 }
 
@@ -1014,10 +1137,10 @@ select { width: auto; }
 .director-panel {
   margin-top: 16px;
   padding: 16px;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--accent);
-  background: var(--bg-panel);
-  box-shadow: 0 0 16px rgba(255, 0, 63, 0.25);
+  background: linear-gradient(160deg, rgba(255, 0, 63, 0.06), transparent 55%), var(--bg-panel);
+  box-shadow: 0 0 24px rgba(255, 0, 63, 0.22), 0 16px 34px rgba(0, 0, 0, 0.4);
   animation: fade-in 0.3s ease forwards;
 }
 

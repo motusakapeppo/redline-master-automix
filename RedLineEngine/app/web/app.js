@@ -1,3 +1,20 @@
+// --- Cinematic boot sequence: auto-dismisses after ~1.9s, or immediately on
+// click/tap to skip -- the real app underneath (avatar init, preset load)
+// keeps loading normally the whole time, this never gates real readiness.
+(function bootSequence() {
+  const overlay = document.getElementById("boot-overlay");
+  if (!overlay) return;
+  let dismissed = false;
+  function dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    overlay.classList.add("boot-hidden");
+    setTimeout(() => overlay.remove(), 700);
+  }
+  overlay.addEventListener("click", dismiss);
+  setTimeout(dismiss, 1900);
+})();
+
 let selectedInput = null;
 let selectedOutput = null;
 
@@ -12,10 +29,18 @@ let _progressStepTimes = [];
 const _PROGRESS_HISTORY = 10;
 const _STEPS_PER_STEM_GUESS = 8;
 
+const PROGRESS_MILESTONE_LINES = {
+  25: ["Si comincia a sentire la forma del pezzo...", "Le prime tracce stanno prendendo colore..."],
+  50: ["Siamo a metà, e suona già bene...", "Mix a buon punto, avanti così..."],
+  75: ["Ci siamo quasi, rifiniture finali...", "Ultimi ritocchi prima del traguardo..."],
+};
+let _progressMilestonesFired = new Set();
+
 function resetProgress() {
   _progressSeen = 0;
   _progressExpected = 40;
   _progressStepTimes = [];
+  _progressMilestonesFired = new Set();
   document.getElementById("progress-wrap")?.classList.remove("hidden");
   document.getElementById("speech-bubble")?.classList.add("hidden");
   clearTimeout(_bubbleHideTimer);
@@ -52,6 +77,18 @@ function bumpProgress(msg) {
   const pctEl = document.getElementById("progress-pct");
   if (fill) fill.style.width = `${pctValue.toFixed(0)}%`;
   if (pctEl) pctEl.textContent = `${pctValue.toFixed(0)}%`;
+
+  // Flavor bubbles at progress milestones -- only once per milestone per
+  // run, and only if no macro-phase bubble already claimed this exact tick
+  // (simplifyMacroMessage's bubble takes priority in onStep; this fires
+  // independently from the progress bar instead).
+  for (const threshold of [25, 50, 75]) {
+    if (pctValue >= threshold && !_progressMilestonesFired.has(threshold)) {
+      _progressMilestonesFired.add(threshold);
+      const lines = PROGRESS_MILESTONE_LINES[threshold];
+      sayBubble(lines[Math.floor(Math.random() * lines.length)]);
+    }
+  }
 
   const etaEl = document.getElementById("progress-eta");
   if (etaEl && _progressStepTimes.length >= 2) {
@@ -158,6 +195,8 @@ function showScreen(id) {
   const next = document.getElementById(id);
   if (current === next) return;
 
+  if (typeof playWhoosh === "function") playWhoosh();
+
   if (typeof gsap === "undefined") {
     // GSAP failed to load (vendored file missing/corrupt) -- the screen
     // switch itself must never depend on it, only the transition's polish does.
@@ -168,12 +207,29 @@ function showScreen(id) {
 
   if (current) {
     gsap.to(current, {
-      opacity: 0, x: -16, duration: 0.25, ease: "power1.in",
+      opacity: 0, x: -24, scale: 0.985, duration: 0.28, ease: "power2.in",
       onComplete: () => current.classList.remove("active"),
     });
   }
   next.classList.add("active");
-  gsap.fromTo(next, { opacity: 0, x: 16 }, { opacity: 1, x: 0, duration: 0.35, delay: current ? 0.15 : 0, ease: "power2.out" });
+  gsap.fromTo(
+    next,
+    { opacity: 0, x: 24, scale: 0.985 },
+    { opacity: 1, x: 0, scale: 1, duration: 0.45, delay: current ? 0.16 : 0, ease: "power3.out" }
+  );
+
+  // Cascading settle of the new screen's direct children -- a premium
+  // "assembling itself" read instead of the whole block appearing at once.
+  // Deliberately animates only position (not opacity, already handled by
+  // the container tween above) to avoid double-fading the same element.
+  const children = Array.from(next.children);
+  if (children.length) {
+    gsap.fromTo(
+      children,
+      { y: 14 },
+      { y: 0, duration: 0.45, ease: "power2.out", stagger: 0.04, delay: current ? 0.18 : 0.05 }
+    );
+  }
 }
 
 // Alias -- the HTML markup calls this name directly for clarity ("go to
@@ -583,6 +639,48 @@ function playChime(kind) {
   });
 }
 
+// --- UI sound design: short, quiet Web Audio blips for deliberate,
+// infrequent interactions (button clicks, panel open/close, screen
+// transitions, module hover) -- shares the chime's AudioContext. Explicitly
+// NOT wired to high-frequency events (badge lighting, per-stem log lines
+// fire "dozens of times per second during a render" per onEvent's own
+// comments) -- that volume of clicks would be a buzz, not a cue.
+function _playUiTone(freq, peak = 0.045, dur = 0.08, type = "sine") {
+  const ctx = _getChimeCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + dur + 0.02);
+}
+
+function playClickTick() { _playUiTone(1100, 0.04, 0.05); }
+function playHoverTick() { _playUiTone(2400, 0.012, 0.025); }
+function playPanelOpen() { _playUiTone(660, 0.045, 0.12, "triangle"); }
+function playPanelClose() { _playUiTone(440, 0.035, 0.1, "triangle"); }
+function playWhoosh() { _playUiTone(320, 0.03, 0.16, "sine"); }
+
+// Delegated so it covers every .btn on the page, including ones added
+// dynamically later (result cards, DAW screen) without re-binding anything.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".btn");
+  if (btn && !btn.disabled) playClickTick();
+});
+
+// Static rack modules only (9 fixed cards from index.html) -- a hover tick
+// on every button/row would be noisy; this is deliberately limited to the
+// handful of large, static rack cards.
+document.querySelectorAll(".module").forEach((m) => {
+  m.addEventListener("mouseenter", () => playHoverTick());
+});
+
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
   document.getElementById("progress-wrap")?.classList.add("hidden");
@@ -747,6 +845,7 @@ function _toggleDawTrackDetail(name, lane) {
   const wasOpenForThisTrack = !detail.classList.contains("hidden") && detail.dataset.track === name;
   if (wasOpenForThisTrack) {
     detail.classList.add("hidden");
+    playPanelClose();
     return;
   }
   const params = stemEventParams.get(name) || {};
@@ -756,6 +855,7 @@ function _toggleDawTrackDetail(name, lane) {
     : `<div class="stem-row-detail-line">Nessun parametro registrato per questa traccia.</div>`;
   detail.dataset.track = name;
   detail.classList.remove("hidden");
+  playPanelOpen();
   lane.classList.add("selected");
 }
 
@@ -969,6 +1069,7 @@ function showDirectorCheckpoint(evt) {
     .join("");
 
   panel.classList.remove("hidden");
+  playPanelOpen();
   setAssistantLabel("in attesa di conferma");
 }
 
@@ -988,6 +1089,7 @@ function approveDirectorCheckpoint() {
       if (Object.keys(fix).length > 0) corrections[stem] = fix;
     });
     panel.classList.add("hidden");
+    playPanelClose();
   }
   if (window.avatarAPI) window.avatarAPI.onApprove();
   if (window.pywebview) {
@@ -1028,6 +1130,7 @@ function showInstrumentQuestions(evt) {
     .join("");
 
   panel.classList.remove("hidden");
+  playPanelOpen();
   setAssistantLabel("in attesa di risposta");
 }
 
@@ -1038,6 +1141,7 @@ function submitInstrumentAnswers() {
     if (sel.value) answers[sel.dataset.stem] = sel.value;
   });
   if (panel) panel.classList.add("hidden");
+  playPanelClose();
   if (window.pywebview) {
     window.pywebview.api.answer_instrument_questions(answers);
   }
@@ -1168,13 +1272,14 @@ function getOrCreateStemRow(name) {
     // Only one channel strip open at a time -- keeps the track list scannable.
     document.querySelectorAll(".stem-row-detail").forEach((d) => d.classList.add("hidden"));
     document.querySelectorAll(".stem-row.selected").forEach((r) => r.classList.remove("selected"));
-    if (isOpen) return;
+    if (isOpen) { playPanelClose(); return; }
     const params = stemEventParams.get(name) || {};
     const lines = Object.entries(params).map(([type, evt]) => _describeStemEvent(type, evt));
     detail.innerHTML = lines.length
       ? lines.map((l) => `<div class="stem-row-detail-line">${l}</div>`).join("")
       : `<div class="stem-row-detail-line">Nessun parametro registrato ancora.</div>`;
     detail.classList.remove("hidden");
+    playPanelOpen();
     row.classList.add("selected");
   });
 

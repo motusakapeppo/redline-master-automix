@@ -26,6 +26,19 @@ window.addEventListener('error', function(e) {
 </head>
 <body>
 
+<!-- Cinematic boot sequence: shown for ~1.9s on first load (or until
+     clicked/tapped to skip), the app underneath loads normally in parallel
+     the whole time -- this is pure polish, never gates real readiness. -->
+<div id="boot-overlay" class="boot-overlay">
+  <div class="boot-content">
+    <div class="boot-wordmark">
+      <span>R</span><span>E</span><span>D</span><span>L</span><span>I</span><span>N</span><span>E</span>
+    </div>
+    <div class="boot-subtitle">E N G I N E</div>
+    <div class="boot-scanline"></div>
+  </div>
+</div>
+
 <div id="app-grid">
 
   <div id="main-stage">
