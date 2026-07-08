@@ -277,27 +277,22 @@ function buildSkull(onReady) {
       craniumMesh = model;
       group.add(model);
 
-      // Small emissive markers for the reactive "eye glow" (de-esser flash,
-      // deep-scan pulse, etc.) -- positioned at an approximate eye-socket
-      // location relative to the model's own (now-normalized) bounding box
-      // rather than baked-in coordinates tuned for the old procedural mesh.
-      // depthTest: false + a high renderOrder guarantee these draw on top
-      // of the cranium mesh no matter what -- the eye position above is
-      // only an approximation from the model's bounding box (there's no
-      // named eye-socket bone/mesh to anchor to), so without this the
-      // marker can end up sitting just inside the skull's own geometry and
-      // be fully occluded: visually indistinguishable from "the eye glow
-      // does nothing at all", which is exactly what was reported.
-      const eyeMat = new THREE.MeshStandardMaterial({
-        color: '#FF003F',
-        emissive: '#FF003F',
-        emissiveIntensity: 0.5,
-        depthTest: false,
-      });
+      // Eye glow: the model already has real, sculpted eye-socket cavities
+      // (visible as the natural dark hollows on its own geometry) -- an
+      // earlier version bolted two small red-glowing spheres on top of
+      // them, which read as two floating dots rather than "the skull's own
+      // eyes lighting up" (direct feedback: remove the dots). A PointLight
+      // has no visible geometry of its own, so instead of adding an object,
+      // it lights the *existing* socket cavities red from within -- the
+      // reactive glow now comes from the skull's real geometry, nothing
+      // extra is rendered on top of it. Positioned at the same approximate
+      // eye-socket location as before (bounding-box derived, no named
+      // eye-socket bone/mesh to anchor to), short `distance` so it only
+      // lights the immediate socket area rather than washing the whole face.
       // scaledBox/scaledCenter were measured BEFORE model.position.sub()
       // shifted the model into centered space above -- using scaledBox.max
       // directly here (as an earlier version did) ignored that shift and
-      // placed the markers well above actual eye level, reading as
+      // placed the lights well above actual eye level, reading as
       // eyebrows instead. Re-express the box edges relative to the same
       // center that was just subtracted from the model.
       const centeredMaxY = scaledBox.max.y - scaledCenter.y;
@@ -308,14 +303,19 @@ function buildSkull(onReady) {
       const eyeZ = centeredMaxZ * 0.85;
       const eyeX = size.x * scale * 0.16;
 
-      eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat);
+      // A short, sharply-falling-off point light (distance 0.4, decay 2)
+      // still reads as a bright, tightly-bounded hotspot on the surface --
+      // visually indistinguishable from a small glowing ball, exactly what
+      // was being avoided. A longer reach + gentler decay spreads the same
+      // light over a wider area of the socket instead of concentrating it
+      // into one bright point, reading as "this whole area is lit red"
+      // rather than "there is a red dot here".
+      eyeLeft = new THREE.PointLight('#FF003F', 0.4, 1.1, 1);
       eyeLeft.position.set(-eyeX, eyeY, eyeZ);
-      eyeLeft.renderOrder = 999;
       group.add(eyeLeft);
 
-      eyeRight = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat.clone());
+      eyeRight = new THREE.PointLight('#FF003F', 0.4, 1.1, 1);
       eyeRight.position.set(eyeX, eyeY, eyeZ);
-      eyeRight.renderOrder = 999;
       group.add(eyeRight);
 
       // Set up the baked animation clips on the model's own armature.
@@ -344,6 +344,13 @@ function buildSkull(onReady) {
         new THREE.MeshStandardMaterial({ color: SKULL_TINT, metalness: 0.15, roughness: 0.65 })
       );
       group.add(placeholder);
+      // This placeholder has no sculpted eye sockets to light from within
+      // (it's a plain sphere, unlike the real model above) -- static glow
+      // dots are the only way to show "eyes" at all here, so this rare
+      // fallback path keeps them as meshes instead of the PointLight
+      // approach used for the real model. They won't animate via
+      // updateEyes()'s eyeLeft.intensity calls (meshes have no .intensity),
+      // which is an acceptable fidelity loss for a load-failure fallback.
       const eyeMat = new THREE.MeshStandardMaterial({ color: '#FF003F', emissive: '#FF003F', emissiveIntensity: 0.5, depthTest: false });
       eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), eyeMat);
       eyeLeft.position.set(-0.22, 0.15, 0.6);
@@ -876,7 +883,14 @@ function updateRingDeformation(time, delta) {
 function updateEyes(time) {
   if (!eyeLeft || !eyeRight) return;
 
-  let intensity = 0.6;
+  // Near-zero at rest (was a permanent 0.6 baseline) -- a light source
+  // sitting in the socket is visible as a distinct glowing shape no matter
+  // how it's tuned, which read as "two red dots stuck on all the time"
+  // rather than a reactive cue. Keeping it almost off at idle and letting
+  // the additive bumps below do all the actual visible work means the red
+  // eyes only appear as a genuine reaction (de-esser hit, RedLine Mode,
+  // etc.), not a constant fixture.
+  let intensity = 0.05;
 
   if (deesserFlash > 0.01) {
     intensity += deesserFlash * 2.5;
@@ -908,8 +922,8 @@ function updateEyes(time) {
     intensity += 2.8;
   }
 
-  eyeLeft.material.emissiveIntensity = intensity;
-  eyeRight.material.emissiveIntensity = intensity;
+  eyeLeft.intensity = intensity;
+  eyeRight.intensity = intensity;
 }
 
 function updateParticles(delta, time) {
@@ -966,11 +980,11 @@ function updateEarrings(_delta, time) {
 function onSystemReady() {
   systemReadyPulse = 1.0;
 
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 2.0;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 2.0;
+  if (eyeLeft) eyeLeft.intensity = 2.0;
+  if (eyeRight) eyeRight.intensity = 2.0;
   setTimeout(() => {
-    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
-    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+    if (eyeLeft) eyeLeft.intensity = 0.05;
+    if (eyeRight) eyeRight.intensity = 0.05;
   }, 1200);
 
   // Particles burst
@@ -1024,11 +1038,11 @@ function onDeesser() {
   playSkullAction('Bite_Front');
   punchScale = Math.max(punchScale, 0.55);
 
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 4.0;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 4.0;
+  if (eyeLeft) eyeLeft.intensity = 4.0;
+  if (eyeRight) eyeRight.intensity = 4.0;
   setTimeout(() => {
-    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
-    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+    if (eyeLeft) eyeLeft.intensity = 0.05;
+    if (eyeRight) eyeRight.intensity = 0.05;
   }, 220);
 }
 
@@ -1108,11 +1122,11 @@ function onDone() {
   punchScale = 1.0;
   playSkullAction('Dance');
 
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 5.0;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 5.0;
+  if (eyeLeft) eyeLeft.intensity = 5.0;
+  if (eyeRight) eyeRight.intensity = 5.0;
   setTimeout(() => {
-    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
-    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+    if (eyeLeft) eyeLeft.intensity = 0.05;
+    if (eyeRight) eyeRight.intensity = 0.05;
   }, 600);
 
   if (particles) {
@@ -1127,11 +1141,11 @@ function onDone() {
     pos.needsUpdate = true;
   }
 
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 2.5;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 2.5;
+  if (eyeLeft) eyeLeft.intensity = 2.5;
+  if (eyeRight) eyeRight.intensity = 2.5;
   setTimeout(() => {
-    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
-    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+    if (eyeLeft) eyeLeft.intensity = 0.05;
+    if (eyeRight) eyeRight.intensity = 0.05;
   }, 400);
 
   // The vinyl is the "here's the finished record" beat -- shown briefly at
@@ -1171,11 +1185,11 @@ function onSaturation(drive) {
   lookTargetX = 0.05;
   lookPhaseStartTime = time;
   lookPhaseEndTime = time + 0.5 + amount * 0.3;
-  if (eyeLeft) eyeLeft.material.emissiveIntensity = 3.0;
-  if (eyeRight) eyeRight.material.emissiveIntensity = 3.0;
+  if (eyeLeft) eyeLeft.intensity = 3.0;
+  if (eyeRight) eyeRight.intensity = 3.0;
   setTimeout(() => {
-    if (eyeLeft) eyeLeft.material.emissiveIntensity = 0.6;
-    if (eyeRight) eyeRight.material.emissiveIntensity = 0.6;
+    if (eyeLeft) eyeLeft.intensity = 0.05;
+    if (eyeRight) eyeRight.intensity = 0.05;
   }, 260);
 }
 
