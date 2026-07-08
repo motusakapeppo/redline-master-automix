@@ -803,22 +803,40 @@ def render_mix(
             if on_stem_audition is not None:
                 on_stem_audition(name, working_tracks[name], processed[name], sr)
 
-    # --- Post-processing re-alignment: the per-stem DSP chain above
-    # (pedalboard IIR filters) introduces frequency-dependent group delay
-    # that differs per stem (lead vocal has 3-4 IIR stages, drums 1-2,
-    # bass 0-1). The initial alignment (lines 728-754) was on the dry
-    # signal, so after processing the stems are no longer sample-aligned.
-    # Re-align each non-lead stem to the processed lead reference.
-    if lead_names:
-        lead_processed = sum(processed[n] for n in lead_names if n in processed)
-        for name in solo_names:
-            if name in lead_names:
-                continue
-            aligned, delay = align_to_reference(processed[name], lead_processed, sr)
-            if abs(delay) > 0:
-                processed[name] = aligned
-                _guarded_on_step(f"  '{name}' ri-allineata dopo processing ({delay / sr * 1000:+.1f}ms)")
-                _guarded_on_event({"type": "post_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
+    # --- Post-processing self-realignment: the per-stem DSP chain above
+    # (pedalboard IIR filters) introduces a small frequency-dependent group
+    # delay that differs per stem (lead vocal has 3-4 IIR stages, drums
+    # 1-2, bass 0-1). This must be measured by cross-correlating each stem
+    # against ITS OWN dry/pre-processing signal, never against a different
+    # instrument's stem.
+    #
+    # A previous version of this fix cross-correlated every non-lead stem
+    # (drums, bass, other instruments) against the *processed lead vocal* to
+    # find "the delay". That is not a valid measurement: a drum stem's
+    # waveform has essentially no real correlation with a vocal's waveform,
+    # so the "best" lag found in the +/-100ms search window was whatever
+    # spurious peak the noise floor happened to produce -- confirmed in
+    # practice: reported as "the drums sound out of time" on real material,
+    # even though the raw stems were verified to be perfectly in time before
+    # processing. Self-referential correlation (processed vs. its own dry
+    # version) is always valid, since the processed signal genuinely IS a
+    # filtered copy of the dry one -- this measures real IIR group delay
+    # instead of correlating noise. Runs for every solo stem including the
+    # lead itself (previously skipped, on the assumption it was already the
+    # reference everyone else measured against) -- the lead's own chain
+    # (HPF, resonance notch, presence EQ, compressor, de-esser) has just as
+    # much real group delay as anyone else's, and leaving it uncorrected
+    # would just relocate the drift onto the lead instead of removing it.
+    SELF_ALIGN_MAX_SHIFT_MS = 30.0  # bound for a per-stem IIR chain's own delay -- far tighter than the 100ms window used for aligning independent vocal takes (a performance-timing difference), since this only compensates a filter artifact
+    for name in solo_names:
+        dry = working_tracks.get(name)
+        if dry is None or name not in processed:
+            continue
+        aligned, delay = align_to_reference(processed[name], dry, sr, max_shift_ms=SELF_ALIGN_MAX_SHIFT_MS)
+        if abs(delay) > 0:
+            processed[name] = aligned
+            _guarded_on_step(f"  '{name}' ri-allineata dopo processing ({delay / sr * 1000:+.1f}ms, auto-riferimento)")
+            _guarded_on_event({"type": "post_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
 
     # --- Automatic stereo panning for instrumental ("other") stems: there
     # was no panning strategy for these at all -- naming.py only read a
