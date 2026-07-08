@@ -80,9 +80,34 @@ def _read_audio(path: str) -> tuple[np.ndarray, int]:
     return data, sr
 
 
+def _drop_fully_silent(named: dict[str, tuple[np.ndarray, int]]) -> dict[str, tuple[np.ndarray, int]]:
+    """Drops stems that are exact digital silence (every sample literally
+    0.0 -- a broken/empty FL Studio bounce, not just a quiet instrument).
+    Mathematically this changes nothing about the final mix (a stem with
+    zero energy contributes zero to any sum it's part of), but leaving it in
+    means: (1) it still gets counted by the power-preserving 1/sqrt(N) gain
+    formulas in mixengine.py that scale real instruments down (fixed
+    separately, but this removes the cause instead of just compensating for
+    it); (2) it still runs through the full per-stem DSP chain (denoise,
+    pYIN pitch estimation, resonance detection...) for several minutes on a
+    real-length track, for a result that's silence either way. A stem with
+    real but very quiet content (not exactly zero) is left untouched --
+    only exact digital silence is dropped."""
+    kept: dict[str, tuple[np.ndarray, int]] = {}
+    for name, (data, sr) in named.items():
+        if not np.any(data):
+            logger.info("Stem '%s' ignorato: silenzio digitale totale (0 campioni non nulli)", name)
+            continue
+        kept[name] = (data, sr)
+    if not kept and named:
+        raise ValueError("Tutti gli stem forniti sono silenzio digitale totale — nessun contenuto audio da elaborare.")
+    return kept
+
+
 def _align(named: dict[str, tuple[np.ndarray, int]]) -> Stems:
     """Resamples everything to the highest sample rate found and zero-pads to the
     longest track, so every stem in the returned Stems has identical shape."""
+    named = _drop_fully_silent(named)
     sample_rates = [sr for _, sr in named.values()]
     mixed_sr_report = PreFlightValidator.check_mixed_sample_rates(sample_rates, "stems")
     if mixed_sr_report.warnings or mixed_sr_report.issues:
