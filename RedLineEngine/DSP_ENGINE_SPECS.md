@@ -631,4 +631,127 @@ permissiva) resta un possibile miglioramento futuro, non urgente.
 
 ---
 
-*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile".*
+## 7. Addendum Luglio 2026 (parte 2) — Reference Profiles, Feedback Iterativo, Re-run Masking, A/B
+
+Quattro estensioni strutturali costruite sopra le fondamenta della Sezione 6,
+tutte additive: nessun default numerico esistente è stato cambiato, solo
+resi misurabili/verificabili contro un profilo di riferimento e correggibili
+entro i clamp di sicurezza già esistenti (`director_safety.py`).
+
+### 7.1 Reference Profiles per Genere (`redline/reference_profiles.py`)
+
+Estende `qc.TARGET_BAND_RATIOS` (curve LTAS teoriche) con un profilo
+percettivo completo per ognuno dei 6 generi di `analysis/genre.py`
+(`_PROFILES`): LTAS a 6 bande, LUFS target, crest factor target, target di
+compatibilità mono/larghezza stereo.
+
+| Genere | LUFS target | Crest factor target | Compatibilità mono target | Derivazione |
+|---|---|---|---|---|
+| EDM / Urban | -9.0 (club) | 8.0dB | 0.90 | LUFS: riuso di `PLATFORM_TARGETS["club"]`. Crest: punto medio del range `crest < 10` che `detect_genre()` già usa per riconoscere il genere (`[6,10]`). Mono compat: sub deve sommarsi in mono senza cancellazioni su sistemi PA/club. |
+| Hip-Hop | -14.0 (spotify) | 10.5dB | 0.88 | Crest: punto medio di `crest < 13` (`[8,13]`). Mono compat: guidato da 808, stesso requisito EDM. |
+| Pop / Rock | -14.0 (spotify) | 10.5dB | 0.80 | Crest: punto medio di `crest < 12` (`[9,12]`). |
+| Jazz / Vintage | -14.0 (spotify) | 14.0dB | 0.72 | Crest: punto medio di `crest > 12` (denso) (`[12,16]`). Mono compat più bassa: immagine stereo di batteria/room più ampia è attesa. |
+| Acoustic / Classical | -14.0 (spotify) | 17.0dB | 0.68 | Crest: punto medio di `crest > 14`, sparso (`[14,20]`). Mono compat più bassa: decorrelazione stereo naturale di sala/ambiente. |
+| Balanced | -14.0 (spotify) | 12.0dB | 0.78 | Fallback: centro esatto di tutti i range sopra. |
+
+Nessun numero è inventato da zero: LUFS riusa `masterengine.PLATFORM_TARGETS`,
+il crest factor riusa le soglie decisionali già in `detect_genre()`, la
+compatibilità mono interpola tra la soglia di pass/fail già esistente in
+`qc.py` (`> 0.6`) e la correlazione perfetta (`1.0`).
+
+**Drop folder + blending misurato**: `reference_tracks/<slug>/` (slug: `edm_urban`,
+`hip_hop`, `pop_rock`, `acoustic_classical`, `jazz_vintage`, `balanced`) per
+brani reali CC/acquistati/propri. `redline/profile_targets.py` misura ogni
+file con le stesse funzioni già usate ovunque nel motore
+(`analysis.loudness.spectral_band_energies`, nessuna duplicazione), poi
+`profile_folder()` fa una **media pesata** tra la curva teorica di default e
+la media misurata reale:
+
+```
+blended = (DEFAULT_WEIGHT_TRACKS * default + n_real_tracks * misurata) / (DEFAULT_WEIGHT_TRACKS + n_real_tracks)
+```
+
+con `DEFAULT_WEIGHT_TRACKS = 5.0` (la curva di default "vale" come 5 brani
+sintetici nella media — una singola cartella con 3-5 brani reali sposta il
+target ma non lo rimpiazza del tutto; 20-30 brani reali, il numero
+consigliato, dominano la media come previsto). Nessuna cartella popolata =
+comportamento identico a prima (fallback teorico puro). Nessun download
+automatico di brani è stato effettuato in questo giro — solo l'architettura
+a cartella + numero è stata implementata, come esplicitamente richiesto.
+
+### 7.2 Feedback Iterativo nel Mastering (`masterengine.py`, `_apply_reference_correction`)
+
+Loop bounded, distinto e complementare a quello già esistente in `qc.py`
+(che corregge le 6 bande spettrali — vedi `MAX_QC_ITERATIONS`): questo
+secondo loop misura **LUFS, crest factor, compatibilità mono/larghezza
+stereo** del master già passato da `run_qc()`, li confronta contro
+`reference_profiles.resolve_perceptual_target()`, e corregge — sempre
+passando ogni valore da `director_safety.clamp_params()` prima di applicarlo,
+mai un valore DSP non validato:
+
+| Metrica | Tolleranza | Motivazione |
+|---|---|---|
+| LUFS | ±0.5 LU | Le piattaforme streaming stesse normalizzano circa in questo intervallo — inseguire una precisione maggiore rincorre rumore di misura, non un problema reale. |
+| Crest factor | ±1.5dB | Sotto questa soglia la differenza dinamica/"loudness war" non è più percepibile in modo affidabile; forzare oltre rischierebbe di appiattire inutilmente. |
+| Compatibilità mono/larghezza | ±0.08 | Banda più stretta *attorno al target ideale* del genere, distinta dalla soglia di pass/fail già esistente in `qc.py` (0.6, molto più permissiva — quella è un floor di sicurezza, questa è un target di qualità). |
+
+Correzioni applicate (ognuna clampata via `director_safety.clamp_params()`):
+- **Makeup loudness**: `clamp_params({"gain_db": delta})` — stesso range
+  ±12dB già usato dal guardrail principale di `render_master`.
+- **Compressione glue extra**: solo quando il crest misurato è *sopra* il
+  target (troppo dinamico/piccato) — `clamp_params({"compressor_ratio":
+  1.3, "compressor_threshold_db": -10.0})`. Non corregge la direzione
+  opposta (crest già troppo basso/sovra-compresso): richiederebbe
+  un'espansione, fuori scopo per un passaggio correttivo di sicurezza.
+- **Larghezza stereo (canale Side)**: `clamp_params({"eq_gain_db": delta})`
+  — riusa il range ±6dB di `eq_gain_db` (non esiste un parametro "width"
+  dedicato in `director_safety.py`; un guadagno sul canale Side dopo
+  encode/decode Mid/Side è concettualmente lo stesso tipo di mossa limitata).
+
+Bounded a **`MASTER_CORRECTION_MAX_PASSES = 3`** passaggi; si ferma prima se
+tutte le metriche rientrano in tolleranza, oppure se un passaggio non
+migliora la somma delle deviazioni rispetto al precedente (evita
+oscillazione tra due correzioni che si contrastano a vicenda). Ogni
+passaggio ri-applica il clamp del true-peak ceiling (stessa garanzia già
+presente altrove in `render_master`), e ogni passaggio è loggato via
+`on_step`/`on_event` (evento `master_feedback_pass`) con lo stile
+diagnostico già usato nel resto del modulo.
+
+### 7.3 Re-run del Masking dopo Leveling/Ducking (`mixengine.py`)
+
+`find_masking_cut()`/`find_midrange_masking_cut()` (invariati, nessuna
+logica duplicata) venivano invocati una sola volta, per singolo stem
+"other", subito dopo la classificazione registri/prima del sidechain
+kick/basso (circa riga 1033 pre-modifica). Quella posizione era già
+*dopo* la compressione per-stem (`_process_stem`), ma *prima* del sidechain
+kick/basso, del ducking spettrale voce e del dip Mid/Side del bus musicale
+— tutte operazioni che spostano ulteriormente il bilanciamento spettrale.
+
+Aggiunta una seconda invocazione **a livello di bus**, subito dopo il dip
+Mid/Side del bus musicale (`music_bus`) e prima della regolazione di
+presenza vocale — vedi `mixengine.py`, blocco `if vocal_main_bus is not
+None:` che segue immediatamente lo step "Bus musicale Mid/Side" (circa
+righe 1118-1128). Confronta il `music_bus` sommato/EQato contro il
+`vocal_main_bus` reale, catturando un accumulo residuo che esiste solo una
+volta che tutti gli stem strumentali sono sommati insieme (uno stem
+singolarmente pulito può comunque contribuire a un accumulo di bus).
+Eventi separati (`bus_masking_cut` / `bus_midrange_masking_cut`) permettono
+di distinguere in log/GUI la correzione per-stem da quella di bus.
+
+### 7.4 A/B Loudness-Matched Comparison (`redline/ab_compare.py`)
+
+Modulo importabile + CLI (`python -m redline.ab_compare before.wav
+after.wav`). Allinea le due tracce a `TARGET_LUFS_FOR_MATCH = -18.0 LUFS`
+(punto di riferimento neutro per il confronto, non un target di
+mastering) riusando `analysis.loudness.integrated_lufs`, poi calcola i
+delta LTAS/crest factor/correlazione stereo/true peak riusando
+`spectral_band_energies`. Scrive un report JSON + può opzionalmente
+scrivere un WAV di confronto concatenato (before, 0.5s di silenzio, after)
+per l'ascolto manuale dell'utente nel proprio player/DAW — lo script **non
+riproduce mai audio** (nessuna chiamata a `sounddevice`/playback in nessun
+punto del modulo, verificato anche a livello statico da
+`tests/test_ab_compare.py`).
+
+---
+
+*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare.*
