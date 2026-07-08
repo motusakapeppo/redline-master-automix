@@ -981,11 +981,28 @@ def render_mix(
             futures = {name: pool.submit(_process_one_double, name) for name in double_names}
             results = {name: future.result() for name, future in futures.items()}
 
+        # Same gap as the one fixed for solo stems above (line ~812): doubles
+        # were DTW-aligned to the *dry* lead before _process_double_stem ran,
+        # but that function's own register-specific chain (EQ cuts,
+        # compressor, de-esser) introduces its own IIR group delay -- so a
+        # double could drift right back out of alignment during its own
+        # processing, with nothing catching it afterward. Doubles are
+        # exactly the material where this is most audible (harmonies sitting
+        # against the lead), so this was the highest-risk blind spot in the
+        # post-processing re-alignment coverage.
+        lead_ref_for_doubles = sum(processed[n] for n in lead_names if n in processed) if lead_names else None
+
         for name in double_names:
             d = descriptors[name]
             double_fundamental, hf_ratio, register, out = results[name]
             on_step(f"  '{name}': fondamentale {double_fundamental:.0f}Hz, energia alte {hf_ratio * 100:.0f}% -> registro '{register}'")
             on_event({"type": "register_classified", "stem": name, "fundamental_hz": round(double_fundamental, 1), "hf_ratio": round(hf_ratio, 3), "register": register})
+
+            if lead_ref_for_doubles is not None:
+                out, delay = align_to_reference(out, lead_ref_for_doubles, sr)
+                if abs(delay) > 0:
+                    on_step(f"  '{name}' ri-allineata dopo processing double ({delay / sr * 1000:+.1f}ms)")
+                    on_event({"type": "post_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
 
             recipe = RECIPES[register]
             hard_pan = recipe.pan_magnitude if d.pan >= 0 else -recipe.pan_magnitude
