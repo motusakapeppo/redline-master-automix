@@ -17,6 +17,8 @@ function resetProgress() {
   _progressExpected = 40;
   _progressStepTimes = [];
   document.getElementById("progress-wrap")?.classList.remove("hidden");
+  document.getElementById("speech-bubble")?.classList.add("hidden");
+  clearTimeout(_bubbleHideTimer);
   const fill = document.getElementById("progress-fill");
   const pct = document.getElementById("progress-pct");
   const eta = document.getElementById("progress-eta");
@@ -208,6 +210,9 @@ async function startRun() {
   document.getElementById("result").classList.add("hidden");
   document.getElementById("result").innerHTML = "";
   eqBands = {};
+  busEqBands = {};
+  _rackDisplayStem = null;
+  _rackPinned = false;
   redrawEq();
   resetProgress();
   setAssistantLabel("al lavoro...");
@@ -306,6 +311,56 @@ async function saveCurrentPreset() {
   }
 }
 
+// --- Speech bubble: a plain-language, non-technical narration of macro
+// phase changes only (never micro sub-steps -- those fire too often per
+// second to read as anything but noise). Deliberately NOT a rewrite of the
+// technical log itself -- that log's exact strings are the engine's own
+// narration (on_step calls throughout redline/mixengine.py and
+// masterengine.py) and rewriting them risks changing what tests/behavior
+// depend on. This is a parallel, friendlier layer for non-expert users,
+// built from pattern-matching the same messages.
+let _bubbleHideTimer = null;
+
+function sayBubble(text) {
+  const bubble = document.getElementById("speech-bubble");
+  const textEl = document.getElementById("speech-bubble-text");
+  if (!bubble || !textEl) return;
+  textEl.textContent = text;
+  bubble.classList.remove("hidden", "showing");
+  void bubble.offsetWidth; // restart the pop-in/fade-out animation
+  bubble.classList.add("showing");
+  clearTimeout(_bubbleHideTimer);
+  _bubbleHideTimer = setTimeout(() => bubble.classList.add("hidden"), 4000);
+}
+
+// Only the handful of patterns covering genuine phase transitions get a
+// bubble -- an unmatched macro line just doesn't produce one (silence is
+// better than surfacing a half-translated technical string).
+function simplifyMacroMessage(msg) {
+  if (/^Carico l'audio/.test(msg)) return "Sto caricando il tuo brano...";
+  if (/^Rilevati \d+ file/.test(msg)) return "Ho trovato i file audio, comincio ad analizzarli.";
+  if (/^Caricati \d+ stem/.test(msg)) return "Tracce separate, si parte con l'analisi!";
+  if (/^Analizzo bpm/.test(msg)) return "Sto capendo genere, ritmo e tonalità del brano...";
+  const bpmMatch = msg.match(/^BPM ([\d.]+)\s.*Genere (.+?)\s{2,}/);
+  if (bpmMatch) return `Ho capito: è un pezzo a ${Math.round(parseFloat(bpmMatch[1]))} BPM, genere ${bpmMatch[2]}.`;
+  if (/^Avvio il mix/.test(msg)) return "Comincio a mixare le tracce...";
+  const stemMatch = msg.match(/^Elaborazione stem '([^']+)'/);
+  if (stemMatch) return `Ora sto lavorando su: ${stemMatch[1]}`;
+  if (/^Interpreto la richiesta/.test(msg)) return "Sto capendo cosa mi hai chiesto...";
+  if (/^Richiesta applicata/.test(msg)) return "Fatto, applico le modifiche che hai chiesto.";
+  if (/^In attesa di conferma/.test(msg)) return "Aspetto la tua conferma per continuare...";
+  if (/^Domande sugli strumenti/.test(msg)) return "Ho bisogno del tuo aiuto per riconoscere alcuni strumenti.";
+  if (/^Mix salvato/.test(msg)) return "Mix pronto!";
+  if (/^Avvio il mastering/.test(msg)) return "Passo al mastering finale...";
+  if (/^Master salvato/.test(msg)) return "Master pronto!";
+  if (/^Rielaborazione del mix/.test(msg)) return "Rifaccio il mix con le tue indicazioni...";
+  if (/^Ricalibro in base al feedback/.test(msg)) return "Aggiusto il suono come mi hai chiesto...";
+  if (/^Mix pronto\. In attesa di revisione/.test(msg)) return "Mix pronto, dai un ascolto quando vuoi!";
+  if (/^Fatto\.?$/.test(msg) || /^Fatto \(solo mix\)/.test(msg)) return "Ho finito! Dai un ascolto ✨";
+  if (/^Errore/.test(msg)) return "Qualcosa non ha funzionato, controlla il messaggio qui sotto.";
+  return null;
+}
+
 function onStep(msg) {
   const log = document.getElementById("log");
   const line = document.createElement("div");
@@ -313,13 +368,18 @@ function onStep(msg) {
   // phases ("Elaborazione stem 'X'...", no leading spaces) from micro
   // sub-steps ("  'X': risonanza a 250Hz...", 2-space indented) -- reuse it
   // for visual hierarchy in the unified log instead of a separate panel.
-  line.className = msg.startsWith("  ") ? "log-line log-micro" : "log-line log-macro";
+  const isMacro = !msg.startsWith("  ");
+  line.className = isMacro ? "log-line log-macro" : "log-line log-micro";
   line.textContent = msg;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
   if (window.avatarAPI) window.avatarAPI.onStep(msg);
   bumpActivity();
   bumpProgress(msg);
+  if (isMacro) {
+    const bubbleText = simplifyMacroMessage(msg);
+    if (bubbleText) sayBubble(bubbleText);
+  }
   wireInteractiveLine(line, msg);
 
   // "Elaborazione stem 'X' (...)" / "  'X': ..." narration lines create or
@@ -989,7 +1049,7 @@ function submitInstrumentAnswers() {
 // animation. onEvent() is called by app/api.py's _emit(), fed straight from
 // the on_event callbacks threaded through mixengine.py/masterengine.py.
 
-let eqBands = {}; // key -> {freq, gain} — accumulates the bus EQ shape as it's built
+let eqBands = {}; // key -> {freq, gain} — the currently-drawn curve (bus tilt + at most one stem's own bands, see renderStemChannelStrip)
 
 const FREQ_MIN = 20;
 const FREQ_MAX = 20000;
@@ -1099,6 +1159,11 @@ function getOrCreateStemRow(name) {
 
   row.addEventListener("click", (ev) => {
     if (ev.target.closest(".stem-row-detail")) return; // clicks inside the detail panel don't toggle it shut
+    // Pins the rack's EQ/compressor/de-esser/saturation/reverb modules to
+    // this stem's own chain -- stays pinned until the pipeline moves on to
+    // processing a different stem live, or forever if the render already
+    // finished (see _routeStemEvent).
+    pinStemChannelStrip(name);
     const isOpen = !detail.classList.contains("hidden");
     // Only one channel strip open at a time -- keeps the track list scannable.
     document.querySelectorAll(".stem-row-detail").forEach((d) => d.classList.add("hidden"));
@@ -1256,13 +1321,92 @@ function _describeStemEvent(type, evt) {
   }
 }
 
+// --- Per-track "channel strip" view: the EQ curve + compressor/de-esser/
+// saturation/reverb modules show exactly one stem's own processing, not a
+// running sum of every stem the pipeline has touched so far. _rackDisplayStem
+// is either whichever stem is being processed live right now, or (once the
+// user clicks a stem row) pinned there for inspection -- any later live
+// event for a DIFFERENT stem always wins and breaks the pin, since that
+// means the pipeline has moved on. Once the render finishes, no more
+// per-stem events arrive, so whatever is displayed (live or pinned) just
+// stays, which is also the "finished -> stays on what I clicked" behavior.
+let _rackDisplayStem = null;
+let _rackPinned = false;
+// Bus-level EQ tilt (genre tilt, applied to the whole mix bus, not any one
+// stem) -- kept separate from per-stem bands and always drawn underneath
+// whichever stem's own curve is currently displayed.
+let busEqBands = {};
+
+function _routeStemEvent(evt) {
+  if (!evt.stem) return;
+  if (_rackDisplayStem !== evt.stem) {
+    // Pipeline just moved on to a different stem -- any pin is stale now.
+    _rackDisplayStem = evt.stem;
+    _rackPinned = false;
+  }
+  renderStemChannelStrip(evt.stem);
+}
+
+// Called when the user clicks a stem row (see getOrCreateStemRow below).
+function pinStemChannelStrip(name) {
+  _rackDisplayStem = name;
+  _rackPinned = true;
+  renderStemChannelStrip(name);
+}
+
+function refreshEqDisplay() {
+  if (_rackDisplayStem) {
+    renderStemChannelStrip(_rackDisplayStem);
+  } else {
+    eqBands = { ...busEqBands };
+    redrawEq();
+  }
+}
+
+// Rebuilds the EQ curve and the per-stem plugin modules from exactly one
+// stem's last-known parameters (stemEventParams -- the same source the
+// text channel-strip detail panel already reads), instead of the
+// accumulated total across every stem processed so far.
+function renderStemChannelStrip(name) {
+  const params = stemEventParams.get(name) || {};
+
+  const bands = { ...busEqBands };
+  if (params.resonance_cut) bands.res = { freq: params.resonance_cut.freq_hz, gain_db: params.resonance_cut.gain_db };
+  if (params.presence_boost) bands.pres = { freq: params.presence_boost.freq_hz, gain_db: params.presence_boost.gain_db };
+  if (params.instrument_eq) bands.inst = { freq: params.instrument_eq.freq_hz, gain_db: params.instrument_eq.gain_db };
+  if (params.masking_cut) bands.mask = { freq: params.masking_cut.freq_hz, gain_db: params.masking_cut.gain_db };
+  if (params.midrange_masking_cut) bands.midmask = { freq: params.midrange_masking_cut.freq_hz, gain_db: params.midrange_masking_cut.gain_db };
+  eqBands = bands;
+  redrawEq();
+
+  const fill = document.getElementById("gr-fill");
+  const comp = params.compressor;
+  if (fill) fill.style.width = comp ? `${Math.min(100, (comp.ratio - 1) * 14)}%` : "0%";
+  const compDetail = document.getElementById("comp-detail");
+  if (compDetail) compDetail.textContent = comp ? `${name}: ${comp.ratio.toFixed(1)}:1 @ ${comp.threshold_db}dB` : "in attesa...";
+
+  const dial = document.getElementById("deess-dial");
+  const deess = params.deesser;
+  if (dial) dial.textContent = deess ? `${(((deess.low_hz + deess.high_hz) / 2) / 1000).toFixed(1)}kHz` : "—";
+  const deessDetail = document.getElementById("deess-detail");
+  if (deessDetail) deessDetail.textContent = deess ? `${name}: banda ${deess.low_hz.toFixed(0)}-${deess.high_hz.toFixed(0)}Hz` : "in attesa...";
+
+  const satDetail = document.getElementById("saturation-detail");
+  const sat = params.saturation;
+  if (satDetail) satDetail.textContent = sat ? `${name}: drive ${sat.drive}` : "in attesa...";
+
+  const revDetail = document.getElementById("reverb-detail");
+  const rev = params.reverb_send;
+  if (revDetail) revDetail.textContent = rev ? `${name}: send ${rev.bus} ${Math.round(rev.mix * 100)}%` : "in attesa...";
+}
+
 function onEvent(evt) {
   bumpActivity();
   _recordStemParam(evt);
   switch (evt.type) {
     case "bus_eq_band":
-      eqBands[`bus_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
-      redrawEq();
+      busEqBands[`bus_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
+      refreshEqDisplay();
       flashDetail("eq-detail", `Bus: ${evt.freq_hz}Hz ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB`);
       break;
 
@@ -1277,8 +1421,7 @@ function onEvent(evt) {
       break;
 
     case "resonance_cut":
-      eqBands[`res_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
-      redrawEq();
+      _routeStemEvent(evt);
       flashDetail("eq-detail", `${evt.stem}: risonanza ${evt.freq_hz.toFixed(0)}Hz ${evt.gain_db}dB`);
       markStemStage(evt.stem, "resonance");
       break;
@@ -1295,15 +1438,13 @@ function onEvent(evt) {
     // no event, making the engine look cut-only when it already boosts
     // where the instrument recipe calls for it.
     case "presence_boost":
-      eqBands[`pres_${evt.stem}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
-      redrawEq();
+      _routeStemEvent(evt);
       flashDetail("eq-detail", `${evt.stem}: presenza ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
       addEventChip(`\u{2B06}\u{FE0F} ${evt.stem}: presenza ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB`);
       break;
 
     case "instrument_eq":
-      eqBands[`inst_${evt.stem}_${evt.freq_hz}`] = { freq: evt.freq_hz, gain_db: evt.gain_db };
-      redrawEq();
+      _routeStemEvent(evt);
       flashDetail("eq-detail", `${evt.stem}: ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
       addEventChip(`${evt.gain_db >= 0 ? "\u{2B06}\u{FE0F}" : "\u{2B07}\u{FE0F}"} ${evt.stem}: ${evt.gain_db > 0 ? "+" : ""}${evt.gain_db}dB @ ${evt.freq_hz}Hz`);
       markStemStage(evt.stem, "instrument");
@@ -1312,12 +1453,20 @@ function onEvent(evt) {
     case "compressor":
     case "bus_compressor": {
       const ratio = evt.ratio;
-      const pct = Math.min(100, (ratio - 1) * 14);
-      const fill = document.getElementById("gr-fill");
-      fill.style.width = `${pct}%`;
-      const label = evt.stem ? evt.stem : "bus";
-      flashDetail("comp-detail", `${label}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
-      if (evt.stem) markStemStage(evt.stem, "compressor");
+      if (evt.stem) {
+        _routeStemEvent(evt);
+        flashDetail("comp-detail", `${evt.stem}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+        markStemStage(evt.stem, "compressor");
+      } else if (!_rackPinned) {
+        // Bus-level glue compressor -- not tied to any stem, so it only
+        // drives the shared Compressore module while nothing is pinned;
+        // a pinned per-stem channel strip keeps that module showing its
+        // own stem's compressor instead of being overwritten by the bus.
+        const pct = Math.min(100, (ratio - 1) * 14);
+        const fill = document.getElementById("gr-fill");
+        if (fill) fill.style.width = `${pct}%`;
+        flashDetail("comp-detail", `bus: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+      }
       reactToCompression(ratio, evt.release_ms);
       if (!evt.stem) {
         // No per-stem name on the event -- this is a bus-level compressor,
@@ -1333,9 +1482,8 @@ function onEvent(evt) {
       break;
 
     case "deesser": {
-      const center = Math.round((evt.low_hz + evt.high_hz) / 2);
+      _routeStemEvent(evt);
       const dial = document.getElementById("deess-dial");
-      dial.textContent = `${(center / 1000).toFixed(1)}kHz`;
       dial.classList.remove("pulse");
       void dial.offsetWidth; // restart animation
       dial.classList.add("pulse");
@@ -1432,11 +1580,13 @@ function onEvent(evt) {
     case "masking_cut":
       addEventChip(`\u{1F3B8} ${evt.stem}: mascheramento a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
       markStemStage(evt.stem, "masking");
+      _routeStemEvent(evt);
       break;
 
     case "midrange_masking_cut":
       addEventChip(`\u{1FA98} ${evt.stem}: accumulo medio a ${evt.freq_hz}Hz (${evt.gain_db}dB)`);
       markStemStage(evt.stem, "masking");
+      _routeStemEvent(evt);
       break;
 
     case "music_bus_ms":
@@ -1452,7 +1602,9 @@ function onEvent(evt) {
     case "vocal_space":
       addEventChip(`\u{1F30C} Spazio voce: riverbero+delay ${Math.round(evt.mix * 100)}%`);
       syncAssistantToBpm(evt.bpm);
-      flashDetail("reverb-detail", `Voce: riverbero+delay BPM-sync ${Math.round(evt.mix * 100)}%`);
+      // Bus-level (not tied to any one stem) -- don't stomp on a pinned
+      // per-stem channel strip's own reverb-send reading.
+      if (!_rackPinned) flashDetail("reverb-detail", `Voce: riverbero+delay BPM-sync ${Math.round(evt.mix * 100)}%`);
       break;
 
     case "concurrent_take_leveling":
@@ -1461,6 +1613,7 @@ function onEvent(evt) {
 
     case "saturation":
       addEventChip(`\u{1F525} ${evt.stem}: saturazione (drive ${evt.drive})`);
+      _routeStemEvent(evt);
       flashDetail("saturation-detail", `${evt.stem}: drive ${evt.drive}`);
       markStemStage(evt.stem, "saturation");
       if (window.avatarAPI) window.avatarAPI.onSaturation(evt.drive);
@@ -1468,13 +1621,16 @@ function onEvent(evt) {
 
     case "reverb_send":
       addEventChip(`\u{2601}\u{FE0F} ${evt.stem}: riverbero lungo ${Math.round(evt.mix * 100)}%`);
+      _routeStemEvent(evt);
       flashDetail("reverb-detail", `${evt.stem}: send ${evt.bus} ${Math.round(evt.mix * 100)}%`);
       markStemStage(evt.stem, "reverb");
       break;
 
     case "reverb_bus_render":
       addEventChip(`\u{1F3DB}\u{FE0F} Bus riverbero renderizzati: ${evt.buses.join(", ")}`);
-      flashDetail("reverb-detail", `Bus renderizzati: ${evt.buses.join(", ")}`);
+      // Bus-level (not tied to any one stem) -- don't stomp on a pinned
+      // per-stem channel strip's own reverb-send reading.
+      if (!_rackPinned) flashDetail("reverb-detail", `Bus renderizzati: ${evt.buses.join(", ")}`);
       break;
 
     case "ltas_match":

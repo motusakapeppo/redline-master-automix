@@ -185,6 +185,76 @@ html, body {
   stroke-width: 1.5;
 }
 
+/* Speech bubble: plain-language narration of macro phase changes only
+   (see sayBubble() in app.js) -- sits above the avatar, comic-style with a
+   small tail pointing down at it, fades in/out and auto-hides. Separate
+   from the technical log so non-expert users get a simple "what's
+   happening" without losing the detailed log for anyone who wants it. */
+.speech-bubble {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  z-index: 5;
+  max-width: 230px;
+  background: linear-gradient(180deg, #1c1c1c 0%, var(--bg-panel) 100%);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 0, 63, 0.5);
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 14px rgba(255, 0, 63, 0.25);
+  text-align: center;
+  pointer-events: none;
+}
+
+.speech-bubble::before {
+  /* Glow ring behind the tail, same technique as the module top-accent bar
+     elsewhere -- keeps the bubble reading as part of the same red/black
+     system instead of a generic UI-kit tooltip. */
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 12px rgba(255, 0, 63, 0.08);
+  pointer-events: none;
+}
+
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 14px;
+  background: var(--bg-panel);
+  border-right: 1px solid rgba(255, 0, 63, 0.5);
+  border-bottom: 1px solid rgba(255, 0, 63, 0.5);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.speech-bubble.hidden {
+  display: none;
+}
+
+.speech-bubble.showing {
+  animation: speech-bubble-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1), speech-bubble-fade-out 0.4s ease 3.6s forwards;
+}
+
+@keyframes speech-bubble-pop {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.9); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+@keyframes speech-bubble-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 .assistant-label {
   margin-top: 4px;
   font-size: 10px;

@@ -237,6 +237,11 @@ window.addEventListener('error', function(e) {
     <div id="assistant" class="assistant">
       <canvas id="fx-canvas" class="fx-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
       <div id="easter-egg-label" class="easter-egg-label hidden">◉ REDLINE MODE</div>
+      <!-- Plain-language speech bubble: fires on macro phase changes only
+           (see sayBubble()/simplifyMacroMessage() in app.js), a friendlier
+           parallel narration next to the technical log for non-expert
+           users, without changing the technical log itself. -->
+      <div id="speech-bubble" class="speech-bubble hidden"><span id="speech-bubble-text"></span></div>
       <svg id="avatar-svg" viewBox="0 0 200 320" class="assistant-svg">
         <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="320" opacity="0.15" preserveAspectRatio="xMidYMid slice" />
 
