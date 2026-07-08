@@ -41,8 +41,43 @@ RESERVED_OUTPUT_NAMES = {"mix", "master"}
 # approach naming.py already uses for dx/sx, so it still won't reject an
 # actual instrument whose name merely contains "mix"/"master" as part of a
 # longer unrelated word.
+#
+# Also covers other common conventions for "this file is the whole finished
+# track, not a stem" bounces: "STEREO OUT" (a DAW's master bus output,
+# common export name), "mixdown", "premaster"/"pre-master", "bounce", and
+# compound phrases like "full mix"/"reference mix"/"master bus". Phrases are
+# matched with the same separator-tolerant boundary so "Stereo_Out.wav",
+# "Stereo-Out (2).wav" and "STEREO OUT.wav" all match, but a real instrument
+# whose name merely contains one of these words as part of something longer
+# (e.g. "Mixolydian Pad") does not.
+_SEP = r"[\s_./\\(){}\[\]-]"
+_RESERVED_OUTPUT_SINGLE_WORDS = ("mix", "master", "mixdown", "premaster", "bounce")
+_RESERVED_OUTPUT_PHRASES = (
+    "stereo out",
+    "stereo mix",
+    "stereo master",
+    "full mix",
+    "final mix",
+    "reference mix",
+    "ref mix",
+    "rough mix",
+    "rough master",
+    "master bus",
+)
+
+
+def _phrase_pattern(phrase: str) -> str:
+    return _SEP.join(re.escape(word) for word in phrase.split(" "))
+
+
 _RESERVED_OUTPUT_PATTERN = re.compile(
-    r"(?:^|[\s_./\\(){}\[\]-])(?:mix|master)(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE
+    rf"(?:^|{_SEP})(?:"
+    + "|".join(
+        [re.escape(w) for w in _RESERVED_OUTPUT_SINGLE_WORDS]
+        + [_phrase_pattern(p) for p in _RESERVED_OUTPUT_PHRASES]
+    )
+    + rf")(?:{_SEP}|$)",
+    re.IGNORECASE,
 )
 
 
