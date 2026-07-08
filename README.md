@@ -29,6 +29,10 @@ The entire pipeline is **measurement-driven**: every EQ cut, compression ratio, 
 |---|---|
 | ![Stem rows](RedLineEngine/docs/screenshots/03_stem_rows.png) | ![DAW channel strip](RedLineEngine/docs/screenshots/05_daw_channel_strip.png) |
 
+| Rack pinned to one stem's own chain | Speech bubble (plain-language narration) |
+|---|---|
+| ![Channel strip pinned to a clicked stem](RedLineEngine/docs/screenshots/06_channel_strip_pinned.png) | ![Speech bubble above the avatar](RedLineEngine/docs/screenshots/07_speech_bubble.png) |
+
 ### Project Structure
 
 ```
@@ -710,6 +714,10 @@ L'intera pipeline è **basata su misurazioni**: ogni taglio EQ, ratio di compres
 | Badge catena per-stem | DAW del mix — waveform + channel strip |
 |---|---|
 | ![Righe stem](RedLineEngine/docs/screenshots/03_stem_rows.png) | ![Channel strip DAW](RedLineEngine/docs/screenshots/05_daw_channel_strip.png) |
+
+| Rack agganciato alla catena di una sola traccia | Nuvoletta di dialogo (narrazione in linguaggio semplice) |
+|---|---|
+| ![Channel strip agganciato a una traccia cliccata](RedLineEngine/docs/screenshots/06_channel_strip_pinned.png) | ![Nuvoletta sopra l'avatar](RedLineEngine/docs/screenshots/07_speech_bubble.png) |
 
 ### Struttura del Progetto
 

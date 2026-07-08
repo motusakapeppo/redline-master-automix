@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8799", "--directory", "app/web"],
       "port": 8799
+    },
+    {
+      "name": "web-preview-node",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/static-server.js", "app/web", "8800"],
+      "port": 8800
     }
   ]
 }
