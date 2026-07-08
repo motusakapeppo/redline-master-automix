@@ -207,6 +207,22 @@ _DOUBLE_COMP_MAKEUP_DB = 4.0
 _BV_GLUE_MAKEUP_DB = 3.0
 
 
+_SILENT_STEM_DBFS = -90.0  # same threshold PreFlightValidator uses to flag "silenzio totale"
+
+
+def _is_silent_stem(audio: np.ndarray) -> bool:
+    """A stem whose peak is below this is contributing essentially zero
+    energy (a broken export, an empty placeholder track, etc.) -- counting
+    it toward a power-preserving 1/sqrt(N) denominator still divides the
+    *real* stems down as if it were a full contributing layer, over-cutting
+    them for nothing. Used only to decide what counts toward N in gain
+    formulas below, never to skip processing the stem itself."""
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak <= 0.0:
+        return True
+    return 20.0 * np.log10(peak) < _SILENT_STEM_DBFS
+
+
 def _describe(d: StemDescriptor) -> str:
     bits = [d.role]
     if d.role == "vocal":
@@ -1133,9 +1149,17 @@ def render_mix(
         # happen to have the most natural energy dominate the pile while
         # quieter texture layers get buried under it -- heard as "the
         # instrumental is unbalanced, some instruments barely there".
-        other_gain = 1.0 if len(other_names) <= 2 else float(np.sqrt(2.0 / len(other_names)))
-        if len(other_names) > 2:
-            on_step(f"Bilanciamento strumenti 'other': {len(other_names)} strati -> {20 * np.log10(other_gain):+.1f}dB")
+        # Count only stems that actually carry signal -- a silent/broken
+        # export (bad bounce, empty placeholder track) contributes nothing
+        # to the sum but, if counted, still divides every *real* layer down
+        # as if it were one more full contributing instrument. Found in
+        # practice: a real session with several genuinely-silent exported
+        # stems alongside the real instruments had its whole instrumental
+        # bed over-attenuated for tracks that added zero actual sound.
+        active_other_count = sum(1 for name in other_names if not _is_silent_stem(processed[name]))
+        other_gain = 1.0 if active_other_count <= 2 else float(np.sqrt(2.0 / active_other_count))
+        if active_other_count > 2:
+            on_step(f"Bilanciamento strumenti 'other': {active_other_count} strati attivi (su {len(other_names)} totali) -> {20 * np.log10(other_gain):+.1f}dB")
         music_bus = np.zeros((n, 2), dtype=np.float32)
         for name in other_names:
             music_bus += processed[name] * other_gain
@@ -1212,10 +1236,13 @@ def render_mix(
     # loudness roughly stable regardless of how many instrumental stems feed
     # it, instead of climbing with every added track.
     non_vocal_names = [name for name in processed if name not in other_names and name not in lead_names]
-    instrumental_layers = len(non_vocal_names) + (1 if other_names else 0)
+    # Same silent-stem exclusion as other_gain above: a dead/broken stem
+    # shouldn't count as "one more layer" diluting the real ones.
+    active_non_vocal_count = sum(1 for name in non_vocal_names if not _is_silent_stem(processed[name]))
+    instrumental_layers = active_non_vocal_count + (1 if music_bus is not None else 0)
     instrumental_gain = 1.0 if instrumental_layers <= 2 else float(np.sqrt(2.0 / instrumental_layers))
     if instrumental_layers > 2:
-        on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati -> {20 * np.log10(instrumental_gain):+.1f}dB")
+        on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati attivi -> {20 * np.log10(instrumental_gain):+.1f}dB")
 
     if vocal_main_bus is not None:
         notify_bus("vocal_main", vocal_main_bus)
