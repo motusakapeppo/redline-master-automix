@@ -58,8 +58,23 @@ def _band_ratio(signal: np.ndarray, sr: int, band_hz: tuple[float, float]) -> fl
     return band_energy / total_energy
 
 
-def find_masking_cut(instrumental_audio: np.ndarray, vocal_audio: np.ndarray, sr: int) -> MaskingCut | None:
-    vocal_ratio = _band_ratio(vocal_audio, sr, PRESENCE_BAND_HZ)
+def find_masking_cut(
+    instrumental_audio: np.ndarray, vocal_audio: np.ndarray, sr: int, _ratio_cache: dict | None = None
+) -> MaskingCut | None:
+    """`_ratio_cache`, when given, memoizes the vocal-side band ratio
+    (a pure function of `vocal_audio`/`sr` only) under key "presence" --
+    callers that invoke this once per instrumental stem against the same
+    `vocal_audio` (mixengine's per-stem masking loop) pass the same dict
+    across calls so the vocal side's band-split filtering isn't redone
+    identically for every stem. Callers that call this once (or with a
+    different vocal_audio each time) simply don't pass a cache and get
+    the exact same result as before."""
+    if _ratio_cache is not None and "presence" in _ratio_cache:
+        vocal_ratio = _ratio_cache["presence"]
+    else:
+        vocal_ratio = _band_ratio(vocal_audio, sr, PRESENCE_BAND_HZ)
+        if _ratio_cache is not None:
+            _ratio_cache["presence"] = vocal_ratio
     if vocal_ratio < VOCAL_PRESENCE_MIN:
         return None  # the vocal doesn't really occupy this band in this song
 
@@ -72,12 +87,20 @@ def find_masking_cut(instrumental_audio: np.ndarray, vocal_audio: np.ndarray, sr
     return MaskingCut(freq=PRESENCE_CENTER_HZ, gain_db=cut_db, q=1.0)
 
 
-def find_midrange_masking_cut(instrumental_audio: np.ndarray, vocal_audio: np.ndarray, sr: int) -> MaskingCut | None:
+def find_midrange_masking_cut(
+    instrumental_audio: np.ndarray, vocal_audio: np.ndarray, sr: int, _ratio_cache: dict | None = None
+) -> MaskingCut | None:
     """Same principle as find_masking_cut, but for the 300-800Hz body/mud
     band instead of the 2-5kHz presence band -- catches instrumental
     clutter that muddies vocal clarity without ever showing up as presence-
-    band competition."""
-    vocal_ratio = _band_ratio(vocal_audio, sr, MIDRANGE_BAND_HZ)
+    band competition. See find_masking_cut for `_ratio_cache` semantics
+    (memoized here under key "midrange", independent of the "presence" key)."""
+    if _ratio_cache is not None and "midrange" in _ratio_cache:
+        vocal_ratio = _ratio_cache["midrange"]
+    else:
+        vocal_ratio = _band_ratio(vocal_audio, sr, MIDRANGE_BAND_HZ)
+        if _ratio_cache is not None:
+            _ratio_cache["midrange"] = vocal_ratio
     if vocal_ratio < MIDRANGE_VOCAL_MIN:
         return None
 

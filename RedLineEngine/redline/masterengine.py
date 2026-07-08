@@ -93,10 +93,20 @@ def _soft_clip(signal: np.ndarray, ceiling_db: float, drive: float = 1.6) -> np.
     return (clipped * ceiling).astype(np.float32)
 
 
-def _split_three_bands(mono: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _band_split_filters(sr: int) -> tuple[np.ndarray, np.ndarray]:
+    """Filter design (sos coefficients) depends only on `sr`, not on the
+    signal -- computed once per _multiband_compress call and reused across
+    channels instead of re-running butter() identically for every channel."""
     nyquist = sr / 2.0
     sos_low = butter(4, MULTIBAND_LOW_HZ / nyquist, btype="lowpass", output="sos")
     sos_high = butter(4, MULTIBAND_HIGH_HZ / nyquist, btype="highpass", output="sos")
+    return sos_low, sos_high
+
+
+def _split_three_bands(
+    mono: np.ndarray, sr: int, sos_filters: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    sos_low, sos_high = sos_filters if sos_filters is not None else _band_split_filters(sr)
     low = sosfiltfilt(sos_low, mono)
     high = sosfiltfilt(sos_high, mono)
     mid = mono - low - high
@@ -114,8 +124,9 @@ def _multiband_compress(
     own gentle recipe, sums back — glue that doesn't let the sub-bass's
     transients drag the vocal/presence range's dynamics around, or vice versa."""
     out = np.zeros_like(signal)
+    sos_filters = _band_split_filters(sr)
     for ch in range(signal.shape[1]):
-        low, mid, high = _split_three_bands(signal[:, ch].astype(np.float64), sr)
+        low, mid, high = _split_three_bands(signal[:, ch].astype(np.float64), sr, sos_filters)
         low = Pedalboard([Compressor(**MULTIBAND_RECIPES["low"])])(low.reshape(1, -1).astype(np.float32), sr).reshape(-1)
         mid = Pedalboard([Compressor(**MULTIBAND_RECIPES["mid"])])(mid.reshape(1, -1).astype(np.float32), sr).reshape(-1)
         high = Pedalboard([Compressor(**MULTIBAND_RECIPES["high"])])(high.reshape(1, -1).astype(np.float32), sr).reshape(-1)

@@ -1044,10 +1044,16 @@ def render_mix(
     # dynamic (vocal-triggered) ducking below rather than replacing it.
     if lead_names:
         vocal_reference = sum(processed[n] for n in lead_names)
+        # vocal_reference is the same array for every "other" stem below, so
+        # the vocal-side presence/midrange band ratios (which only depend on
+        # vocal_reference/sr, not on the instrumental stem) are measured once
+        # here and reused instead of re-filtering the same vocal audio for
+        # every instrumental stem in the loop.
+        _vocal_masking_ratio_cache: dict = {}
         for name, role in roles.items():
             if role != "other":
                 continue
-            cut = find_masking_cut(processed[name], vocal_reference, sr)
+            cut = find_masking_cut(processed[name], vocal_reference, sr, _vocal_masking_ratio_cache)
             if cut is not None:
                 on_step(f"  '{name}': mascheramento con la voce a {cut.freq:.0f}Hz, taglio preventivo {cut.gain_db:.1f}dB")
                 on_event({"type": "masking_cut", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1)})
@@ -1056,7 +1062,7 @@ def render_mix(
             # Same principle, lower band (300-800Hz): mud/honk that muddies
             # vocal body/clarity without ever showing up in the 2-5kHz
             # presence-band check above.
-            mid_cut = find_midrange_masking_cut(processed[name], vocal_reference, sr)
+            mid_cut = find_midrange_masking_cut(processed[name], vocal_reference, sr, _vocal_masking_ratio_cache)
             if mid_cut is not None:
                 on_step(f"  '{name}': accumulo medio-basso con la voce a {mid_cut.freq:.0f}Hz, taglio {mid_cut.gain_db:.1f}dB")
                 on_event({"type": "midrange_masking_cut", "stem": name, "freq_hz": mid_cut.freq, "gain_db": round(mid_cut.gain_db, 1)})
