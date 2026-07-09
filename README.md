@@ -35,6 +35,8 @@ The entire pipeline is **measurement-driven**: every EQ cut, compression ratio, 
 
 ![Cinematic boot sequence](RedLineEngine/docs/screenshots/08_boot_sequence.png)
 
+![Plugin explainer animations: compressor peak easing to threshold, de-esser catching sibilance, reverb echo rings, saturation waveform warming, limiter bouncing off the ceiling, mid/side stereo spread](RedLineEngine/docs/screenshots/09_plugin_animations.png)
+
 ### Project Structure
 
 ```
@@ -289,6 +291,7 @@ Expect the biggest wall-clock improvement on sessions with many stems (backing v
 - **Glassmorphism + layered depth**: the log terminal, result cards, and Director Mode panel now use a subtle backdrop blur, layered gradients, and softer/larger shadows instead of flat single-color panels; rack module cards lift and glow more on hover.
 - **UI sound design**: short, quiet `Web Audio` blips for deliberate interactions — button clicks, panel open/close, screen transitions, rack-module hover. Deliberately *not* wired to high-frequency events (per-stem log lines fire dozens of times a second during a render) — that would be a buzz, not a cue.
 - **Progress milestone bubbles**: the speech bubble now also fires flavor lines at 25/50/75% progress ("Si comincia a sentire la forma del pezzo...", "Siamo a metà, e suona già bene..."), independent of the macro-phase bubbles, each firing once per render.
+- **Plugin explainer animations**: a small `<canvas>` per module now animates what that DSP stage actually *does* to the signal, driven by the real event payload — the Compressore's peak marker eases down toward the real threshold line by an amount scaled to the real ratio; the De-esser's mini spectrum shows the sibilance band spiking then getting ducked; Saturazione morphs a clean sine into a warmed/rounded wave scaled by the real drive; Riverbero draws expanding echo rings scaled by the real wet mix; Master/Limiter shows a peak bouncing off the real ceiling; Mid/Side spreads two side blobs outward from a fixed mono center. All six re-fire when a pinned stem's channel strip is shown, not just on the live event.
 
 #### Avatar System
 
@@ -749,6 +752,8 @@ L'intera pipeline è **basata su misurazioni**: ogni taglio EQ, ratio di compres
 
 ![Sequenza di boot cinematica](RedLineEngine/docs/screenshots/08_boot_sequence.png)
 
+![Animazioni esplicative dei plugin: picco del compressore che scende verso la soglia, de-esser che cattura la sibilanza, anelli d'eco del riverbero, onda della saturazione che si scalda, limiter che rimbalza sul soffitto, allargamento stereo mid/side](RedLineEngine/docs/screenshots/09_plugin_animations.png)
+
 ### Struttura del Progetto
 
 ```
@@ -1002,6 +1007,7 @@ Il miglioramento maggiore si nota su sessioni con molti stem (stack di cori, bat
 - **Glassmorphism e profondità stratificata**: il terminale di log, le result card e il pannello Director Mode ora usano una sfocatura di sfondo sottile, gradienti stratificati e ombre più morbide/ampie invece di pannelli piatti a colore unico; i moduli del rack si sollevano e si illuminano di più al passaggio del mouse.
 - **Sound design dell'interfaccia**: brevi e discreti bip Web Audio per interazioni deliberate — click sui bottoni, apertura/chiusura pannelli, transizioni di schermata, hover sui moduli rack. Deliberatamente *non* collegati a eventi ad alta frequenza (le righe di log per-stem sparano dozzine di volte al secondo durante un render) — sarebbe un ronzio, non un segnale.
 - **Nuvolette ai traguardi di avanzamento**: la nuvoletta di dialogo ora spara anche frasi di atmosfera al 25/50/75% di avanzamento ("Si comincia a sentire la forma del pezzo...", "Siamo a metà, e suona già bene..."), indipendenti dalle nuvolette di macro-fase, ciascuna una sola volta per render.
+- **Animazioni esplicative dei plugin**: un piccolo `<canvas>` per modulo ora anima cosa fa davvero quello stadio DSP al segnale, pilotato dal payload reale dell'evento — il marker di picco del Compressore scende verso la vera linea di soglia di una quantità scalata sul vero ratio; il mini-spettro del De-esser mostra la banda sibilante che sale e poi viene "ammorbidita"; la Saturazione trasforma un seno pulito in un'onda scaldata/arrotondata scalata sul vero drive; il Riverbero disegna anelli d'eco che si espandono scalati sul vero mix wet; Master/Limiter mostra un picco che rimbalza sul vero soffitto; Mid/Side allarga due bolle laterali da un centro mono fisso. Tutte e sei si riattivano anche quando si mostra il channel strip di una traccia agganciata, non solo sull'evento live.
 
 #### Sistema Avatar
 
