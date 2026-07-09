@@ -58,6 +58,15 @@ REGISTER_HINTS = {
 
 _DX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])dx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
 _SX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])sx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+# English R/L convention (as common as dx/sx in practice, especially for
+# doubles/harmonies exported by non-Italian DAW templates: "Double_R.wav",
+# "Harmony (L).wav"). Single-letter tokens are dangerous as a plain
+# substring (would match "r" or "l" inside almost anything), so these are
+# matched the same word-boundary way as dx/sx -- only a standalone "r"/"l"
+# token bounded by a separator or the start/end of the string counts, never
+# a letter inside a longer word.
+_R_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])(?:r|right)(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+_L_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])(?:l|left)(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
 
 
 def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
@@ -89,9 +98,9 @@ def _first_match(text: str, hint_groups: dict[str, tuple[str, ...]]) -> str | No
 
 
 def _pan_from_name(text: str) -> float:
-    if _DX_PATTERN.search(text):
+    if _DX_PATTERN.search(text) or _R_PATTERN.search(text):
         return 0.8
-    if _SX_PATTERN.search(text):
+    if _SX_PATTERN.search(text) or _L_PATTERN.search(text):
         return -0.8
     return 0.0
 

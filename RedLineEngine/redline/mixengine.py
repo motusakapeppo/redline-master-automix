@@ -81,7 +81,7 @@ from .resonance import find_resonance
 from .alignment import align_to_reference
 from .masking import find_masking_cut, find_midrange_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
-from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES, SYNTH_PAD, GENERIC
+from .instrumentstack import classify_instrument, RECIPES as INSTRUMENT_RECIPES, SYNTH_PAD, GENERIC, genre_bias as instrument_genre_bias
 from .fxsends import genre_space_amount, vocal_send, drum_room_send
 from .leveling import concurrent_take_gain_curves
 from .denoise import denoise as denoise_signal
@@ -173,12 +173,18 @@ KICK_BASS_DUCK_BASE_DB = 3.5
 
 # Music bus (the "other"/harmonic instruments grouped together) Mid/Side EQ:
 # dip the mono center where the vocal needs to sit, widen the sides a touch
-# so the instrumental still reads as large despite the dip. Was -1.5dB --
-# too subtle to create real separation in the vocal's presence band when
-# several instrumental layers stack there; -3dB is still transparent but
-# actually carves enough room (matches the "carve the vocal's shape out of
-# the instrumental" technique from modern mixing references).
-MUSIC_BUS_MID_DIP_DB = -3.0
+# so the instrumental still reads as large despite the dip. Was -1.5dB (too
+# subtle), then -3.0dB -- but this dip is STATIC, applied unconditionally
+# for the whole track, not just while the vocal is actually singing (the
+# dynamic spectral duck below already handles that moment-to-moment job).
+# Confirmed in practice: stacked with the dynamic duck, per-instrument
+# recipe cuts and masking passes, -3dB of *unconditional* tax on top of
+# everything else was a real contributor to "the instrumental sounds buried
+# even where there's no vocal to make room for". Trimmed to -1.8dB -- still
+# audibly carves space during vocal passages (with the dynamic duck doing
+# the heavier lifting there), without permanently taxing instrumental-only
+# sections for no reason.
+MUSIC_BUS_MID_DIP_DB = -1.8
 MUSIC_BUS_SIDE_WIDTH_DB = 1.5
 MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
 
@@ -317,6 +323,7 @@ def _process_stem(
     instrument_overrides: dict[str, str] | None = None,
     instrument_cache: dict[str, str] | None = None,
     lead_fundamental_hint: float | None = None,
+    genre_name: str = "",
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
@@ -336,9 +343,12 @@ def _process_stem(
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
 
     instrument_recipe = None
+    genre_makeup_delta = 0.0
+    genre_reverb_mult = 1.0
     if role == "other":
         instrument_kind = (instrument_overrides or {}).get(name) or (instrument_cache or {}).get(name) or classify_instrument(name, audio, sr)
         instrument_recipe = INSTRUMENT_RECIPES[instrument_kind]
+        genre_makeup_delta, genre_reverb_mult = instrument_genre_bias(instrument_kind, genre_name)
         on_step(f"  '{name}': trattato come '{instrument_kind}'")
         on_event({"type": "instrument_chain", "stem": name, "instrument": instrument_kind})
 
@@ -433,7 +443,7 @@ def _process_stem(
         )
         on_event({"type": "compressor", "stem": name, **other_comp})
         board_fx.append(Compressor(**other_comp))
-        board_fx.append(Gain(gain_db=instrument_recipe.comp_makeup_db))
+        board_fx.append(Gain(gain_db=instrument_recipe.comp_makeup_db + genre_makeup_delta))
     else:
         role_comp = {
             "vocal": dict(threshold_db=-20.0, ratio=2.2, attack_ms=8.0, release_ms=120.0),
@@ -807,6 +817,7 @@ def render_mix(
                 _process_stem, name, working_tracks[name], sr, descriptors[name], _guarded_on_step, _guarded_on_event,
                 instrument_overrides, _instrument_cache,
                 lead_fundamental if name in lead_names else None,
+                analysis.genre.name,
             )
             for name in solo_names
         }
@@ -889,7 +900,8 @@ def render_mix(
             # (synth leads) drier, independent of which depth bucket they
             # landed in.
             instrument_kind = instrument_overrides.get(name) or _instrument_cache.get(name) or classify_instrument(name, processed[name], sr)
-            reverb_bias = INSTRUMENT_RECIPES[instrument_kind].reverb_send_bias
+            _, genre_reverb_mult = instrument_genre_bias(instrument_kind, analysis.genre.name)
+            reverb_bias = INSTRUMENT_RECIPES[instrument_kind].reverb_send_bias * genre_reverb_mult
 
             if d.pan != 0.0:
                 effective_pan = d.pan
@@ -956,8 +968,19 @@ def render_mix(
         vocal_main_bus = np.zeros((n, 2), dtype=np.float32)
         for name in lead_names:
             vocal_main_bus += processed[name]
-        on_step(f"Bus Vocal_Main: {len(lead_names)} tracce lead sommate")
-        on_event({"type": "vocal_main_bus", "stems": lead_names})
+        # Force the lead dead-center: the source file's own L/R balance
+        # (mic bleed, a slightly off-center stereo capture, an accidental
+        # pan left on export...) is never something the mix should inherit
+        # for the ONE element that's supposed to be maximally central. This
+        # folds the direct/dry lead to mono (L=R=average) so it sits exactly
+        # centered no matter what the source file's own stereo image was --
+        # the reverb/delay "space" send added right below stays genuinely
+        # stereo/diffuse on top, which is normal and doesn't undo this; only
+        # the dry signal that dominates localization is locked to center.
+        _lead_mono = vocal_main_bus.mean(axis=1)
+        vocal_main_bus = np.stack([_lead_mono, _lead_mono], axis=1).astype(np.float32)
+        on_step(f"Bus Vocal_Main: {len(lead_names)} tracce lead sommate, centrata al massimo (mono-lock)")
+        on_event({"type": "vocal_main_bus", "stems": lead_names, "centered": True})
 
     # --- Space: a short send-style reverb + BPM-synced delay on the lead
     # vocal (genre/aggressiveness-informed amount), a subtle room send on
@@ -1030,6 +1053,35 @@ def render_mix(
         # post-processing re-alignment coverage.
         lead_ref_for_doubles = sum(processed[n] for n in lead_names if n in processed) if lead_names else None
 
+        # --- Secondary/double panning: real multi-mic sessions almost always
+        # deliver harmonies as a hard-panned L/R pair per register (the
+        # dx/sx or L/R already in the filename says which side), but a
+        # register can also have exactly one take with no panning hint at
+        # all -- previously that lone double defaulted to `d.pan >= 0`,
+        # which is True for pan==0.0 too, silently hard-panning every
+        # unhinted double to the SAME side (and leaving the lead fighting a
+        # one-sided stack instead of a balanced one). Two fixes: a lone
+        # unhinted double in its register is auto-split into a genuine L+R
+        # pair (power-preserving scaled so the split isn't louder than a
+        # single panned take would have been); multiple unhinted doubles
+        # sharing a register are alternated hard L/R instead of all landing
+        # on the same side.
+        register_members: dict[str, list[str]] = {}
+        for name in double_names:
+            register_members.setdefault(results[name][2], []).append(name)
+
+        _auto_split_names: set[str] = set()
+        _alternate_sign: dict[str, float] = {}
+        for register, members in register_members.items():
+            unhinted = [m for m in members if descriptors[m].pan == 0.0]
+            if len(members) == 1 and unhinted:
+                _auto_split_names.add(members[0])
+            elif len(unhinted) > 1:
+                for i, m in enumerate(unhinted):
+                    _alternate_sign[m] = 1.0 if i % 2 == 0 else -1.0
+
+        _SPLIT_GAIN = float(np.sqrt(0.5))  # power-preserving: two panned copies shouldn't sum louder than one
+
         for name in double_names:
             d = descriptors[name]
             double_fundamental, hf_ratio, register, out = results[name]
@@ -1043,7 +1095,24 @@ def render_mix(
                     on_event({"type": "post_align", "stem": name, "delay_ms": round(delay / sr * 1000.0, 1)})
 
             recipe = RECIPES[register]
-            hard_pan = recipe.pan_magnitude if d.pan >= 0 else -recipe.pan_magnitude
+            register_buses.setdefault(register, np.zeros((n, 2), dtype=np.float32))
+
+            if name in _auto_split_names:
+                out_r = pan_stereo(out, recipe.pan_magnitude) * _SPLIT_GAIN
+                out_l = pan_stereo(out, -recipe.pan_magnitude) * _SPLIT_GAIN
+                on_step(f"  '{name}': unica doppia nel registro '{register}' senza indicazione L/R -- sdoppiata automaticamente a L+R")
+                on_event({"type": "double_auto_split", "stem": name, "register": register, "pan_magnitude": recipe.pan_magnitude})
+                if recipe.reverb_send > 0.0:
+                    reverb_bus.send(out_r, HALL, recipe.reverb_send * _SPLIT_GAIN)
+                    reverb_bus.send(out_l, HALL, recipe.reverb_send * _SPLIT_GAIN)
+                    on_event({"type": "reverb_send", "stem": name, "mix": recipe.reverb_send, "bus": HALL})
+                register_buses[register] += out_r + out_l
+                continue
+
+            if name in _alternate_sign:
+                hard_pan = _alternate_sign[name] * recipe.pan_magnitude
+            else:
+                hard_pan = recipe.pan_magnitude if d.pan >= 0 else -recipe.pan_magnitude
             out = pan_stereo(out, hard_pan)
 
             if recipe.reverb_send > 0.0:
@@ -1051,7 +1120,6 @@ def render_mix(
                 on_step(f"  '{name}': inviata al bus Hall condiviso ({recipe.reverb_send * 100:.0f}%) per un effetto diffuso")
                 on_event({"type": "reverb_send", "stem": name, "mix": recipe.reverb_send, "bus": HALL})
 
-            register_buses.setdefault(register, np.zeros((n, 2), dtype=np.float32))
             register_buses[register] += out
 
     backing_vocals_bus = None

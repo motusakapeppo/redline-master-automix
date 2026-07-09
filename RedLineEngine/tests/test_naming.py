@@ -93,6 +93,23 @@ def test_db_prefix_takes_are_recognized_as_vocal_doubles():
         assert d.layer == "double"
     assert alta.register == "high"
     assert bassa.register == "low"
+    # These real filenames end in "- L" -- previously ignored entirely (only
+    # dx/sx were recognized), so every one of these doubles silently
+    # defaulted to pan=0.0 (dead center, fighting the lead for the same
+    # space) despite the file itself already saying which side it belongs on.
+    for d in (falsetto, rap, alta, bassa):
+        assert d.pan < 0
+
+
+def test_english_r_and_l_pan_hints_are_recognized():
+    right = parse_stem("vocals stems/Double Alta - R")
+    left = parse_stem("vocals stems/Double Alta - L")
+    assert right.pan > 0
+    assert left.pan < 0
+    # Single-letter tokens must only match as their own word, never as a
+    # substring inside an unrelated word (e.g. "Rap", "Live", "Room").
+    assert parse_stem("vocals stems/Main (Rap)").pan == 0.0
+    assert parse_stem("vocals stems/Live Room Ambience").pan == 0.0
 
 
 def test_db_does_not_false_positive_inside_unrelated_words():

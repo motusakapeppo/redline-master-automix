@@ -159,6 +159,181 @@ function randomLookAround() {
 }
 randomLookAround();
 
+// --- Plugin explainer animations: small canvas visualizations that show
+// what each DSP stage actually DOES to the signal (a compressor pulling a
+// peak down to threshold, saturation rounding a waveform, reverb rings
+// expanding, a limiter bouncing off the ceiling) instead of just printing
+// numbers. Each is driven by the exact values from the real onEvent
+// payload -- no canned/looping animation, same principle as the rest of
+// the rack.
+
+function _clamp01(x) { return Math.max(0, Math.min(1, x)); }
+
+// Runs drawFn(ctx, w, h, t) once per frame for durationMs, t going 0->1.
+// Cancels any animation already running on the same canvas so rapid-fire
+// events (a stem's compressor firing many times a second) don't stack up
+// competing RAF loops.
+function _runCanvasAnim(canvasId, durationMs, drawFn) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  if (canvas._animId) cancelAnimationFrame(canvas._animId);
+  const start = performance.now();
+  function frame(now) {
+    const t = Math.min(1, (now - start) / durationMs);
+    ctx.clearRect(0, 0, w, h);
+    drawFn(ctx, w, h, t);
+    canvas._animId = t < 1 ? requestAnimationFrame(frame) : null;
+  }
+  canvas._animId = requestAnimationFrame(frame);
+}
+
+// Compressore: a peak marker starts high (loud, uncompressed) and eases
+// down toward the threshold line -- the gap it closes IS the gain
+// reduction, scaled by the real ratio, not a generic squash animation.
+function animateCompressor(canvasId, ratio, thresholdDb) {
+  const threshY = 6 + (1 - _clamp01((thresholdDb + 40) / 40)) * 34;
+  const reduction = Math.min(30, (ratio - 1) * 6);
+  const peakYEnd = Math.min(40, threshY + reduction * 0.4);
+  _runCanvasAnim(canvasId, 550, (ctx, w, h, t) => {
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(0, threshY);
+    ctx.lineTo(w, threshY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const ease = 1 - Math.pow(1 - t, 3);
+    const y = 4 + (peakYEnd - 4) * ease;
+    ctx.fillStyle = "#FF003F";
+    ctx.fillRect(w / 2 - 3, y, 6, h - y);
+    ctx.beginPath();
+    ctx.arc(w / 2, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+  });
+}
+
+// De-esser: a small spectrum where the sibilance band (the bars in the
+// evt.low_hz-high_hz range, highlighted) spikes then gets ducked down --
+// showing the engine "catching" the harsh band, not just a number.
+function animateDeesser(canvasId) {
+  _runCanvasAnim(canvasId, 480, (ctx, w, h, t) => {
+    const bars = 14;
+    const barW = w / bars;
+    const ease = 1 - Math.pow(1 - t, 3);
+    for (let i = 0; i < bars; i++) {
+      const frac = i / (bars - 1);
+      const isSibilance = frac > 0.45 && frac < 0.75;
+      let barH = 6 + Math.abs(Math.sin(i * 1.3)) * 8;
+      if (isSibilance) {
+        barH = 34 - (34 - 10) * ease;
+      }
+      ctx.fillStyle = isSibilance ? "#FF003F" : "rgba(255,255,255,0.15)";
+      ctx.fillRect(i * barW + 1, h - barH, barW - 2, barH);
+    }
+  });
+}
+
+// Saturazione: a dim clean sine (dry) alongside a bright warmed/rounded
+// wave (wet) that morphs further from the clean shape as drive increases --
+// makes "saturation adds harmonics" visible instead of just a drive number.
+function animateSaturation(canvasId, drive) {
+  const amtTarget = Math.min(1, (drive || 0) / 3);
+  _runCanvasAnim(canvasId, 650, (ctx, w, h, t) => {
+    const mid = h / 2;
+    const ease = 1 - Math.pow(1 - t, 3);
+    const amt = amtTarget * ease;
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 3) {
+      const y = mid + Math.sin(x * 0.09) * (h * 0.32);
+      x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "#FF003F";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 3) {
+      const s = Math.sin(x * 0.09);
+      const shaped = s * (1 - amt) + Math.sign(s) * Math.pow(Math.abs(s), 0.5) * amt;
+      const y = mid + shaped * (h * 0.32);
+      x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+}
+
+// Riverbero: concentric rings expanding from a center point, like echoes in
+// a room -- ring brightness/count scaled by the real wet mix percentage.
+function animateReverb(canvasId, mixPct) {
+  _runCanvasAnim(canvasId, 900, (ctx, w, h, t) => {
+    const cx = w / 2, cy = h / 2;
+    for (let i = 0; i < 3; i++) {
+      const delay = i * 0.18;
+      const rt = Math.max(0, Math.min(1, (t - delay) / (1 - delay)));
+      if (rt <= 0) continue;
+      const r = rt * (w * 0.46);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 0, 63, ${(1 - rt) * (0.3 + mixPct / 150)})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+  });
+}
+
+// Master/Limiter: a peak rises toward a ceiling line and bounces back off
+// it -- "the limiter catches the peak right at the ceiling", not a static
+// number.
+function animateLimiter(canvasId) {
+  const ceilY = 6;
+  _runCanvasAnim(canvasId, 520, (ctx, w, h, t) => {
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(0, ceilY);
+    ctx.lineTo(w, ceilY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const bounce = t < 0.6 ? t / 0.6 : 1 - ((t - 0.6) / 0.4) * 0.15;
+    const y = Math.max(ceilY + 3, h - bounce * (h - ceilY - 4));
+    ctx.fillStyle = "#FF003F";
+    ctx.beginPath();
+    ctx.arc(w / 2, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+// Mid/Side: two side blobs spread outward from a fixed mono center dot --
+// the center stays put (content below evt.mono_below_hz is forced mono),
+// only the sides widen.
+function animateMidSide(canvasId) {
+  _runCanvasAnim(canvasId, 600, (ctx, w, h, t) => {
+    const cy = h / 2;
+    const ease = 1 - Math.pow(1 - t, 3);
+    const spread = 10 + ease * (w * 0.32);
+    ctx.beginPath();
+    ctx.arc(w / 2 - spread, cy, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 0, 63, 0.5)";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(w / 2 + spread, cy, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 0, 63, 0.5)";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(w / 2, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+  });
+}
+
 // --- QC canvas "breathing" waveform: a proxy for "the machine is listening"
 // — activity spikes on every real step/event and decays, driving the wave's
 // amplitude, instead of a canned idle loop with no relation to what's happening.
@@ -1597,20 +1772,24 @@ function renderStemChannelStrip(name) {
   if (fill) fill.style.width = comp ? `${Math.min(100, (comp.ratio - 1) * 14)}%` : "0%";
   const compDetail = document.getElementById("comp-detail");
   if (compDetail) compDetail.textContent = comp ? `${name}: ${comp.ratio.toFixed(1)}:1 @ ${comp.threshold_db}dB` : "in attesa...";
+  if (comp) animateCompressor("comp-canvas", comp.ratio, comp.threshold_db);
 
   const dial = document.getElementById("deess-dial");
   const deess = params.deesser;
   if (dial) dial.textContent = deess ? `${(((deess.low_hz + deess.high_hz) / 2) / 1000).toFixed(1)}kHz` : "—";
   const deessDetail = document.getElementById("deess-detail");
   if (deessDetail) deessDetail.textContent = deess ? `${name}: banda ${deess.low_hz.toFixed(0)}-${deess.high_hz.toFixed(0)}Hz` : "in attesa...";
+  if (deess) animateDeesser("deess-canvas");
 
   const satDetail = document.getElementById("saturation-detail");
   const sat = params.saturation;
   if (satDetail) satDetail.textContent = sat ? `${name}: drive ${sat.drive}` : "in attesa...";
+  if (sat) animateSaturation("sat-canvas", sat.drive);
 
   const revDetail = document.getElementById("reverb-detail");
   const rev = params.reverb_send;
   if (revDetail) revDetail.textContent = rev ? `${name}: send ${rev.bus} ${Math.round(rev.mix * 100)}%` : "in attesa...";
+  if (rev) animateReverb("reverb-canvas", rev.mix * 100);
 }
 
 function onEvent(evt) {
@@ -1670,6 +1849,7 @@ function onEvent(evt) {
         _routeStemEvent(evt);
         flashDetail("comp-detail", `${evt.stem}: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
         markStemStage(evt.stem, "compressor");
+        animateCompressor("comp-canvas", ratio, evt.threshold_db);
       } else if (!_rackPinned) {
         // Bus-level glue compressor -- not tied to any stem, so it only
         // drives the shared Compressore module while nothing is pinned;
@@ -1679,6 +1859,7 @@ function onEvent(evt) {
         const fill = document.getElementById("gr-fill");
         if (fill) fill.style.width = `${pct}%`;
         flashDetail("comp-detail", `bus: ${ratio.toFixed(1)}:1 @ ${evt.threshold_db}dB`);
+        animateCompressor("comp-canvas", ratio, evt.threshold_db);
       }
       reactToCompression(ratio, evt.release_ms);
       if (!evt.stem) {
@@ -1702,6 +1883,7 @@ function onEvent(evt) {
       dial.classList.add("pulse");
       flashDetail("deess-detail", `${evt.stem}: banda ${evt.low_hz.toFixed(0)}-${evt.high_hz.toFixed(0)}Hz`);
       markStemStage(evt.stem, "deesser");
+      animateDeesser("deess-canvas");
       reactToDeesser();
       break;
     }
@@ -1750,16 +1932,19 @@ function onEvent(evt) {
     case "soft_clip":
       addEventChip(`\u{2702}\u{FE0F} Soft clip a ${evt.ceiling_db}dB`);
       flashDetail("master-detail", `Soft clip: ceiling ${evt.ceiling_db}dB`);
+      animateLimiter("master-canvas");
       break;
 
     case "mid_side":
       addEventChip(`\u{2194}\u{FE0F} M/S: mono sotto ${evt.mono_below_hz}Hz`);
       flashDetail("midside-detail", `Mono < ${evt.mono_below_hz}Hz, air shelf side`);
+      animateMidSide("midside-canvas");
       break;
 
     case "limiter":
       addEventChip(`\u{1F6A7} Limiter a ${evt.ceiling_db}dB`);
       flashDetail("master-detail", `Limiter: ceiling ${evt.ceiling_db}dB`);
+      animateLimiter("master-canvas");
       break;
 
     case "qc_report": {
@@ -1829,6 +2014,7 @@ function onEvent(evt) {
       _routeStemEvent(evt);
       flashDetail("saturation-detail", `${evt.stem}: drive ${evt.drive}`);
       markStemStage(evt.stem, "saturation");
+      animateSaturation("sat-canvas", evt.drive);
       if (window.avatarAPI) window.avatarAPI.onSaturation(evt.drive);
       break;
 
@@ -1837,6 +2023,7 @@ function onEvent(evt) {
       _routeStemEvent(evt);
       flashDetail("reverb-detail", `${evt.stem}: send ${evt.bus} ${Math.round(evt.mix * 100)}%`);
       markStemStage(evt.stem, "reverb");
+      animateReverb("reverb-canvas", evt.mix * 100);
       break;
 
     case "reverb_bus_render":

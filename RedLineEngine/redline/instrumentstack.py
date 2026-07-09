@@ -38,56 +38,209 @@ GUITAR_ELECTRIC = "guitar_electric"
 KEYS = "keys"
 ORGAN = "organ"
 BRASS = "brass"
+WOODWINDS = "woodwinds"
 PERCUSSION = "percussion"
 CHOIR = "choir"
 SYNTH_PAD = "synth_pad"
 SYNTH_LEAD = "synth_lead"
+BELL = "bell"
+PLUCK = "pluck"
+VOCAL_CHOP = "vocal_chop"
+FX = "fx"
 GENERIC = "generic"  # fallback -- the old one-size-fits-all treatment, kept as a safe default
 
+# Naming library: filename-hint-first classification, deliberately wide and
+# bilingual (EN/IT), covering genre slang, common sample-library/preset
+# naming conventions (Spitfire/EastWest/Kontakt, Serum/Vital/Massive), DAW
+# default track names, and producer abbreviations -- researched against real
+# producer naming conventions across orchestral, band, EDM/trap, and Italian
+# production contexts, not guessed. Tokens known to collide with another
+# category's tokens (bare "hit", "chop", "solo", "chorus", "riff") are
+# deliberately left out or scoped to a longer, unambiguous phrase -- a
+# generic single-word match across many unrelated file types is worse than
+# missing an occasional hit, since it would silently misclassify something
+# else entirely.
 _NAME_HINTS: dict[str, tuple[str, ...]] = {
-    # Bells/chimes (found in a real session's stems: "Bell 1", "Bell
-    # reverb", "Church bell") weren't covered by any category at all and
-    # fell through to the spectral fallback. Bucketed with STRINGS rather
-    # than a plucky synth lead -- a bell's long, airy, decay-rich tone is
-    # closer to what STRINGS' recipe is tuned for (air shelf boost, more
-    # generous reverb send) than a dry, fast-attack pluck treatment.
     STRINGS: (
-        "string", "strings", "violin", "viola", "cello", "archi", "violino", "orchestra", "orchestral",
-        "bell", "bells", "campana", "campane", "chime", "chimes",
+        # "str"/"strs" deliberately excluded -- both are substrings of
+        # common unrelated words ("instrument", "destroy", "extra-...")
+        # and would misfire far more often than they'd correctly help.
+        "string", "strings", "violin", "vln", "violino",
+        "viola", "vla", "cello", "celli", "violoncello", "double bass", "doublebass",
+        "contrabbasso", "contrabass", "archi", "arco", "pizzicato", "pizz", "spiccato",
+        "tremolo strings", "sordino", "con sordino", "fiddle", "ensemble archi",
+        "sezione archi", "quartet", "quartetto", "string quartet", "chamber strings",
+        "orchestra", "orchestral", "sinfonia", "tutti strings",
+        # sample-library patch names (Spitfire/EastWest/Kontakt/Orchestral Tools)
+        "spitfire strings", "bbc so", "bbcso", "albion", "hollywood strings",
+        # Bare "lass" (LA Scoring Strings abbreviation) deliberately
+        # excluded -- substring of "glass"/"class", extremely common in
+        # synth-pad/texture preset names ("Glass Pad").
+        "cinematic strings", "cinestrings", "cinesamples", "berlin strings",
+        "metropolis ark", "sable", "mural",
+        # Checked before PLUCK below so "harp"/"arpa" don't fall through and
+        # get misread by PLUCK's "arp" hint (a plain substring match, and
+        # "harp" contains "arp") -- an orchestral harp's plucked-but-resonant
+        # tone is a closer match to strings/bell territory than a synth pluck.
+        "harp", "arpa",
     ),
-    GUITAR_ACOUSTIC: ("acoustic gtr", "acoustic guitar", "chitarra acustica", "ac gtr", "acgtr"),
+    GUITAR_ACOUSTIC: (
+        "acoustic gtr", "acoustic guitar", "chitarra acustica", "acustica", "ac gtr", "acgtr",
+        "nylon", "classical guitar", "chitarra classica", "12 string", "12-string", "twelve string",
+        "steel string", "dreadnought", "folk guitar", "fingerpick", "fingerstyle",
+    ),
     GUITAR_ELECTRIC: (
-        "electric gtr", "electric guitar", "chitarra elettrica", "elgtr", "e gtr",
-        "distortion", "overdrive", "dist gtr",
+        "electric gtr", "electric guitar", "chitarra elettrica", "elettrica", "elgtr", "e gtr", "egtr",
+        "distortion", "overdrive", "dist gtr", "power chord", "powerchord", "clean gtr", "muted gtr",
+        # Bare "tele"/"strat" deliberately excluded -- "tele" is a substring
+        # of "telephone (fx)" and "strat" of "strategy", both plausible in
+        # unrelated FX/preset names; the full "telecaster"/"stratocaster"
+        # brand names are unambiguous on their own.
+        "lead gtr", "rhythm gtr", "riff gtr", "guitar riff", "palm mute", "telecaster",
+        "stratocaster", "les paul", "humbucker", "chitarra ritmica", "chitarra solista",
     ),
-    KEYS: ("piano", "keys", "tastiera", "rhodes", "wurli"),
+    KEYS: (
+        "piano", "pno", "keys", "kbd", "tastiera", "tastiere", "pianoforte",
+        "rhodes", "wurli", "wurlitzer", "fender rhodes",
+        "electric piano", "epiano", "e-piano", "e piano",
+        "clav", "clavinet", "clavi", "pianet", "toy piano",
+        "grand piano", "upright piano", "felt piano", "una corda", "piano a coda",
+        "synth keys", "stage piano", "cp70", "cp-70", "dx ep", "dx rhodes", "fm piano",
+    ),
     # Split from KEYS -- a Hammond/organ patch wants a very different EQ
     # (present midrange, no piano-style low-mid dip since bass pedals can
     # carry real low end) and a much slower, gentler compressor than a
     # percussive piano attack needs.
-    ORGAN: ("organ", "organo", "hammond", "b3"),
+    ORGAN: (
+        "organ", "organo", "hammond", "b3", "b-3", "leslie", "drawbar",
+        "church organ", "pipe organ", "farfisa", "vox organ", "vox continental",
+        "combo organ", "gospel organ", "organo a canne", "organo da chiesa",
+    ),
     BRASS: (
-        "sax", "tromba", "trumpet", "flauto", "flute", "horn", "brass", "fiati",
-        "clarinet", "clarinetto", "trombone", "tuba",
+        "tromba", "trumpet", "tpt", "trpt", "horn", "horns", "french horn", "fr horn",
+        # Bare "corno" deliberately excluded -- ambiguous with "corno inglese"
+        # (English horn, a WOODWIND despite the name); "corno francese" is
+        # specific enough to stay unambiguous.
+        "corno francese", "brass", "ottoni", "ottone", "sezione ottoni",
+        "trombone", "tuba", "cornet", "flicorno", "flugelhorn", "flugel", "euphonium",
+        "fanfare", "fanfara", "brass stab", "brass hit", "cinebrass", "hollywood brass",
+    ),
+    # Split from BRASS -- flutes/clarinets/oboes/sax are breathy and airy
+    # (sax is acoustically a reed woodwind despite the brass-adjacent metal
+    # body and colloquial "horn section" grouping) where trumpet/trombone are
+    # honk-and-bite; lumping them together meant a flute got a trumpet's
+    # bite-EQ and fast attack, which reads as harsh/unnatural.
+    WOODWINDS: (
+        "flauto", "flute", "flt", "piccolo", "picc", "ottavino", "alto flute", "bass flute",
+        # "clar" deliberately excluded -- substring of "clarity"/"declare",
+        # common in FX/reverb preset names; "clarinet"/"clarinetto" alone
+        # are unambiguous.
+        "clarinet", "clarinetto", "bass clarinet", "oboe", "english horn", "corno inglese",
+        "bassoon", "fagotto", "contrabassoon", "recorder", "flauto dolce",
+        "sax", "saxophone", "sassofono", "alto sax", "tenor sax", "soprano sax", "bari sax",
+        # Bare "ance" (Italian "reeds") deliberately excluded -- substring of
+        # "dance"/"trance", both extremely common in genre/patch names.
+        "fiati legni", "legni", "legno", "woodwind", "woodwinds",
+    ),
+    # Bells/chimes/mallet percussion (found in a real session's stems: "Bell
+    # 1", "Bell reverb", "Church bell") -- own bucket, not lumped with
+    # STRINGS' bowed-swell treatment: a bell's attack is sharp and metallic,
+    # not a slow bow swell, and deserves its own shimmer/decay-tuned recipe.
+    BELL: (
+        "bell", "bells", "campana", "campane", "campanelli", "chime", "chimes",
+        "carillon", "glockenspiel", "glock", "celesta", "celeste",
+        "marimba", "vibraphone", "vibrafono", "vibes",
+        "xylophone", "xylo", "xilofono", "kalimba", "mbira", "thumb piano",
+        "music box", "tubular bells", "hand bells", "sleigh bells", "crotales",
+        "bell tree", "wind chimes", "steel drum", "steelpan", "handpan", "toy piano bell",
     ),
     # Hand/auxiliary percussion (shaker, tambourine, conga...) -- distinct
     # from a drum-kit "drums" role stem (naming.py already routes anything
     # with "perc"/"drum"/"kick" etc. to role=drums before this module ever
     # sees it); these hints only match auxiliary percussion that naming.py's
-    # own role hints don't already catch.
-    PERCUSSION: ("shaker", "tambourine", "tamburello", "conga", "cajon", "bongo", "shekere", "guiro"),
+    # own role hints don't already catch. Includes genre-specific hand
+    # percussion (reggaeton/latin/afrobeat) real sessions actually use.
+    PERCUSSION: (
+        "shaker", "egg shaker", "tambourine", "tamburello", "tamb",
+        "conga", "congas", "bongo", "bongos", "cajon", "cajón", "djembe", "darbuka", "doumbek",
+        "cabasa", "guiro", "güiro", "claves", "clave", "woodblock", "wood block",
+        "cowbell", "campanaccio", "agogo", "agogò", "triangle", "triangolo",
+        "castanet", "castagnette", "castanets", "nacchere", "vibraslap", "ratchet",
+        "tabla", "dholak", "dhol", "udu", "frame drum", "bodhran", "surdo",
+        "timbale", "timbales", "tumba", "shekere",
+        "cuica", "pandeiro", "tamborim", "repique", "berimbau", "sabar", "talking drum",
+        "percussioni", "perc",
+    ),
     # Sampled choir/vocal-ensemble texture used as an instrumental layer,
     # not an actual lead/double vocal take (naming.py's VOCAL_ROLE_HINTS
     # doesn't match "choir"/"coro", so this correctly still reaches "other").
-    CHOIR: ("choir", "coro", "ensemble vocale", "vocal pad", "aahs", "oohs"),
-    SYNTH_PAD: ("pad", "synth pad", "ambient", "texture", "drone", "atmosphere"),
-    SYNTH_LEAD: ("lead synth", "synth lead", "arp", "pluck", "synth"),
+    # "chorus" deliberately excluded -- collides with the song-section word.
+    CHOIR: (
+        "choir", "choirs", "coro", "cori", "aahs", "oohs", "ooh", "mmh", "humming",
+        "vox pad", "voxpad", "vocal pad", "voice pad", "vocal texture", "vocal drone",
+        "angel choir", "angelic choir", "gregorian", "chant", "church choir", "gospel choir",
+        "childrens choir", "boys choir", "vocal ensemble", "ensemble vocale", "wordless choir",
+        "voci femminili", "voci maschili", "pad vocale", "coro gospel", "coro angelico",
+    ),
+    # Chopped/rearranged vocal samples used as a rhythmic/melodic instrument
+    # (EDM/pop production staple) -- distinct from CHOIR (a sustained pad-like
+    # texture): chops are short, plucky, rhythmically active, and should stay
+    # articulate/dry rather than blur into a wash of reverb.
+    VOCAL_CHOP: (
+        "vox chop", "vocal chop", "vocalchop", "voxchop", "chopped vocal", "chopped vox",
+        "vox stab", "vocal stab", "vox stutter", "vocal stutter", "vox loop",
+        "vocal sample", "vox sample", "vocal one shot", "vox oneshot", "topline chop",
+        "hook vox", "tropical vox", "voce campionata", "campione vocale", "chop vocale",
+    ),
+    SYNTH_PAD: (
+        "pad", "pads", "synth pad", "warm pad", "soft pad", "lush pad", "ambient pad",
+        "atmos", "atmosphere", "ambience", "ambient", "drone", "texture", "wash", "swell",
+        "string pad", "analog pad", "poly pad", "evolving pad", "dark pad", "bright pad",
+        "soundscape", "synth bed", "sustain synth", "air pad", "omnisphere",
+        # Italian "tappeto" (literally "carpet") is the standard word for a
+        # sustained pad/bed -- a real, high-value token, not a literal cut/rug.
+        "tappeto", "tappeto sonoro", "ambiente sonoro",
+    ),
+    SYNTH_LEAD: (
+        "lead synth", "synth lead", "synth leads", "topline synth", "top line synth",
+        "hook synth", "main synth", "melody synth", "supersaw", "super saw", "hypersaw",
+        "square lead", "saw lead", "acid lead", "tb303", "tb-303", "trance lead",
+        "hardstyle lead", "festival lead", "detune lead", "unison lead", "mono lead",
+        "poly lead", "solo synth", "synth solo", "riff synth", "linea melodica",
+    ),
+    # Short, plucky, fast-decaying synth elements (arps, plucks, stabs) --
+    # split from SYNTH_LEAD: a sustained lead line wants to hold its note and
+    # cut through, a pluck/arp is rhythmic ear-candy that should stay tight,
+    # dry, and out of the way between its own transients.
+    PLUCK: (
+        "arp", "arps", "arpeggio", "arpeggiator", "arpeggiated", "pluck", "plucks",
+        "synth stab", "chord stab", "house stab", "mallet synth", "plucked synth",
+        "poly pluck", "edm pluck", "future bass pluck", "koto", "shamisen", "sitar",
+        "guzheng", "blip", "sequenza",
+    ),
+    # Non-tonal ear-candy (risers, sweeps, impacts, downlifters, whooshes) --
+    # common in EDM/pop transitions. These aren't really "instruments" in the
+    # tonal-balance sense; they're brief, wideband, and should be left mostly
+    # untouched dynamically (no correcting an already-designed sound effect)
+    # while still getting basic mud control.
+    FX: (
+        "riser", "rise fx", "uplifter", "upsweep", "sweep fx", "downlifter", "downsweep",
+        "impact hit", "impact fx", "sub drop", "drop fx", "whoosh", "woosh", "swoosh",
+        "transition fx", "trans fx", "buildup fx", "noise sweep", "white noise fx",
+        "reverse cymbal", "reverse crash", "backspin", "braam", "braaam", "bwaa",
+        "boomer fx", "sub boom", "downer fx", "glitch fx", "zap", "laser fx", "siren fx",
+        # "air horn"/"airhorn" deliberately excluded -- would collide with
+        # BRASS's "horn"/"horns" (checked earlier in this dict) since a bare
+        # "horn" token is common and legitimate for a real brass stem.
+        "spinback", "tape stop", "filter sweep fx", "cinematic hit",
+        "effetto", "effetti", "transizione", "salita", "discesa", "impatto", "spazzata",
+    ),
     # Bare "guitar"/"gtr"/"chitarra" with no acoustic/electric qualifier defaults
     # to electric (the more common case in pop/rock stem packs) via the
     # fallback pass below, not listed here to keep acoustic/electric detection
     # unambiguous when the file *does* specify.
 }
-_BARE_GUITAR_HINTS = ("guitar", "gtr", "chitarra")
+_BARE_GUITAR_HINTS = ("guitar", "gtr", "git", "guit", "chitarra")
 
 
 @dataclass
@@ -167,10 +320,14 @@ RECIPES: dict[str, InstrumentRecipe] = {
     ),
     # Keys/piano: pianos are famously dynamic (a hard-hit chord and a quiet
     # passage can be 30dB+ apart), so a medium attack lets transients through
-    # while still controlling the average level. The 3kHz dip mirrors the
-    # same "yield to the vocal's presence band" logic already applied to the
-    # music bus as a whole, but as a per-stem head start before that bus
-    # processing even runs.
+    # while still controlling the average level. No static "yield to vocal"
+    # cut here (there used to be one at 3kHz) -- that's now handled entirely
+    # by the bus-level dynamic mechanisms (spectral duck + music-bus M/S dip
+    # + masking-cut passes in mixengine.py), which only attenuate this band
+    # while the vocal is actually singing. A per-instrument *static* cut on
+    # top of those was a redundant, always-on tax on the piano's presence
+    # even during instrumental-only passages -- confirmed as a real
+    # contributor to "everything except drums sounds buried".
     KEYS: InstrumentRecipe(
         hpf_hz=50.0,
         comp_ratio=3.0,
@@ -180,7 +337,6 @@ RECIPES: dict[str, InstrumentRecipe] = {
         comp_makeup_db=3.5,
         extra_eq=[
             EqCut(freq=300.0, gain_db=-2.0, q=1.1, kind="peak"),  # low-mid buildup
-            EqCut(freq=3000.0, gain_db=-1.5, q=1.0, kind="peak"),  # yield to vocal presence
             EqCut(freq=10000.0, gain_db=1.0, q=0.7, kind="high_shelf"),
         ],
     ),
@@ -199,6 +355,24 @@ RECIPES: dict[str, InstrumentRecipe] = {
             EqCut(freq=600.0, gain_db=-2.0, q=1.2, kind="peak"),  # honk
             EqCut(freq=4000.0, gain_db=1.5, q=1.0, kind="peak"),  # bite/presence
         ],
+    ),
+    # Woodwinds: split from BRASS -- a flute/clarinet/oboe's breathy, airy
+    # tone has none of a trumpet's honk-and-bite, so the same EQ made a
+    # flute sound harsh/unnaturally aggressive. Gentler compression (woodwind
+    # dynamics are more about breath control than brass's hard-hit punch),
+    # a lighter mud cut, and an air-shelf lift instead of a presence bite.
+    WOODWINDS: InstrumentRecipe(
+        hpf_hz=200.0,
+        comp_ratio=2.2,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=15.0,
+        comp_release_ms=160.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=400.0, gain_db=-1.2, q=1.0, kind="peak"),  # breath/body mud
+            EqCut(freq=8000.0, gain_db=1.5, q=0.7, kind="high_shelf"),  # air/breathiness
+        ],
+        reverb_send_bias=1.15,
     ),
     # Synth pad: sustained/background texture by design -- rolled-off top
     # end reads as "further back" the same way depth.py's own BACKGROUND
@@ -267,8 +441,10 @@ RECIPES: dict[str, InstrumentRecipe] = {
     ),
     # Choir/vocal-ensemble texture: treated like a diffuse pad rather than
     # a real lead/backing vocal (it isn't one) -- rolled-off top for
-    # distance, gentle compression, wetter reverb so it blurs into the
-    # room instead of competing with the actual lead vocal's presence band.
+    # distance, gentle compression, wetter reverb so it blurs into the room.
+    # No static presence-band cut here either (see KEYS above for why) --
+    # the bus-level dynamic duck/dip/masking already yields to the real lead
+    # vocal only while it's actually singing.
     CHOIR: InstrumentRecipe(
         hpf_hz=150.0,
         comp_ratio=2.0,
@@ -277,10 +453,72 @@ RECIPES: dict[str, InstrumentRecipe] = {
         comp_release_ms=250.0,
         comp_makeup_db=2.5,
         extra_eq=[
-            EqCut(freq=3000.0, gain_db=-1.5, q=1.0, kind="peak"),  # yield to the real lead vocal's presence band
             EqCut(freq=7000.0, gain_db=-1.5, q=0.7, kind="high_shelf"),
         ],
         reverb_send_bias=1.3,
+    ),
+    # Bells/chimes/mallet percussion: sharp metallic attack with a long,
+    # airy decay -- the opposite envelope shape from STRINGS' bow swell, so
+    # it gets its own recipe (fast attack to preserve the strike, a shimmer
+    # shelf for the decay tail) instead of being forced into the strings
+    # treatment it used to share.
+    BELL: InstrumentRecipe(
+        hpf_hz=180.0,
+        comp_ratio=2.0,
+        comp_threshold_db=-20.0,
+        comp_attack_ms=2.0,
+        comp_release_ms=200.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=500.0, gain_db=-1.5, q=1.0, kind="peak"),  # clangy low-mid
+            EqCut(freq=8000.0, gain_db=2.0, q=0.7, kind="high_shelf"),  # shimmer
+        ],
+        reverb_send_bias=1.2,
+    ),
+    # Arps/plucks/stabs: rhythmic ear-candy, not a sustained lead line --
+    # fast attack and fast release keep every note articulate and distinct
+    # instead of smearing into the next one, drier reverb so the rhythm
+    # stays legible in a dense arrangement.
+    PLUCK: InstrumentRecipe(
+        hpf_hz=100.0,
+        comp_ratio=2.5,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=2.0,
+        comp_release_ms=60.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=4000.0, gain_db=1.5, q=1.0, kind="peak"),  # click/definition
+        ],
+        reverb_send_bias=0.75,
+    ),
+    # Vocal chops: short, rhythmically-active vocal samples used as an
+    # instrument, not a real backing vocal -- kept tight, dry and forward
+    # (the opposite treatment from CHOIR) so the chops read as a percussive/
+    # melodic element instead of blurring into a vocal-pad wash.
+    VOCAL_CHOP: InstrumentRecipe(
+        hpf_hz=150.0,
+        comp_ratio=3.0,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=3.0,
+        comp_release_ms=90.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=9000.0, gain_db=1.5, q=0.7, kind="high_shelf"),
+        ],
+        reverb_send_bias=0.85,
+    ),
+    # FX (risers, sweeps, impacts): already-designed sound effects, not
+    # tonal instruments to correct -- minimal, gentle dynamics (just enough
+    # to keep an impact from clipping) and no presence/mud EQ shaping, since
+    # "fixing" a riser's tonal balance usually just makes it sound wrong.
+    FX: InstrumentRecipe(
+        hpf_hz=40.0,
+        comp_ratio=1.5,
+        comp_threshold_db=-12.0,
+        comp_attack_ms=10.0,
+        comp_release_ms=150.0,
+        comp_makeup_db=1.0,
+        reverb_send_bias=0.7,
     ),
 }
 
@@ -330,3 +568,40 @@ def classify_instrument(name: str, audio: np.ndarray, sr: int) -> str:
     if hinted is not None:
         return hinted
     return _spectral_fallback(audio, sr)
+
+
+# --- Genre-aware nudges: the same instrument category shouldn't sound
+# identical in a lush Acoustic/Classical session and a tight, sidechain-
+# driven EDM one. Rather than a full per-genre recipe table (a large
+# combinatorial surface for a fairly subtle effect), this returns a small
+# (makeup_db_delta, reverb_multiplier) nudge applied on top of the
+# instrument's own recipe in mixengine.py -- additive/multiplicative, never
+# replacing the base recipe's own tuning.
+_BRIGHT_SYNTH_KINDS = frozenset({SYNTH_LEAD, SYNTH_PAD, PLUCK, VOCAL_CHOP, FX})
+_WARM_ACOUSTIC_KINDS = frozenset({STRINGS, BRASS, WOODWINDS, KEYS, ORGAN, BELL, GUITAR_ACOUSTIC, CHOIR})
+
+
+def genre_bias(instrument_kind: str, genre_name: str) -> tuple[float, float]:
+    """Returns (makeup_db_delta, reverb_multiplier) for `instrument_kind`
+    given the track's detected/selected genre. Defaults to (0.0, 1.0) --
+    no change -- for any genre/instrument combination not called out below,
+    so this can only ever nudge, never override, the base recipe."""
+    g = genre_name or ""
+    if "EDM" in g or "Urban" in g or "Hip-Hop" in g:
+        # Tight, punchy, sidechain-driven genres: synths get a touch more
+        # forward and drier (less blur competing with the sidechain pump),
+        # acoustic/orchestral elements (when present at all) sit back a
+        # little drier too rather than swimming in room reverb.
+        if instrument_kind in _BRIGHT_SYNTH_KINDS:
+            return (0.5, 0.85)
+        if instrument_kind in _WARM_ACOUSTIC_KINDS:
+            return (0.0, 0.9)
+    if "Acoustic" in g or "Classical" in g or "Jazz" in g:
+        # Roomier, more natural genres: real instruments get a little more
+        # space and warmth, bright synths (when present, e.g. a Jazz/Vintage
+        # electric piano patch) pull back slightly rather than dominating.
+        if instrument_kind in _WARM_ACOUSTIC_KINDS:
+            return (0.3, 1.2)
+        if instrument_kind in _BRIGHT_SYNTH_KINDS:
+            return (-0.3, 0.9)
+    return (0.0, 1.0)

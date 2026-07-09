@@ -213,12 +213,14 @@ window.addEventListener('error', function(e) {
 
         <div class="module">
           <div class="module-title"><span class="module-icon">▤</span>Compressore</div>
+          <canvas id="comp-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
           <div class="module-detail" id="comp-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">◎</span>De-esser</div>
+          <canvas id="deess-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="deess-dial" id="deess-dial">&mdash;</div>
           <div class="module-detail" id="deess-detail">in attesa...</div>
         </div>
@@ -237,21 +239,25 @@ window.addEventListener('error', function(e) {
 
         <div class="module">
           <div class="module-title"><span class="module-icon">〜</span>Riverbero / Spazio</div>
+          <canvas id="reverb-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="module-detail" id="reverb-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">▲</span>Saturazione</div>
+          <canvas id="sat-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="module-detail" id="saturation-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">◆</span>Master (Multiband/Limiter)</div>
+          <canvas id="master-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="module-detail" id="master-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">↔</span>Mid/Side</div>
+          <canvas id="midside-canvas" class="plugin-canvas" width="220" height="46"></canvas>
           <div class="module-detail" id="midside-detail">in attesa...</div>
         </div>
       </div>
