@@ -26,6 +26,7 @@ from redline.session_history import SessionHistory
 from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
+from redline.dsp_utils import finalize_for_export
 
 
 def _downsample_peaks(audio: np.ndarray, points: int) -> list[list[float]]:
@@ -74,6 +75,12 @@ _MIX_HISTORY_CAP = 8
 class Api:
     def __init__(self) -> None:
         self._window: webview.Window | None = None
+        # Set by main.py right after construction -- the local folder the
+        # bundled bottle HTTP server already serves at http://127.0.0.1:<port>/,
+        # so preview WAVs written under `<web_dir>/_preview/` become playable
+        # by a real <audio> element via a plain relative URL, no extra server
+        # needed.
+        self._web_dir: str | None = None
         # One gate per Api instance is fine -- only one render_pipeline call
         # runs at a time from this UI, so there's never a second checkpoint
         # racing the first for the same gate.
@@ -194,6 +201,38 @@ class Api:
         corresponding animated module reacting to these exact numbers,
         instead of a generic canned animation loop."""
         self._js_queue.put(f"onEvent({json.dumps(_sanitize_for_json(evt))})")
+
+    def _beep(self, kind: str = "tick") -> None:
+        """Status ping for the Neural Monitor during phases that have no real
+        audio to play yet (Demucs separation, BPM/key/loudness analysis,
+        reference-track mastering, QC/correction passes) -- a short
+        Web-Audio blip on the JS side, not real track audio, so the monitor
+        is never dead silent while something is actually running. Gated the
+        same way `_audition`/`_audition_mix_stem` are: only when the user
+        has the Neural Monitor switch on."""
+        if config.is_enabled("ENABLE_LIVE_AUDITION"):
+            self._js_queue.put(f"playMonitorBeep({json.dumps(kind)})")
+
+    def _with_heartbeat(self, fn, interval: float = 1.5, kind: str = "tick"):
+        """Runs a single blocking call (Demucs separation, full-track
+        analysis, ...) on the current thread while a background thread fires
+        `_beep` every `interval` seconds -- these calls have no internal
+        progress hooks to wire real audition into, so a periodic beep is the
+        only way the Neural Monitor can stay audibly "alive" for their
+        duration instead of going silent."""
+        stop = threading.Event()
+
+        def _tick() -> None:
+            while not stop.wait(interval):
+                self._beep(kind)
+
+        beeper = threading.Thread(target=_tick, daemon=True)
+        beeper.start()
+        try:
+            return fn()
+        finally:
+            stop.set()
+            beeper.join(timeout=0.1)
 
     def toggle_neural_monitor(self, is_enabled: bool) -> None:
         """Called by the GUI's Neural Monitor switch -- flips the flag for
@@ -419,7 +458,7 @@ class Api:
         reference = prefs.get("reference") or None
         if reference:
             master_path = os.path.join(out_dir, "master.wav")
-            render_master_reference(mix_path, reference, master_path, on_step=self._narrate)
+            render_master_reference(mix_path, reference, master_path, on_step=self._narrate, on_beep=self._beep)
         else:
             platform = prefs.get("platform", "auto")
             self._last_platform = platform
@@ -427,9 +466,10 @@ class Api:
                 mixed, stems.sample_rate, analysis, platform=platform,
                 on_step=self._narrate, on_event=self._emit,
                 on_audition=self._audition if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+                on_beep=self._beep,
             )
             master_path = os.path.join(out_dir, "master.wav")
-            sf.write(master_path, mastered, stems.sample_rate)
+            sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")
             self._last_master = mastered
         self._narrate(f"Master salvato: {master_path}")
         return master_path
@@ -439,11 +479,14 @@ class Api:
             os.makedirs(out_dir, exist_ok=True)
 
             self._narrate("Carico l'audio...")
-            stems = load_auto(input_path, work_dir=os.path.join(out_dir, "_demucs"), on_step=self._narrate)
+            stems = self._with_heartbeat(
+                lambda: load_auto(input_path, work_dir=os.path.join(out_dir, "_demucs"), on_step=self._narrate),
+                kind="separating",
+            )
             self._narrate(f"Caricati {len(stems.names())} stem: {', '.join(stems.names())} @ {stems.sample_rate}Hz")
 
             self._narrate("Analizzo bpm, tonalità, genere, loudness e bilanciamento spettrale...")
-            analysis = analyze(stems)
+            analysis = self._with_heartbeat(lambda: analyze(stems), kind="analyzing")
             self._narrate(
                 f"BPM {analysis.bpm:.1f}  |  Tonalità {analysis.key_name}  |  Genere {analysis.genre.name}  |  "
                 f"{analysis.mix_lufs:.1f} LUFS  |  Crest {analysis.mix_crest:.1f}"
@@ -459,7 +502,7 @@ class Api:
             )
 
             mix_path = os.path.join(out_dir, "mix.wav")
-            sf.write(mix_path, mixed, stems.sample_rate)
+            sf.write(mix_path, finalize_for_export(mixed), stems.sample_rate, subtype="PCM_24")
             self._narrate(f"Mix salvato: {mix_path}")
 
             # Cache for the post-render "NO MIX / CON MIX / CON MASTERING"
@@ -608,7 +651,7 @@ class Api:
             )
 
             mix_path = os.path.join(out_dir, "mix.wav")
-            sf.write(mix_path, mixed, stems.sample_rate)
+            sf.write(mix_path, finalize_for_export(mixed), stems.sample_rate, subtype="PCM_24")
             self._narrate(f"Mix aggiornato: {mix_path}")
 
             dry_sum = np.zeros_like(mixed)
@@ -669,7 +712,7 @@ class Api:
             prev = self._mix_undo_stack.pop()
             self._last_mix = prev["mixed"]
             self._last_mix_path = prev["mix_path"]
-            sf.write(self._last_mix_path, self._last_mix, self._last_sr)
+            sf.write(self._last_mix_path, finalize_for_export(self._last_mix), self._last_sr, subtype="PCM_24")
             self._narrate("Annullato: torno alla versione precedente del mix.")
             return {"ok": True}
         except Exception as exc:
@@ -686,7 +729,7 @@ class Api:
             nxt = self._mix_redo_stack.pop()
             self._last_mix = nxt["mixed"]
             self._last_mix_path = nxt["mix_path"]
-            sf.write(self._last_mix_path, self._last_mix, self._last_sr)
+            sf.write(self._last_mix_path, finalize_for_export(self._last_mix), self._last_sr, subtype="PCM_24")
             self._narrate("Ripristinata la versione successiva del mix.")
             return {"ok": True}
         except Exception as exc:
@@ -722,66 +765,48 @@ class Api:
         dest = result if isinstance(result, str) else result[0]
 
         try:
-            sf.write(dest, buf, self._last_sr)
+            sf.write(dest, finalize_for_export(buf), self._last_sr, subtype="PCM_24")
             self._narrate(f"Esportato: {dest}")
             return {"ok": True, "path": dest}
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": str(exc)}
 
-    def audition_stage(self, stage: str, loudness_match: bool = False) -> dict:
-        """Post-render re-evaluation: play a chunk of one of the three
-        cached stages (dry stems / mixed / mastered) through real speakers
-        so the user can A/B them in-app instead of only in a file browser.
-        Independent of the live "Neural Monitor" toggle -- this is an
-        explicit, one-off listen request, not the automatic before/after
-        during a render.
+    def get_preview_urls(self, loudness_match: bool = False) -> dict:
+        """Writes the cached no-mix/mix/master buffers out as real WAV files
+        under `<web_dir>/_preview/`, which the bundled bottle HTTP server
+        already serves at http://127.0.0.1:<port>/ (see main.py) -- so the
+        frontend can point a genuine <audio> element at them for full-track,
+        seekable playback with real transport controls, instead of the old
+        `audition_stage`/`audition_blend` approach of playing a fixed 2s
+        "loudest window" snippet through native speakers via sd.play with no
+        scrubbing at all.
 
-        If ``loudness_match=True``, normalizes the buffer to -16 LUFS before
-        playback so the comparison is at equal perceived loudness."""
-        buffers = {"dry": self._last_dry, "mix": self._last_mix, "master": self._last_master}
-        buf = buffers.get(stage)
-        if buf is None or self._last_sr is None:
-            return {"ok": False, "error": "Nessun render disponibile per questo stadio."}
+        If ``loudness_match=True``, every available stage is normalized to
+        -16 LUFS before being written, so switching NO MIX/MIX/MASTERING is
+        a fair comparison at equal perceived loudness instead of the
+        (usually much louder) mastered version just sounding "better"."""
+        if not self._web_dir or self._last_sr is None:
+            return {"ok": False, "error": "Nessun render disponibile per l'anteprima."}
         try:
-            from redline.audition import driver, extract_smart_chunk
-            from redline.dsp_utils import loudness_match as lm
+            preview_dir = os.path.join(self._web_dir, "_preview")
+            os.makedirs(preview_dir, exist_ok=True)
 
-            playback = buf
+            sources = {"no_mix": self._last_dry, "mix": self._last_mix, "master": self._last_master}
             if loudness_match:
-                self._narrate(f"Ascolto: {stage} (LUFS normalizzato)...")
-                playback = lm(buf, target_lufs=-16.0)
-            else:
-                self._narrate(f"Ascolto: {stage}...")
+                from redline.dsp_utils import loudness_match as lm
+                sources = {name: (lm(buf, target_lufs=-16.0) if buf is not None else None) for name, buf in sources.items()}
 
-            chunk = extract_smart_chunk(playback, self._last_sr)
-            driver.play_chunk(chunk, self._last_sr)
-            return {"ok": True}
-        except Exception as exc:
-            traceback.print_exc()
-            return {"ok": False, "error": str(exc)}
+            cache_bust = int(time.time())
+            urls: dict[str, str] = {}
+            for name, buf in sources.items():
+                if buf is None:
+                    continue
+                sf.write(os.path.join(preview_dir, f"{name}.wav"), finalize_for_export(buf), self._last_sr, subtype="PCM_24")
+                urls[name] = f"_preview/{name}.wav?v={cache_bust}"
 
-    def audition_blend(self, stage_a: str, stage_b: str, t: float) -> dict:
-        """Quick-compare slider: NOT a live real-time crossfade (auditionStage
-        plays through native speakers via sd.play, there's no browser-side
-        audio bus to crossfade on) -- instead computes a static (1-t)*a + t*b
-        blend of the two cached buffers in numpy and plays that one blend on
-        request. Each slider release triggers one fresh blend+play, same
-        mechanism as audition_stage just with two sources instead of one."""
-        buffers = {"dry": self._last_dry, "mix": self._last_mix, "master": self._last_master}
-        a, b = buffers.get(stage_a), buffers.get(stage_b)
-        if a is None or b is None or self._last_sr is None:
-            return {"ok": False, "error": "Stadi non disponibili per il confronto."}
-        try:
-            from redline.audition import driver, extract_smart_chunk
-
-            t = max(0.0, min(1.0, float(t)))
-            n = min(a.shape[0], b.shape[0])
-            blend = (1 - t) * a[:n] + t * b[:n]
-            self._narrate(f"Ascolto: confronto {stage_a}/{stage_b} @ {t:.2f}...")
-            chunk = extract_smart_chunk(blend, self._last_sr)
-            driver.play_chunk(chunk, self._last_sr)
-            return {"ok": True}
+            duration_sec = float(self._last_mix.shape[0]) / self._last_sr if self._last_mix is not None else None
+            return {"ok": True, "urls": urls, "duration_sec": duration_sec}
         except Exception as exc:
             traceback.print_exc()
             return {"ok": False, "error": str(exc)}
@@ -811,7 +836,7 @@ class Api:
                 self._last_mix, self._last_sr, self._last_analysis,
                 platform=self._last_platform,
                 on_step=self._narrate, on_event=self._emit,
-                on_audition=None,
+                on_audition=None, on_beep=self._beep,
             )
 
             # Lightweight, honest post-adjustment layer -- these do NOT
@@ -842,7 +867,7 @@ class Api:
 
             self._feedback_version += 1
             master_path = os.path.join(self._last_out_dir, f"master_v{self._feedback_version}.wav")
-            sf.write(master_path, mastered, self._last_sr)
+            sf.write(master_path, finalize_for_export(mastered), self._last_sr, subtype="PCM_24")
             self._last_master = mastered
             self._narrate(f"Nuova versione salvata: {master_path}")
             return _sanitize_for_json({"ok": True, "master_path": master_path, "version": self._feedback_version})

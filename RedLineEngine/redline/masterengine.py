@@ -21,6 +21,7 @@ from .analysis.loudness import crest_factor
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
 AuditionCallback = Callable[[np.ndarray, np.ndarray, int], None]
+BeepCallback = Callable[[], None]
 
 
 def _noop(_msg: str) -> None:
@@ -28,6 +29,10 @@ def _noop(_msg: str) -> None:
 
 
 def _noop_event(_evt: dict) -> None:
+    pass
+
+
+def _noop_beep() -> None:
     pass
 
 
@@ -190,6 +195,7 @@ def _apply_reference_correction(
     ceiling: float,
     on_step: StepCallback,
     on_event: EventCallback,
+    on_beep: BeepCallback = _noop_beep,
 ) -> tuple[np.ndarray, list[str]]:
     """Bounded iterative feedback loop against reference_profiles.py's
     non-spectral targets (LUFS, crest factor, mono/stereo-width
@@ -228,6 +234,7 @@ def _apply_reference_correction(
             "mono_compatibility": round(m["mono_compatibility"], 3),
             "lufs_delta": round(lufs_delta, 2), "crest_delta": round(crest_delta, 2), "width_delta": round(width_delta, 3),
         })
+        on_beep()
 
         within_tolerance = (
             abs(lufs_delta) < MASTER_LUFS_TOLERANCE
@@ -306,6 +313,7 @@ def render_master(
     reference: np.ndarray | None = None,
     reference_sr: int | None = None,
     on_audition: AuditionCallback | None = None,
+    on_beep: BeepCallback = _noop_beep,
 ) -> np.ndarray:
     meter = pyln.Meter(sr)
     mono_ref = mixed.mean(axis=1) if mixed.ndim == 2 else mixed
@@ -329,18 +337,23 @@ def render_master(
 
     on_step(f"Soft clipper a {CLIP_CEILING_DB}dB (scarica i picchi estremi prima del limiter)")
     on_event({"type": "soft_clip", "ceiling_db": CLIP_CEILING_DB})
+    on_beep()
     clipped = _soft_clip(glued, CLIP_CEILING_DB)
 
     polished = _mid_side_polish(clipped, sr, on_step, on_event)
+    on_beep()
 
     if reference is not None and config.is_enabled("ENABLE_LTAS_MATCHING"):
         on_step("Matchering FIR: clono l'impronta spettrale della reference track...")
+        on_beep()
         polished, ltas_report = match_ltas(polished, sr, reference, reference_sr or sr)
         on_event({"type": "ltas_match", **ltas_report})
         on_step(f"LTAS: delta applicato entro +/-{ltas_report['max_delta_db']}dB, FIR a {ltas_report['fir_taps']} tap")
+        on_beep()
 
     on_step(f"Limiting finale a {TRUE_PEAK_CEILING_DB}dB true-peak ceiling")
     on_event({"type": "limiter", "ceiling_db": TRUE_PEAK_CEILING_DB})
+    on_beep()
     limiter_board = Pedalboard([Limiter(threshold_db=TRUE_PEAK_CEILING_DB, release_ms=100.0)])
     mastered = limiter_board(polished.T, sr).T
 
@@ -354,7 +367,9 @@ def render_master(
         mastered = mastered * (ceiling / peak)
 
     on_step("Controllo qualità automatico: misuro il risultato e correggo se serve...")
+    on_beep()
     mastered, report = run_qc(mastered, sr, analysis.genre.name, target_lufs, TRUE_PEAK_CEILING_DB)
+    on_beep()
 
     # The QC correction pass can itself push a band back over the ceiling
     # (a boost is still a boost) — re-clamp so the promised true-peak
@@ -371,8 +386,9 @@ def render_master(
     report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
 
     on_step("Feedback iterativo: confronto LUFS/crest/larghezza stereo contro il profilo di riferimento del genere...")
+    on_beep()
     mastered, feedback_notes = _apply_reference_correction(
-        mastered, sr, analysis.genre.name, ceiling, on_step, on_event
+        mastered, sr, analysis.genre.name, ceiling, on_step, on_event, on_beep
     )
     if feedback_notes:
         report.corrections_applied = list(report.corrections_applied) + feedback_notes
@@ -399,16 +415,42 @@ def render_master(
     return mastered
 
 
-def render_master_reference(mix_path: str, reference_path: str, output_path: str, on_step: StepCallback = _noop) -> None:
+def render_master_reference(
+    mix_path: str,
+    reference_path: str,
+    output_path: str,
+    on_step: StepCallback = _noop,
+    on_beep: BeepCallback = _noop_beep,
+) -> None:
     """Alternative mastering strategy: match tonal balance and loudness to a
     user-supplied reference track via matchering, instead of fixed platform
-    LUFS targets."""
+    LUFS targets. `mg.process` is a single opaque blocking call with no
+    internal progress hooks, so `on_beep` is fired from a background
+    heartbeat thread for the duration of the call -- otherwise this whole
+    mastering path (which can take a while on a long track) would run with
+    the Neural Monitor completely silent even when it's turned on."""
+    import threading
     import matchering as mg
 
     on_step(f"Mastering per riferimento: adatto il timbro/loudness a '{reference_path}'")
-    mg.process(
-        target=mix_path,
-        reference=reference_path,
-        results=[mg.pcm24(output_path)],
-    )
+
+    stop = threading.Event()
+
+    def _heartbeat() -> None:
+        while not stop.wait(1.5):
+            on_beep()
+
+    beeper = threading.Thread(target=_heartbeat, daemon=True)
+    beeper.start()
+    try:
+        mg.process(
+            target=mix_path,
+            reference=reference_path,
+            results=[mg.pcm24(output_path)],
+        )
+    finally:
+        stop.set()
+        beeper.join(timeout=0.1)
+
     on_step("Mastering per riferimento completato.")
+    on_beep()

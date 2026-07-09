@@ -156,6 +156,49 @@ window.addEventListener('error', function(e) {
         </div>
       </div>
 
+      <!-- Macro pipeline rail: the progress bar above only says "how far",
+           this says "through which of the six real phases" -- a much
+           bigger, louder, more legible read on where the engine actually is
+           right now than scrolling log text, with each node lighting up,
+           pulsing and connecting to the next as the pipeline advances. -->
+      <div id="pipeline-rail" class="pipeline-rail">
+        <div class="pipeline-node" data-stage="load">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">⇩</div>
+          <span class="pipeline-node-label">Carica</span>
+        </div>
+        <div class="pipeline-connector"></div>
+        <div class="pipeline-node" data-stage="analyze">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">◎</div>
+          <span class="pipeline-node-label">Analizza</span>
+        </div>
+        <div class="pipeline-connector"></div>
+        <div class="pipeline-node" data-stage="mix">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">▤</div>
+          <span class="pipeline-node-label">Mix</span>
+        </div>
+        <div class="pipeline-connector"></div>
+        <div class="pipeline-node" data-stage="master">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">◆</div>
+          <span class="pipeline-node-label">Master</span>
+        </div>
+        <div class="pipeline-connector"></div>
+        <div class="pipeline-node" data-stage="qc">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">◈</div>
+          <span class="pipeline-node-label">QC</span>
+        </div>
+        <div class="pipeline-connector"></div>
+        <div class="pipeline-node" data-stage="done">
+          <div class="pipeline-node-ring"></div>
+          <div class="pipeline-node-core">✓</div>
+          <span class="pipeline-node-label">Fatto</span>
+        </div>
+      </div>
+
       <div class="rack">
         <div class="module">
           <div class="module-title"><span class="module-icon">◧</span>EQ</div>

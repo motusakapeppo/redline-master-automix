@@ -699,6 +699,153 @@ select { width: auto; }
   margin-top: 5px;
 }
 
+/* --- Pipeline stage rail: the big, loud "which macro phase are we in right
+   now" readout -- six nodes (Carica/Analizza/Mix/Master/QC/Fatto), each
+   idle/active/complete, connected by a line that fills as the pipeline
+   advances. Complements (doesn't replace) the % progress bar and the
+   per-DSP module rack below it: this is the one thing on screen that
+   answers "where are we" at a glance without reading any text. */
+.pipeline-rail {
+  display: flex;
+  align-items: flex-start;
+  margin: 6px 0 20px;
+  padding: 6px 2px 0;
+}
+
+.pipeline-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.pipeline-node-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 0, 63, 0);
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: none;
+}
+
+.pipeline-node-core {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: linear-gradient(180deg, #1a1a1a 0%, var(--bg-panel) 100%);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  position: relative;
+  z-index: 1;
+  transition: background 0.4s ease, border-color 0.4s ease, color 0.4s ease,
+    box-shadow 0.4s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pipeline-node-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  transition: color 0.3s ease;
+}
+
+.pipeline-connector {
+  flex: 1;
+  height: 2px;
+  margin: 17px 2px 0;
+  background: var(--border);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.pipeline-connector::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #ff5c86);
+  box-shadow: 0 0 8px rgba(255, 0, 63, 0.7);
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pipeline-connector.filled::after {
+  width: 100%;
+}
+
+.pipeline-node.complete .pipeline-node-core {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: linear-gradient(180deg, rgba(255, 0, 63, 0.18), rgba(255, 0, 63, 0.04));
+  box-shadow: 0 0 10px rgba(255, 0, 63, 0.35);
+}
+
+.pipeline-node.complete .pipeline-node-label {
+  color: var(--accent);
+}
+
+.pipeline-node.active .pipeline-node-core {
+  border-color: var(--accent);
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent), #b4002a);
+  box-shadow: 0 0 20px rgba(255, 0, 63, 0.85), 0 0 4px rgba(255, 255, 255, 0.5);
+  transform: scale(1.15);
+}
+
+.pipeline-node.active .pipeline-node-label {
+  color: #fff;
+  font-weight: 800;
+}
+
+.pipeline-node.active .pipeline-node-ring {
+  border-color: rgba(255, 0, 63, 0.6);
+  animation: pipeline-ring-pulse 1.5s ease-out infinite;
+}
+
+/* A second, slower ring on a staggered delay -- one expanding ring alone
+   reads as "blinking", two overlapping at different phases reads as an
+   actual radiating pulse, the "this node is alive and working" cue. */
+.pipeline-node.active .pipeline-node-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 0, 63, 0.6);
+  animation: pipeline-ring-pulse 1.5s ease-out 0.75s infinite;
+}
+
+@keyframes pipeline-ring-pulse {
+  0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(2.3); opacity: 0; }
+}
+
+/* One-shot flash the instant a node becomes active -- a sharp snap on top
+   of the slower ambient ring pulse, so the *transition* itself reads as an
+   event, not just a state. */
+.pipeline-node-core.flash {
+  animation: pipeline-core-flash 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes pipeline-core-flash {
+  0% { transform: scale(1.6); filter: brightness(2.2); }
+  100% { transform: scale(1.15); filter: brightness(1); }
+}
+
+@media (max-width: 560px) {
+  .pipeline-node-label { display: none; }
+  .pipeline-connector { margin-top: 0; }
+}
+
 /* Fixed 3-column grid instead of auto-fit -- with exactly 9 modules,
    auto-fit's column count depends on container width and regularly left an
    orphan module alone on its own row (disordered, asymmetric). A hard
@@ -1231,21 +1378,6 @@ select { width: auto; }
   color: var(--accent);
 }
 
-.audition-abc {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-
-.audition-abc-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
 .loudness-match-label {
   font-size: 11px;
   color: var(--text-dim);
@@ -1260,21 +1392,35 @@ select { width: auto; }
   cursor: pointer;
 }
 
-.blend-slider-row {
+/* Real, full-track, seekable preview player -- replaces the old fixed 2s
+   "loudest window" sd.play() snippets, which had no scrubbing and were too
+   small a slice to actually evaluate a mix/master against. */
+.preview-player {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.preview-version-switch {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
-.blend-slider-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
+.preview-version-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 0, 63, 0.08);
 }
 
-.blend-slider {
-  flex: 1;
+.preview-audio {
+  width: 100%;
+  height: 40px;
+  display: block;
 }
 
 /* Real per-track waveform timeline (DAW view) -- was previously just a

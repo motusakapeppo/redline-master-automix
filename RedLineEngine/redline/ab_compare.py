@@ -25,6 +25,7 @@ import numpy as np
 import soundfile as sf
 
 from .analysis.loudness import integrated_lufs, spectral_band_energies, SPECTRAL_BANDS
+from .dsp_utils import finalize_for_export
 
 TARGET_LUFS_FOR_MATCH = -18.0  # neutral common reference point for the comparison, not a mastering target
 MAX_MATCH_GAIN_DB = 24.0  # guardrail: don't blow up a near-silent file trying to match loudness
@@ -126,7 +127,7 @@ def compare(before_path: str, after_path: str, render_wav_path: str | None = Non
         else:
             gap = np.zeros((int(before_sr * 0.5), before_matched.shape[1]), dtype=np.float32)
             concatenated = np.concatenate([before_matched, gap, after_matched], axis=0)
-            sf.write(render_wav_path, concatenated, before_sr)
+            sf.write(render_wav_path, finalize_for_export(concatenated), before_sr, subtype="PCM_24")
             notes.append(f"loudness-matched A/B render written to {render_wav_path} (before, 0.5s gap, after) -- not played automatically")
 
     return AbReport(

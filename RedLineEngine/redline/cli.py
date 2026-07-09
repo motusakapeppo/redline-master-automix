@@ -30,6 +30,7 @@ from .analyze import analyze
 from .wizard import run_wizard
 from .mixengine import render_mix
 from .masterengine import render_master, render_master_reference
+from .dsp_utils import finalize_for_export
 from .metrics import Metrics
 from .batch import BatchProcessor
 
@@ -120,14 +121,14 @@ def main(argv: list[str] | None = None) -> int:
         for bus_name, bus_audio in bus_files.items():
             if bus_audio is not None:
                 bus_path = os.path.join(args.out, f"{bus_name}.wav")
-                sf.write(bus_path, bus_audio, stems.sample_rate)
+                sf.write(bus_path, finalize_for_export(bus_audio), stems.sample_rate, subtype="PCM_24")
                 _narrate(f"Bus esportato: {bus_path}")
     else:
         with metrics.stage("mix_render", on_step=_narrate):
             mixed = render_mix(stems, analysis, prefs, on_step=_narrate, reference=reference_audio, reference_sr=reference_sr)
 
     mix_path = os.path.join(args.out, "mix.wav")
-    sf.write(mix_path, mixed, stems.sample_rate)
+    sf.write(mix_path, finalize_for_export(mixed), stems.sample_rate, subtype="PCM_24")
     _narrate(f"Mix salvato: {mix_path}")
 
     if prefs.do_mastering:
@@ -142,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
                     reference=reference_audio, reference_sr=reference_sr,
                 )
                 master_path = os.path.join(args.out, "master.wav")
-                sf.write(master_path, mastered, stems.sample_rate)
+                sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")
         _narrate(f"Master salvato: {master_path}")
 
     _narrate(f"Fatto. Tempo totale: {metrics.total_seconds():.1f}s")

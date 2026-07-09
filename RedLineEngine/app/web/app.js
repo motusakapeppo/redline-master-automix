@@ -271,6 +271,7 @@ async function startRun() {
   _rackPinned = false;
   redrawEq();
   resetProgress();
+  resetPipelineRail();
   setAssistantLabel("al lavoro...");
 
   const prefs = {
@@ -417,6 +418,56 @@ function simplifyMacroMessage(msg) {
   return null;
 }
 
+// --- Pipeline stage rail: reuses the engine's own macro-narration
+// convention (unindented on_step lines, same ones simplifyMacroMessage
+// above already keys off of) to figure out which of the six real phases
+// is running right now, and drives the big visual rail accordingly --
+// no backend changes needed, this rides the same onStep channel.
+const PIPELINE_STAGES = ["load", "analyze", "mix", "master", "qc", "done"];
+let _pipelineStageIndex = -1;
+
+function detectPipelineStage(msg) {
+  if (/^Carico l'audio/.test(msg) || /^Rilevato un singolo file/.test(msg) || /^Cartella con un solo file/.test(msg) || /^Rilevati \d+ file audio/.test(msg)) return "load";
+  if (/^Analizzo bpm/.test(msg)) return "analyze";
+  if (/^Avvio il mix/.test(msg) || /^Rielaborazione del mix/.test(msg)) return "mix";
+  if (/^Avvio il mastering/.test(msg) || /^Mastering per riferimento/.test(msg) || /^Ricalibro in base al feedback/.test(msg)) return "master";
+  if (/^Controllo qualità automatico/.test(msg)) return "qc";
+  if (/^Fatto\.?$/.test(msg) || /^Fatto \(solo mix\)/.test(msg) || /^Mix pronto\. In attesa di revisione/.test(msg)) return "done";
+  return null;
+}
+
+function resetPipelineRail() {
+  _pipelineStageIndex = -1;
+  document.querySelectorAll(".pipeline-node").forEach((node) => node.classList.remove("active", "complete"));
+  document.querySelectorAll(".pipeline-connector").forEach((c) => c.classList.remove("filled"));
+}
+
+function setPipelineStage(stage) {
+  const idx = PIPELINE_STAGES.indexOf(stage);
+  if (idx === -1 || idx === _pipelineStageIndex) return;
+  _pipelineStageIndex = idx;
+
+  document.querySelectorAll(".pipeline-node").forEach((node) => {
+    const nodeIdx = PIPELINE_STAGES.indexOf(node.dataset.stage);
+    node.classList.remove("active", "complete");
+    if (nodeIdx < idx) {
+      node.classList.add("complete");
+    } else if (nodeIdx === idx) {
+      node.classList.add("active");
+      const core = node.querySelector(".pipeline-node-core");
+      if (core) {
+        core.classList.remove("flash");
+        void core.offsetWidth; // restart the one-shot flash animation
+        core.classList.add("flash");
+      }
+    }
+  });
+  document.querySelectorAll(".pipeline-connector").forEach((conn, i) => {
+    conn.classList.toggle("filled", i < idx);
+  });
+  playWhoosh();
+}
+
 function onStep(msg) {
   const log = document.getElementById("log");
   const line = document.createElement("div");
@@ -435,6 +486,8 @@ function onStep(msg) {
   if (isMacro) {
     const bubbleText = simplifyMacroMessage(msg);
     if (bubbleText) sayBubble(bubbleText);
+    const stage = detectPipelineStage(msg);
+    if (stage) setPipelineStage(stage);
   }
   wireInteractiveLine(line, msg);
 
@@ -661,6 +714,14 @@ function _playUiTone(freq, peak = 0.045, dur = 0.08, type = "sine") {
   osc.stop(now + dur + 0.02);
 }
 
+// Neural Monitor "still alive" pings: fired from api.py's _beep() during
+// phases that have no real track audio to audition yet (Demucs separation,
+// BPM/key/loudness analysis, reference-track mastering, QC/correction
+// passes) -- distinct timbre from the UI click/hover tones so it reads as
+// "the engine is working" rather than a button interaction.
+const _MONITOR_BEEP_FREQS = { separating: 260, analyzing: 520, tick: 700 };
+function playMonitorBeep(kind) { _playUiTone(_MONITOR_BEEP_FREQS[kind] || 700, 0.03, 0.06, "sine"); }
+
 function playClickTick() { _playUiTone(1100, 0.04, 0.05); }
 function playHoverTick() { _playUiTone(2400, 0.012, 0.025); }
 function playPanelOpen() { _playUiTone(660, 0.045, 0.12, "triangle"); }
@@ -703,16 +764,7 @@ function onDone(result) {
         <div id="daw-waveforms" class="daw-waveforms"><div class="daw-loading">Carico le tracce...</div></div>
         <div id="daw-track-detail" class="stem-row-detail hidden"></div>
 
-        <div class="audition-abc">
-          <div class="audition-abc-label">Riascolta:</div>
-          <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
-          <button class="btn" onclick="auditionStage('mix')">Con mix</button>
-          <label class="loudness-match-label" title="Confronto a parit&agrave; di volume (LUFS)">
-            <input type="checkbox" id="loudness-match-switch" onchange="toggleLoudnessMatch()">
-            Match LUFS
-          </label>
-        </div>
-        ${_blendSliderHtml("dry", "mix", "Senza mix", "Con mix")}
+        ${_previewPlayerHtml(false)}
 
         <div class="feedback-box">
           <label for="feedback-text">Cosa vorresti cambiare nel mix? (es. "voce pi&ugrave; avanti", "pi&ugrave; caldo")</label>
@@ -728,6 +780,7 @@ function onDone(result) {
         <button class="btn" onclick="exportFinal('mix')">Esporta mix...</button>
       </div>`;
     renderDawWaveforms();
+    loadPreviewPlayer("mix");
     return;
   }
 
@@ -741,17 +794,7 @@ function onDone(result) {
         <button class="btn btn-accent" onclick="openOutput()">Apri cartella risultati</button>
         <button class="btn" onclick="exportFinal('auto')">Esporta...</button>
 
-        <div class="audition-abc">
-          <div class="audition-abc-label">Riascolta:</div>
-          <button class="btn" onclick="auditionStage('dry')">Senza mix</button>
-          <button class="btn" onclick="auditionStage('mix')">Con mix</button>
-          <button class="btn" onclick="auditionStage('master')" ${result.master_path ? "" : "disabled"}>Con mastering</button>
-          <label class="loudness-match-label" title="Confronto a parit&agrave; di volume (LUFS)">
-            <input type="checkbox" id="loudness-match-switch" onchange="toggleLoudnessMatch()">
-            Match LUFS
-          </label>
-        </div>
-        ${result.master_path ? _blendSliderHtml("mix", "master", "Solo mix", "Con mastering") : ""}
+        ${_previewPlayerHtml(!!result.master_path)}
 
         <div class="feedback-box">
           <label for="feedback-text">Feedback (es. "pi&ugrave; caldo", "pi&ugrave; forte", "pi&ugrave; brillante")</label>
@@ -765,6 +808,7 @@ function onDone(result) {
           <button class="btn" onclick="reopenDaw('master')" ${result.master_path ? "" : "disabled"}>MASTERING</button>
         </div>
       </div>`;
+    loadPreviewPlayer(result.master_path ? "master" : "mix");
   } else {
     const errorMsg = result ? result.error : "errore sconosciuto";
     resultEl.innerHTML = `<div class="result-card error">Errore: ${errorMsg}</div>`;
@@ -962,51 +1006,82 @@ async function exportFinal(stage) {
   }
 }
 
-// --- Post-render re-evaluation: A/B/C audition of the three cached render
-// stages, and free-text feedback that triggers a fast re-mastering-only
-// pass (skips re-running the mix, which is the expensive part).
+// --- Post-render preview player: a real <audio> element backed by actual
+// full-track WAV files (see api.py's get_preview_urls(), which writes them
+// into the local web server's own static folder), so the user gets real
+// transport controls and can seek/scrub anywhere in the song -- replaces
+// the old fixed 2s "loudest window" sd.play() snippets, which had no
+// scrubbing and were effectively unusable for real evaluation.
 
-let _lastAuditionStage = null;
+let _previewUrls = {};
+let _previewVersion = "mix";
 
-async function auditionStage(stage) {
-  if (!window.pywebview) return;
-  _lastAuditionStage = stage;
-  const lm = document.getElementById("loudness-match-switch")?.checked || false;
-  const res = await window.pywebview.api.audition_stage(stage, lm);
-  if (res && !res.ok) {
-    addEventChip(`\u{26A0}\u{FE0F} Ascolto non disponibile: ${res.error}`);
-  }
-}
-
-// Quick-Compare slider: not a live crossfade (see audition_blend() in
-// api.py for why) -- dragging just moves the handle, releasing computes one
-// fresh (1-t)*a + t*b blend server-side and plays it once. Honest tradeoff:
-// costs one playback round-trip per release instead of true real-time audio.
-function _blendSliderHtml(stageA, stageB, labelA, labelB) {
+function _previewPlayerHtml(hasMaster) {
   return `
-    <div class="blend-slider-row">
-      <span class="blend-slider-label">${labelA}</span>
-      <input type="range" class="blend-slider" min="0" max="1" step="0.01" value="0"
-             data-stage-a="${stageA}" data-stage-b="${stageB}"
-             onchange="auditionBlend(this)">
-      <span class="blend-slider-label">${labelB}</span>
+    <div class="preview-player">
+      <div class="preview-version-switch">
+        <button class="btn preview-version-btn" data-version="no_mix" onclick="switchPreviewVersion('no_mix')">NO MIX</button>
+        <button class="btn preview-version-btn" data-version="mix" onclick="switchPreviewVersion('mix')">MIX</button>
+        <button class="btn preview-version-btn" data-version="master" onclick="switchPreviewVersion('master')" ${hasMaster ? "" : "disabled"}>MASTERING</button>
+        <label class="loudness-match-label" title="Confronto a parit&agrave; di volume (LUFS)">
+          <input type="checkbox" id="preview-lufs-switch" onchange="loadPreviewPlayer(_previewVersion)">
+          Match LUFS
+        </label>
+      </div>
+      <audio id="preview-audio" class="preview-audio" controls preload="metadata"></audio>
     </div>`;
 }
 
-async function auditionBlend(slider) {
+// Loads/reloads every available stage's URL and points the player at
+// `defaultVersion` (falls back to "mix" if that stage isn't ready yet,
+// e.g. requesting "master" before mastering has run).
+async function loadPreviewPlayer(defaultVersion) {
   if (!window.pywebview) return;
-  const t = parseFloat(slider.value);
-  const res = await window.pywebview.api.audition_blend(slider.dataset.stageA, slider.dataset.stageB, t);
-  if (res && !res.ok) {
-    addEventChip(`\u{26A0}\u{FE0F} Confronto non disponibile: ${res.error}`);
+  const lm = document.getElementById("preview-lufs-switch")?.checked || false;
+  const data = await window.pywebview.api.get_preview_urls(lm);
+  const audio = document.getElementById("preview-audio");
+  if (!audio) return;
+  if (!data || !data.ok) {
+    addEventChip(`\u{26A0}\u{FE0F} Anteprima non disponibile: ${data ? data.error : "errore sconosciuto"}`);
+    return;
   }
+  _previewUrls = data.urls;
+  const wasPlaying = !audio.paused;
+  const t = audio.currentTime || 0;
+  _previewVersion = _previewUrls[defaultVersion] ? defaultVersion : "mix";
+  const resume = () => {
+    audio.currentTime = t;
+    if (wasPlaying) audio.play();
+    audio.removeEventListener("loadedmetadata", resume);
+  };
+  audio.addEventListener("loadedmetadata", resume);
+  audio.src = _previewUrls[_previewVersion];
+  _markActivePreviewButton(_previewVersion);
 }
 
-function toggleLoudnessMatch() {
-  const lm = document.getElementById("loudness-match-switch")?.checked || false;
-  if (_lastAuditionStage && window.pywebview) {
-    window.pywebview.api.audition_stage(_lastAuditionStage, lm);
-  }
+// NO MIX / MIX / MASTERING toggle: swaps the <audio> source but keeps the
+// playhead position (and play/pause state) so the same moment of the song
+// can be compared across versions instead of restarting from zero.
+function switchPreviewVersion(version) {
+  const audio = document.getElementById("preview-audio");
+  if (!audio || !_previewUrls[version]) return;
+  const wasPlaying = !audio.paused;
+  const t = audio.currentTime;
+  _previewVersion = version;
+  const resume = () => {
+    audio.currentTime = t;
+    if (wasPlaying) audio.play();
+    audio.removeEventListener("loadedmetadata", resume);
+  };
+  audio.addEventListener("loadedmetadata", resume);
+  audio.src = _previewUrls[version];
+  _markActivePreviewButton(version);
+}
+
+function _markActivePreviewButton(version) {
+  document.querySelectorAll(".preview-version-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.version === version);
+  });
 }
 
 async function submitFeedback() {
@@ -1021,6 +1096,7 @@ async function submitFeedback() {
       ? `Nuova versione salvata (v${res.version}): ${res.master_path}`
       : `Errore: ${res ? res.error : "sconosciuto"}`;
   }
+  if (res && res.ok) loadPreviewPlayer(_previewVersion);
 }
 
 // --- Director Mode: the pipeline is genuinely paused on a Python thread

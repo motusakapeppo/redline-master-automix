@@ -71,6 +71,11 @@ def _run() -> None:
     # has touched the window's accessibility tree. Prefixing with `_` takes
     # it out of pywebview's introspected surface entirely.
     api._window = window
+    # Lets get_preview_urls() write no-mix/mix/master WAVs into a folder the
+    # bundled bottle server (spun up automatically for this local `url=`)
+    # already serves, so the frontend's <audio> element can play them back
+    # with real seek/scrub instead of the old fixed-snippet sd.play() audition.
+    api._web_dir = str(web_dir)
 
     # A blank/black window is not the same failure as a Python exception --
     # this writes a timestamped marker the moment WebView2 actually finishes

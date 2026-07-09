@@ -18,6 +18,7 @@ from .analyze import analyze
 from .wizard import run_wizard
 from .mixengine import render_mix
 from .masterengine import render_master
+from .dsp_utils import finalize_for_export
 
 
 def _find_projects(batch_dir: str) -> list[str]:
@@ -135,7 +136,7 @@ class BatchProcessor:
                 )
 
                 mix_path = os.path.join(project_out, "mix.wav")
-                sf.write(mix_path, mixed, stems.sample_rate)
+                sf.write(mix_path, finalize_for_export(mixed), stems.sample_rate, subtype="PCM_24")
                 result["mix_path"] = mix_path
                 self.on_step(f"  Mix salvato: {mix_path}")
 
@@ -158,7 +159,7 @@ class BatchProcessor:
                             on_step=lambda msg: self.on_step(f"    {msg}"),
                         )
                         master_path = os.path.join(project_out, "master.wav")
-                        sf.write(master_path, mastered, stems.sample_rate)
+                        sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")
                         result["master_path"] = master_path
                     self.on_step(f"  Master salvato: {master_path}")
 

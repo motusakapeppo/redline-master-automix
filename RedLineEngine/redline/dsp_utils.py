@@ -84,6 +84,25 @@ def db_to_gain(db: float) -> float:
     return float(10.0 ** (db / 20.0))
 
 
+def finalize_for_export(audio: np.ndarray, ceiling: float = 0.999) -> np.ndarray:
+    """Last-chance safety net before any buffer is written to disk. Found in
+    practice: every existing "clamp to ceiling if peak exceeds it" guard in
+    masterengine.py/mixengine.py uses `peak = np.max(np.abs(x))` followed by
+    `if peak > ceiling`, and a single stray NaN anywhere in `x` (e.g. a
+    divide-by-near-zero in mid/side reconstruction or LTAS FIR normalization)
+    makes `np.max` return NaN -- `NaN > ceiling` is `False` in numpy/Python,
+    so the clamp silently no-ops and the NaN (plus whatever real overshoot
+    was alongside it) reaches the WAV file uncaught, which is exactly what a
+    "the exported file crackles/glitches" report looks like. Replaces any
+    NaN/+-Inf with silence/the ceiling *before* measuring peak, so the
+    clamp that follows can never be defeated by non-finite values."""
+    audio = np.nan_to_num(audio, nan=0.0, posinf=ceiling, neginf=-ceiling)
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak > ceiling:
+        audio = audio * (ceiling / peak)
+    return audio.astype(np.float32)
+
+
 def split_band(signal: np.ndarray, sr: int, low_hz: float, high_hz: float, order: int = 4) -> tuple[np.ndarray, np.ndarray]:
     """Splits `signal` into (band, rest) via a bandpass filter — `rest` is
     everything outside [low_hz, high_hz], `band` is what's inside. Works

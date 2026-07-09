@@ -14,3 +14,8 @@ reference_tracks/*/*.aif
 reference_tracks/*/*.mp3
 reference_tracks/*/*.ogg
 !reference_tracks/**/.gitkeep
+
+# Preview WAVs written by app/api.py's get_preview_urls() for the in-app
+# NO MIX/MIX/MASTERING audio player -- regenerated every render, never
+# something to commit.
+app/web/_preview/

@@ -157,7 +157,11 @@ BACKING_VOCALS_GLUE_RATIO = 2.0
 # than at parity with it -- without this baseline, a vocal recorded quieter
 # than the instrumental just stayed buried, since EQ presence boosts alone
 # don't compensate for an actual level deficit.
-BASE_VOCAL_PROMINENCE_DB = 3.0
+# Was 3.0dB -- confirmed too much once the instrumental bed's double
+# power-preserving attenuation bug (see instrumental_gain/music_bus above)
+# is fixed: with the instrumental bed no longer artificially quiet, the
+# same +3dB baseline read as the vocal being pushed too far out front.
+BASE_VOCAL_PROMINENCE_DB = 2.0
 
 # Kick/bass sidechain: a pure, fast broadband duck of the bass every time the
 # drums hit — the classic "pumping" low-end trick that keeps the kick and
@@ -1239,7 +1243,21 @@ def render_mix(
     # Same silent-stem exclusion as other_gain above: a dead/broken stem
     # shouldn't count as "one more layer" diluting the real ones.
     active_non_vocal_count = sum(1 for name in non_vocal_names if not _is_silent_stem(processed[name]))
-    instrumental_layers = active_non_vocal_count + (1 if music_bus is not None else 0)
+    # music_bus does NOT count as one more layer here -- it was already
+    # power-preserving-scaled internally by other_gain above (across every
+    # "other" stem folded into it). Counting it again here and then
+    # multiplying it by instrumental_gain below (found in practice, was a
+    # real bug) attenuated it TWICE: once by other_gain, once more by
+    # instrumental_gain -- e.g. 5 "other" layers -> other_gain ~-4dB, then
+    # instrumental_gain (3 outer layers incl. music_bus) ~-1.8dB more, ~-5.7dB
+    # total on the instrumental bed vs. a vocal bus that gets no comparable
+    # layer-count cut at all, only a flat +dB boost (see vocal_gain_db
+    # above) -- confirmed as the dominant cause of "instrumental too quiet,
+    # vocal too present". instrumental_gain here only balances the *other*
+    # top-level buses (drums, bass, any non-"other" instrumental stems)
+    # against each other; music_bus is added at its own already-normalized
+    # level below, unscaled a second time.
+    instrumental_layers = active_non_vocal_count
     instrumental_gain = 1.0 if instrumental_layers <= 2 else float(np.sqrt(2.0 / instrumental_layers))
     if instrumental_layers > 2:
         on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati attivi -> {20 * np.log10(instrumental_gain):+.1f}dB")
@@ -1261,7 +1279,7 @@ def render_mix(
             continue  # folded into vocal_main_bus instead
         mix_bus += audio * instrumental_gain
     if music_bus is not None:
-        mix_bus += music_bus * instrumental_gain
+        mix_bus += music_bus  # already power-preserving-scaled internally, see above
     if vocal_main_bus is not None:
         mix_bus += vocal_main_bus
     if vocal_doubles_bus is not None:
