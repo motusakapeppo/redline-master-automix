@@ -203,7 +203,14 @@ window.addEventListener('error', function(e) {
         <div class="module">
           <div class="module-title"><span class="module-icon">◧</span>EQ</div>
           <svg id="eq-svg" viewBox="0 0 300 90" class="eq-svg" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="eq-fill-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="rgba(255, 0, 63, 0.35)" />
+                <stop offset="100%" stop-color="rgba(255, 0, 63, 0)" />
+              </linearGradient>
+            </defs>
             <line x1="0" y1="45" x2="300" y2="45" class="eq-zero-line" />
+            <path id="eq-fill" d="M0,45 L300,45 L300,90 L0,90 Z" class="eq-fill" />
             <path id="eq-path" d="M0,45 L300,45" class="eq-path" />
             <circle id="eq-new-point" class="eq-new-point hidden" r="4" cx="0" cy="45" />
             <line id="eq-hover-marker" x1="0" y1="0" x2="0" y2="90" class="eq-hover-marker hidden" />

@@ -162,6 +162,41 @@ html, body {
   height: 100vh;
 }
 
+/* Ambient living background: two huge, ultra-dim red glows drifting very
+   slowly behind everything (transform-only animation, GPU-cheap), plus a
+   fixed vignette. The panels all have opaque backgrounds, so this only
+   breathes through in the dark empty areas -- atmosphere, not noise. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -30%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 42% 30% at 22% 28%, rgba(255, 0, 63, 0.055), transparent 70%),
+    radial-gradient(ellipse 38% 28% at 78% 72%, rgba(255, 0, 63, 0.045), transparent 70%);
+  animation: ambient-drift 26s ease-in-out infinite alternate;
+}
+
+@keyframes ambient-drift {
+  from { transform: translate3d(-2%, -1.5%, 0) scale(1); }
+  to { transform: translate3d(2%, 1.5%, 0) scale(1.06); }
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+}
+
+#app-grid {
+  position: relative;
+  z-index: 1;
+}
+
 #main-stage {
   overflow-y: auto;
   padding: 0 24px 24px;
@@ -187,11 +222,34 @@ html, body {
 }
 
 .brand-mark {
+  position: relative;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent);
+  animation: brand-breathe 3.2s ease-in-out infinite;
+}
+
+/* Sonar ring radiating off the brand dot -- a tiny "the engine is alive"
+   heartbeat in the corner, same red, never louder than the content. */
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  animation: brand-sonar 3.2s ease-out infinite;
+}
+
+@keyframes brand-breathe {
+  0%, 100% { box-shadow: 0 0 8px var(--accent); }
+  50% { box-shadow: 0 0 16px var(--accent), 0 0 30px rgba(255, 0, 63, 0.4); }
+}
+
+@keyframes brand-sonar {
+  0% { transform: scale(1); opacity: 0.8; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
 }
 
 .brand-name {
@@ -631,13 +689,44 @@ select { width: auto; }
   margin: 24px 0;
 }
 
+/* Dual counter-rotating rings + a pulsing core dot -- reads as machinery
+   turning, not a stock loading circle. */
 .spinner-ring {
-  width: 42px;
-  height: 42px;
+  position: relative;
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   border: 3px solid rgba(255, 0, 63, 0.15);
   border-top-color: var(--accent);
   animation: spin 0.9s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 0, 63, 0.4));
+}
+
+.spinner-ring::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 0, 63, 0.1);
+  border-bottom-color: rgba(255, 0, 63, 0.7);
+  animation: spin-reverse 1.4s linear infinite;
+}
+
+.spinner-ring::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: brand-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes spin-reverse {
+  to { transform: rotate(-360deg); }
 }
 
 @keyframes spin {
@@ -1007,6 +1096,15 @@ select { width: auto; }
   filter: drop-shadow(0 0 3px rgba(255, 0, 63, 0.5));
 }
 
+/* Gradient area under the EQ curve -- gives the curve visual mass (an
+   analyzer-style "energy" read) instead of a lone thin line floating in
+   an empty box. Same transition as the stroke so they move as one shape. */
+.eq-fill {
+  fill: url(#eq-fill-grad);
+  stroke: none;
+  transition: d 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .plugin-canvas {
   width: 100%;
   height: 46px;
@@ -1219,6 +1317,10 @@ select { width: auto; }
   border: 1px solid var(--border);
   color: var(--text-dim);
   background: rgba(255, 0, 63, 0.06);
+  /* Chips land with the shared elastic pop instead of the log-line fade --
+     they're discrete "a real DSP value just happened" markers, and the pop
+     makes each one register as an event, not just more scrolling text. */
+  animation: pop-in 0.4s var(--ease-pop) both;
 }
 
 /* Per-stem breakdown rows: one persistent row per track (see #stem-rows in

@@ -1436,9 +1436,11 @@ function gainToY(gainDb) {
 }
 
 function redrawEq() {
+  const fillEl = document.getElementById("eq-fill");
   const points = Object.values(eqBands).sort((a, b) => a.freq - b.freq);
   if (points.length === 0) {
     document.getElementById("eq-path").setAttribute("d", "M0,45 L300,45");
+    if (fillEl) fillEl.setAttribute("d", "M0,45 L300,45 L300,90 L0,90 Z");
     return;
   }
   let d = `M0,${gainToY(0)} `;
@@ -1447,6 +1449,9 @@ function redrawEq() {
   }
   d += `L300,${gainToY(0)}`;
   document.getElementById("eq-path").setAttribute("d", d);
+  // Same polyline closed down to the bottom edge -- the gradient "energy"
+  // area under the curve (see .eq-fill in style.css).
+  if (fillEl) fillEl.setAttribute("d", `${d} L300,90 L0,90 Z`);
 
   // Punctuates the redraw with a landing dot -- not tracking exactly which
   // band changed (would need touching every call site), so this simply
