@@ -36,6 +36,14 @@ const PROGRESS_MILESTONE_LINES = {
 };
 let _progressMilestonesFired = new Set();
 
+function pulseProgressBar() {
+  const bar = document.querySelector(".progress-bar");
+  if (!bar) return;
+  bar.classList.remove("milestone-pulse");
+  void bar.offsetWidth;
+  bar.classList.add("milestone-pulse");
+}
+
 function resetProgress() {
   _progressSeen = 0;
   _progressExpected = 40;
@@ -87,6 +95,7 @@ function bumpProgress(msg) {
       _progressMilestonesFired.add(threshold);
       const lines = PROGRESS_MILESTONE_LINES[threshold];
       sayBubble(lines[Math.floor(Math.random() * lines.length)]);
+      pulseProgressBar();
     }
   }
 
@@ -742,6 +751,13 @@ document.querySelectorAll(".module").forEach((m) => {
   m.addEventListener("mouseenter", () => playHoverTick());
 });
 
+function triggerSuccessSweep() {
+  const sweep = document.createElement("div");
+  sweep.className = "success-sweep";
+  document.body.appendChild(sweep);
+  sweep.addEventListener("animationend", () => sweep.remove());
+}
+
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
   document.getElementById("progress-wrap")?.classList.add("hidden");
@@ -749,6 +765,7 @@ function onDone(result) {
   resultEl.classList.remove("hidden");
 
   playChime(result && result.ok ? "done" : "error");
+  if (result && result.ok) triggerSuccessSweep();
 
   if (result && result.ok && result.stage === "mix") {
     // Workflow choice was "stop after mix" (or mastering was skipped
@@ -1255,6 +1272,21 @@ function redrawEq() {
   }
   d += `L300,${gainToY(0)}`;
   document.getElementById("eq-path").setAttribute("d", d);
+
+  // Punctuates the redraw with a landing dot -- not tracking exactly which
+  // band changed (would need touching every call site), so this simply
+  // marks the highest-frequency point each time, a reasonable-enough "the
+  // curve just moved" cue without over-engineering precision into a purely
+  // decorative flourish.
+  const marker = document.getElementById("eq-new-point");
+  if (marker) {
+    const last = points[points.length - 1];
+    marker.setAttribute("cx", freqToX(last.freq).toFixed(1));
+    marker.setAttribute("cy", gainToY(last.gain_db).toFixed(1));
+    marker.classList.remove("hidden", "landing");
+    void marker.getBBox();
+    marker.classList.add("landing");
+  }
 }
 
 // VU meter: maps a LUFS value (typical mix range -30..0) to a 0-100% fill.
@@ -1309,7 +1341,7 @@ function getOrCreateStemRow(name) {
   if (!container) return null;
 
   const row = document.createElement("div");
-  row.className = "stem-row";
+  row.className = "stem-row pop-in";
   row.title = "Clicca per vedere i parametri di questa traccia";
 
   const label = document.createElement("div");

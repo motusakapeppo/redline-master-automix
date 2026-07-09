@@ -5,6 +5,29 @@
   --text: #EAEAEA;
   --text-dim: #999;
   --border: rgba(255, 0, 63, 0.2);
+  /* Shared "back" overshoot easing -- the one animation signature reused
+     everywhere something appears/reacts (badges, stem rows, panels, result
+     card), so the whole app reads as one consistent motion system instead
+     of a pile of unrelated one-off effects. */
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* --- Shared animation vocabulary ------------------------------------------
+   pop-in: the one entrance animation for anything appearing dynamically.
+   ripple: an expanding ring, for "something just landed" confirmations. */
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.7) translateY(10px); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes ripple-ring {
+  0% { box-shadow: 0 0 0 0 rgba(255, 0, 63, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(255, 0, 63, 0); }
+}
+
+.pop-in {
+  animation: pop-in 0.5s var(--ease-pop) both;
 }
 
 * { box-sizing: border-box; }
@@ -636,6 +659,18 @@ select { width: auto; }
   border-radius: 999px;
   overflow: hidden;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  transition: transform 0.3s var(--ease-pop);
+}
+
+/* Milestone punctuation at 25/50/75/100% -- see bumpProgress() in app.js. */
+.progress-bar.milestone-pulse {
+  animation: progress-milestone 0.5s var(--ease-pop);
+}
+
+@keyframes progress-milestone {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.035); box-shadow: 0 0 0 4px rgba(255, 0, 63, 0.25), inset 0 1px 3px rgba(0, 0, 0, 0.6); }
+  100% { transform: scale(1); }
 }
 
 .progress-fill {
@@ -1025,7 +1060,10 @@ select { width: auto; }
   height: 100%;
   width: 0%;
   background: linear-gradient(90deg, #33cc66, var(--accent) 85%, #ff3355);
-  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Elastic overshoot instead of ease-out -- a meter that "swings past"
+     its new value and settles back reads as a real needle reacting, not a
+     progress bar creeping to a number. */
+  transition: width 0.55s var(--ease-pop);
 }
 
 .vu-zero-marker {
@@ -1047,6 +1085,24 @@ select { width: auto; }
   height: 40px;
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* Marks wherever the EQ curve was just updated -- a bright dot that lands
+   with an overshoot pop and fades, so a new band reads as "something just
+   happened here" instead of the line silently reshaping. */
+.eq-new-point {
+  fill: #fff;
+  filter: drop-shadow(0 0 5px var(--accent));
+}
+
+.eq-new-point.landing {
+  animation: eq-point-land 0.7s var(--ease-pop) forwards;
+}
+
+@keyframes eq-point-land {
+  0% { r: 0; opacity: 1; }
+  40% { r: 6; opacity: 1; }
+  100% { r: 3; opacity: 0; }
 }
 
 .eq-hover-marker {
@@ -1244,6 +1300,7 @@ select { width: auto; }
 }
 
 .stem-badge {
+  position: relative;
   font-size: 9px;
   letter-spacing: 0.03em;
   padding: 2px 6px;
@@ -1251,7 +1308,7 @@ select { width: auto; }
   border: 1px solid var(--border);
   color: var(--text-dim);
   background: transparent;
-  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .stem-badge.done {
@@ -1260,11 +1317,19 @@ select { width: auto; }
   background: rgba(255, 0, 63, 0.1);
 }
 
+/* Landing pop with overshoot + an expanding ripple ring -- the "a real DSP
+   value just landed on this exact badge" moment, not a color swap. */
 .stem-badge.flash {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
-  transform: scale(1.12);
+  animation: badge-pop 0.5s var(--ease-pop), ripple-ring 0.6s ease-out;
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.35); }
+  100% { transform: scale(1); }
 }
 
 .result-card {
@@ -1274,7 +1339,27 @@ select { width: auto; }
   border: 1px solid var(--border);
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.03), transparent 50%), var(--bg-panel);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
-  animation: fade-in 0.4s ease forwards;
+  animation: pop-in 0.55s var(--ease-pop) both;
+}
+
+/* Full-viewport success sweep -- a quick radial light burst behind the
+   result card on a successful render, the "big" moment the whole render
+   was building to. Fixed + pointer-events:none so it never blocks clicks,
+   and removes itself (see triggerSuccessSweep() in app.js). */
+.success-sweep {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 0, 63, 0.35) 0%, transparent 55%);
+  opacity: 0;
+  animation: success-sweep-anim 0.9s ease-out forwards;
+}
+
+@keyframes success-sweep-anim {
+  0% { opacity: 0; transform: scale(0.4); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.6); }
 }
 
 /* Director Mode checkpoint: the pipeline is genuinely blocked on a Python
@@ -1288,7 +1373,7 @@ select { width: auto; }
   border: 1px solid var(--accent);
   background: linear-gradient(160deg, rgba(255, 0, 63, 0.06), transparent 55%), var(--bg-panel);
   box-shadow: 0 0 24px rgba(255, 0, 63, 0.22), 0 16px 34px rgba(0, 0, 0, 0.4);
-  animation: fade-in 0.3s ease forwards;
+  animation: pop-in 0.5s var(--ease-pop) both;
 }
 
 .director-panel h3 {
