@@ -1,8 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
+ROOT = SPECPATH  # directory containing this .spec file, set by PyInstaller
+
 datas = [
-    ('D:\\FASE REM_automix\\RedLineEngine\\app\\web', 'web'),
+    (os.path.join(ROOT, 'app', 'web'), 'web'),
     # Bundled offline LLM (Fase 4 advisory fallback) -- ~1GB, the deliberate
     # tradeoff for a true "double-click, zero installs" exe. Only included
     # if it's actually present on disk (still a normal dev build otherwise).
@@ -39,17 +42,14 @@ try:
 except Exception:
     pass  # llama-cpp-python not installed in this build env -- LLM advisory simply won't be available in this exe
 
-import os
-_MODEL_PATH = os.path.join(
-    'D:\\FASE REM_automix\\RedLineEngine', 'models', 'qwen2.5-1.5b-instruct-q4_0.gguf'
-)
+_MODEL_PATH = os.path.join(ROOT, 'models', 'qwen2.5-1.5b-instruct-q4_0.gguf')
 if os.path.exists(_MODEL_PATH):
     datas += [(_MODEL_PATH, 'models')]
 
 
 a = Analysis(
-    ['D:\\FASE REM_automix\\RedLineEngine\\app\\main.py'],
-    pathex=['D:\\FASE REM_automix\\RedLineEngine'],
+    [os.path.join(ROOT, 'app', 'main.py')],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

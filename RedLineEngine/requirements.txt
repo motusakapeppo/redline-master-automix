@@ -1,14 +1,18 @@
-numpy
-scipy
-numba
-soundfile
-librosa
-pyloudnorm
-pedalboard
+numpy==2.2.6
+scipy==1.15.3
+numba==0.66.0
+soundfile==0.14.0
+librosa==0.11.0
+pyloudnorm==0.2.0
+pedalboard==0.9.23
+# torch/demucs/matchering: not installed in the current dev venv, so no
+# known-good version could be pinned here. Install, confirm the DSP chain
+# still passes verify_gain.py / the test suite, then pin the resolved
+# versions.
 matchering
 torch
 demucs
-noisereduce
-huggingface_hub
+noisereduce==3.0.3
+huggingface_hub==1.22.0
 llama-cpp-python==0.3.2
 sounddevice==0.4.6
