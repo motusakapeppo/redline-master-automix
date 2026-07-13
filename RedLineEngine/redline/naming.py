@@ -58,6 +58,17 @@ REGISTER_HINTS = {
 
 _DX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])dx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
 _SX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])sx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
+
+# Link-group tokens: mark one member of a multi-mic/multi-take pair (e.g.
+# "Kick_In.wav" + "Kick_Out.wav", "Synth_Pad_L.wav" + "Synth_Pad_R.wav").
+# Word-boundary matched exactly like DX/SX/R/L above, for the same reason:
+# "in"/"out"/"top"/"bottom" are common English words and would false-positive
+# as plain substrings (e.g. "Outro", "Piano", "Bottomless_Pad") if not
+# bounded to a standalone token.
+_LINK_TOKEN_PATTERN = re.compile(
+    r"(?:^|[\s_./\\(){}\[\]-])(dx|sx|r|right|l|left|in|out|top|bottom)(?:[\s_./\\(){}\[\]-]|$)",
+    re.IGNORECASE,
+)
 # English R/L convention (as common as dx/sx in practice, especially for
 # doubles/harmonies exported by non-Italian DAW templates: "Double_R.wav",
 # "Harmony (L).wav"). Single-letter tokens are dangerous as a plain
@@ -105,6 +116,31 @@ def _pan_from_name(text: str) -> float:
     return 0.0
 
 
+def _link_id_from_name(path_like: str) -> str | None:
+    """Groups multi-mic/multi-take stems (e.g. "Kick_In.wav" + "Kick_Out.wav",
+    "Synth_Pad_L.wav" + "Synth_Pad_R.wav") so mixengine.py can apply
+    identical DSP decisions to every member -- summing the same instrument
+    processed with different filter phase responses is a common source of
+    comb-filtering when stems are otherwise treated as fully independent.
+    Only the filename itself is used (not the folder path, which frequently
+    contains its own unrelated "in"/"out"-shaped words -- e.g. "Vocal Stems
+    Pitch Correction"), and only the LAST matching token is stripped, so a
+    name like "Bottom_Snare_Top.wav" groups on "Bottom_Snare" only via its
+    trailing token, not an earlier coincidental one. Returns None when no
+    grouping token is present -- most stems aren't part of any pair, and
+    should be processed exactly as before."""
+    basename = path_like.replace("\\", "/").rsplit("/", 1)[-1]
+    stem_name = basename.rsplit(".", 1)[0] if "." in basename else basename
+    matches = list(_LINK_TOKEN_PATTERN.finditer(stem_name))
+    if not matches:
+        return None
+    last = matches[-1]
+    group_key = (stem_name[: last.start()] + stem_name[last.end() :]).strip(" _-./\\")
+    if not group_key:
+        return None
+    return group_key.lower()
+
+
 @dataclass
 class StemDescriptor:
     raw_name: str
@@ -114,6 +150,7 @@ class StemDescriptor:
     section: str | None = None   # chorus | verse | bridge | None
     register: str | None = None  # falsetto | low | mid | special | None
     role_confidence: float = 1.0  # 1.0 = a role hint matched the name; lower = "other" by default, no real signal
+    link_id: str | None = None   # shared key for stems that are mic/take pairs of the same source (see _link_id_from_name)
 
 
 def parse_stem(path_like: str) -> StemDescriptor:
@@ -158,4 +195,5 @@ def parse_stem(path_like: str) -> StemDescriptor:
         section=section,
         register=register,
         role_confidence=role_confidence,
+        link_id=_link_id_from_name(path_like),
     )

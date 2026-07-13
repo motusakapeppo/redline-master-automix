@@ -136,7 +136,7 @@ VALID_REGISTER_OVERRIDES = frozenset(RECIPES.keys())
 
 DRUM_HPF_HZ = 40.0  # was 30 -- 40Hz clears more sub-rumble without touching kick fundamental (~50-80Hz)
 LEAD_PRESENCE_FREQ_HZ = 3000.0
-LEAD_PRESENCE_GAIN_DB = 3.0  # was 1.5 -- too subtle to read as real presence against a full instrumental bed
+LEAD_PRESENCE_GAIN_DB = 1.5  # was 3.0 -- measured +19.4dB vocal-vs-instrumental delta in the 2-3kHz presence band during vocal-active sections (well past the ~6-10dB needed for intelligibility); reverted to 1.5 now that MUSIC_BUS_MID_DIP_DB no longer also carves the instrumental out from underneath
 # Was (1000, 4000) at up to 8dB -- narrowed toward the ~2.5kHz presence
 # notch and capped at 4dB after listening feedback that the wider band/
 # deeper duck was scooping too much of the instrumental's own body whenever
@@ -184,7 +184,7 @@ KICK_BASS_DUCK_BASE_DB = 3.5
 # audibly carves space during vocal passages (with the dynamic duck doing
 # the heavier lifting there), without permanently taxing instrumental-only
 # sections for no reason.
-MUSIC_BUS_MID_DIP_DB = -1.8
+MUSIC_BUS_MID_DIP_DB = 0.0
 MUSIC_BUS_SIDE_WIDTH_DB = 1.5
 MUSIC_BUS_SIDE_WIDTH_HZ = 6000.0
 
@@ -313,6 +313,9 @@ def _scaled_bands(bands: list[EQBand], warmth: float) -> list[EQBand]:
     return scaled
 
 
+_RESONANCE_UNSET = object()  # sentinel: "compute per-stem as usual", distinct from a real None (group has no resonance to cut)
+
+
 def _process_stem(
     name: str,
     audio: np.ndarray,
@@ -324,6 +327,7 @@ def _process_stem(
     instrument_cache: dict[str, str] | None = None,
     lead_fundamental_hint: float | None = None,
     genre_name: str = "",
+    forced_resonance: object = _RESONANCE_UNSET,
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
@@ -387,7 +391,16 @@ def _process_stem(
     # --- Adaptive resonance suppression: cut only where THIS stem's energy
     # actually piles up in the mud range, only if it's a real accumulation
     # (replaces a fixed always-on 250-300Hz cut).
-    resonance = find_resonance(audio, sr)
+    #
+    # Link-grouped stems (see naming.py's link_id -- multi-mic/multi-take
+    # pairs like Kick_In/Kick_Out or Synth_Pad_L/R) pass `forced_resonance`
+    # instead of computing their own: two mics on the same source measured
+    # independently can easily disagree on freq/gain/Q, and applying two
+    # different IIR filters to what's meant to sum back into one coherent
+    # source is exactly what introduces comb-filtering when they're summed
+    # downstream. `forced_resonance` is computed once (on the group's summed
+    # dry signal, see the caller) and applied identically to every member.
+    resonance = find_resonance(audio, sr) if forced_resonance is _RESONANCE_UNSET else forced_resonance
     if resonance is not None:
         on_step(f"  '{name}': risonanza rilevata a {resonance.freq:.0f}Hz, taglio {resonance.gain_db:.1f}dB")
         on_event({"type": "resonance_cut", "stem": name, "freq_hz": round(resonance.freq, 1), "gain_db": round(resonance.gain_db, 1)})
@@ -796,6 +809,34 @@ def render_mix(
     solo_names = [name for name, d in descriptors.items() if not (d.role == "vocal" and d.layer == "double") and name in working_tracks]
     callback_lock = threading.Lock()
 
+    # --- Link groups (naming.py's link_id): mic/take pairs of the same
+    # physical source (Kick_In/Kick_Out, Synth_Pad_L/R). Resonance cut freq/
+    # gain/Q is measured on the group's own SUMMED dry signal and applied
+    # identically to every member below, instead of each mic independently
+    # finding its own (possibly different) cut -- two different IIR filters
+    # applied to two mics of the same source is exactly what turns into
+    # comb-filtering once they're summed into the same bus downstream.
+    link_groups: dict[str, list[str]] = {}
+    for name in solo_names:
+        link_id = descriptors[name].link_id
+        if link_id is not None:
+            link_groups.setdefault(link_id, []).append(name)
+    forced_resonance_by_name: dict[str, object] = {}
+    for link_id, members in link_groups.items():
+        if len(members) < 2:
+            continue  # a link_id with only one member has no partner in this session -- process normally
+        tracks = [working_tracks[m] for m in members]
+        min_len = min(t.shape[0] for t in tracks)
+        summed = np.zeros((min_len, 2), dtype=np.float64)
+        for t in tracks:
+            summed += t[:min_len].astype(np.float64)
+        group_resonance = find_resonance(summed.astype(np.float32), sr)
+        for m in members:
+            forced_resonance_by_name[m] = group_resonance
+        if group_resonance is not None:
+            _guarded_on_step(f"Gruppo linkato '{link_id}' ({', '.join(members)}): risonanza comune {group_resonance.freq:.0f}Hz, taglio {group_resonance.gain_db:.1f}dB applicato a tutti i membri")
+        _guarded_on_event({"type": "link_group", "link_id": link_id, "members": members, "resonance_freq_hz": round(group_resonance.freq, 1) if group_resonance else None})
+
     def _guarded_on_step(msg: str) -> None:
         with callback_lock:
             on_step(msg)
@@ -818,6 +859,7 @@ def render_mix(
                 instrument_overrides, _instrument_cache,
                 lead_fundamental if name in lead_names else None,
                 analysis.genre.name,
+                forced_resonance_by_name.get(name, _RESONANCE_UNSET),
             )
             for name in solo_names
         }
@@ -1237,11 +1279,15 @@ def render_mix(
             music_bus += processed[name] * other_gain
         mid = (music_bus[:, 0] + music_bus[:, 1]) * 0.5
         side = (music_bus[:, 0] - music_bus[:, 1]) * 0.5
-        mid = Pedalboard([PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=MUSIC_BUS_MID_DIP_DB, q=1.0)])(mid.reshape(1, -1), sr).reshape(-1)
+        if MUSIC_BUS_MID_DIP_DB < 0.0:
+            mid = Pedalboard([PeakFilter(cutoff_frequency_hz=LEAD_PRESENCE_FREQ_HZ, gain_db=MUSIC_BUS_MID_DIP_DB, q=1.0)])(mid.reshape(1, -1), sr).reshape(-1)
         side = Pedalboard([HighShelfFilter(cutoff_frequency_hz=MUSIC_BUS_SIDE_WIDTH_HZ, gain_db=MUSIC_BUS_SIDE_WIDTH_DB, q=0.7)])(side.reshape(1, -1), sr).reshape(-1)
         music_bus = np.stack([mid + side, mid - side], axis=1).astype(np.float32)
-        on_step(f"Bus musicale Mid/Side: buco vocale {MUSIC_BUS_MID_DIP_DB:+.1f}dB a {LEAD_PRESENCE_FREQ_HZ:.0f}Hz, lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz")
-        on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
+        if MUSIC_BUS_MID_DIP_DB < 0.0:
+            on_step(f"Bus musicale Mid/Side: buco vocale {MUSIC_BUS_MID_DIP_DB:+.1f}dB a {LEAD_PRESENCE_FREQ_HZ:.0f}Hz, lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz")
+            on_event({"type": "music_bus_ms", "mid_dip_db": MUSIC_BUS_MID_DIP_DB, "side_width_db": MUSIC_BUS_SIDE_WIDTH_DB})
+        else:
+            on_step(f"Bus musicale Mid/Side: lati {MUSIC_BUS_SIDE_WIDTH_DB:+.1f}dB sopra {MUSIC_BUS_SIDE_WIDTH_HZ / 1000:.0f}kHz (nessun buco vocale statico)")
 
         # --- Second masking pass, at bus level: the per-stem masking check
         # above ran before concurrent-take leveling, the vocal bus mixdown,

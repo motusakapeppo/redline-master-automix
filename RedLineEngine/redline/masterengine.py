@@ -175,6 +175,16 @@ def _mid_side_polish(signal: np.ndarray, sr: int, on_step: StepCallback, on_even
     return from_mid_side(mid, side_processed)
 
 
+def _crest_factor_db(signal: np.ndarray) -> float:
+    """crest_factor() in analysis/loudness.py returns a linear peak/rms
+    ratio, not dB -- but reference_profiles.py's CREST_FACTOR_TARGETS (and
+    every comparison against them below) are expressed in dB. Convert here
+    rather than at the source, since crest_factor() is also used elsewhere
+    (genre detection, depth staging) where its linear-ratio thresholds are
+    the ones actually in use."""
+    return 20.0 * float(np.log10(crest_factor(signal)))
+
+
 def _measure_perceptual(signal: np.ndarray, sr: int, meter: pyln.Meter) -> dict:
     mono = signal.mean(axis=1) if signal.ndim == 2 else signal
     try:
@@ -183,7 +193,7 @@ def _measure_perceptual(signal: np.ndarray, sr: int, meter: pyln.Meter) -> dict:
         lufs = -70.0
     return {
         "lufs": lufs,
-        "crest_factor": crest_factor(signal),
+        "crest_factor": _crest_factor_db(signal),
         "mono_compatibility": _mono_compatibility(signal),
     }
 

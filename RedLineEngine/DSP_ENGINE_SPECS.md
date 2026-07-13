@@ -754,4 +754,56 @@ punto del modulo, verificato anche a livello statico da
 
 ---
 
+## 8. Addendum Luglio 2026 (parte 3) — Bilanciamento voce/strumentale, bug crest factor, Link Groups
+
+Ciclo di modifiche validato senza ascolto diretto (utente non disponibile) —
+ogni decisione è ancorata a una misura oggettiva (spettro, LUFS, fase) invece
+che al giudizio d'orecchio, e verificata su una sessione reale multi-stem
+(27 stem strumentali + 14 stem vocali, `redline/cli.py --folder` + Demucs
+non necessario, stem già separati).
+
+### 8.1 Bug reali trovati e corretti
+
+| Bug | Causa | Fix |
+|---|---|---|
+| Doppio scavo della strumentale | `MUSIC_BUS_MID_DIP_DB = -1.8` tagliava staticamente le medie del `music_bus` *a prescindere* dal ducking dinamico già presente sulla stessa banda — buco perenne anche fuori dai passaggi vocali | Portato a `0.0`; log/evento del dip resi condizionali (`if MUSIC_BUS_MID_DIP_DB < 0.0`) così la console non stampa un "buco vocale +0.0dB" inerte |
+| Crest factor confrontato in unità sbagliate | `analysis/loudness.py::crest_factor()` restituisce un **rapporto lineare** peak/rms (es. 4.02), ma `masterengine.py` lo passava così com'è al feedback loop iterativo confrontandolo contro `reference_profiles.py::CREST_FACTOR_TARGETS`, che sono in **dB** — il QC leggeva "crest 4.0dB (target 8.0dB)" e tentava correzioni per un problema che non esisteva (il valore reale in dB era ~12.1, sopra il target, non sotto) | Aggiunta `_crest_factor_db()` in `masterengine.py` (conversione `20*log10(rapporto)`) usata solo nel confronto QC/feedback loop; `analysis/loudness.py::crest_factor()` **non toccato** perché condiviso con `genre.py::detect_genre()`, `depth.py`, `instrumentstack.py` — le soglie lì andrebbero riverificate a parte prima di cambiarne le unità |
+| Presence boost vocale sovradimensionato | `LEAD_PRESENCE_GAIN_DB = 3.0` (Q=1.0 @ 3kHz) — misurato +19.4dB di margine voce/strumentale in banda 2-3kHz durante i tratti vocali attivi, ben oltre i ~6-10dB tipicamente sufficienti per l'intelligibilità in un mix urban/rap | Ridotto a `1.5`; verificato che l'EQ **non è la causa principale** del margine (il delta è sceso solo a +18.9dB) — il grosso del divario è strutturale (una voce sola concentra più energia in banda stretta di un bed diviso su 14 stem) e non va inseguito ulteriormente via gain, serve validazione d'ascolto |
+
+### 8.2 Link Groups — coerenza di fase multi-mic (`naming.py` + `mixengine.py`)
+
+Prima di questa modifica, ogni stem veniva elaborato in un thread pool
+completamente indipendente (`_process_stem`, `ThreadPoolExecutor` in
+`mixengine.py`): due mic diversi sulla stessa fonte fisica (es.
+`Kick_In.wav`/`Kick_Out.wav`, `Synth_Pad_L.wav`/`Synth_Pad_R.wav`) potevano
+ricevere tagli di risonanza (`find_resonance`) a frequenze/gain/Q diverse,
+il classico presupposto per comb-filtering quando le tracce si sommano nel
+bus. Verificato con un test sintetico: due "microfoni" della stessa fonte
+con risonanze a 280Hz e 310Hz venivano tagliati a frequenze diverse quando
+processati indipendentemente.
+
+- **`naming.py`**: nuovo campo `StemDescriptor.link_id`, calcolato da
+  `_link_id_from_name()`. Riusa lo stesso stile word-boundary già in uso per
+  dx/sx/R/L (evita falsi positivi tipo "Outro" che contiene "out" come
+  substring ma non come token isolato). Riconosce dx/sx/r/right/l/left/in/
+  out/top/bottom come suffissi di gruppo; solo il **basename** del file
+  viene usato (non il path completo, per non far collidere gruppi diversi
+  su parole ricorrenti nel nome cartella tipo "Vocal Stems Pitch
+  Correction"), e solo l'**ultimo** token trovato viene rimosso.
+- **`mixengine.py`**: prima del thread pool, i nomi con lo stesso `link_id`
+  (solo se compaiono **almeno 2 volte** nella sessione — un `link_id` senza
+  partner viene processato come sempre) vengono raggruppati; la risonanza
+  viene misurata una sola volta sulla **somma** dei segnali dry del gruppo
+  e passata a ogni membro via il parametro `forced_resonance` di
+  `_process_stem` (sentinel `_RESONANCE_UNSET` per distinguere "nessun
+  gruppo, calcola come sempre" da "gruppo senza risonanza da tagliare").
+  Evento `link_group` emesso per visibilità in log/GUI.
+- **Non ancora esteso**: l'HPF e la classificazione strumento (`other`/
+  `drums`) restano per-stem indipendenti anche per stem linkate — solo la
+  risonanza adattiva è condivisa. Se in pratica emergono ancora artefatti
+  di fase su gruppi linkati, il prossimo passo è unificare anche HPF cutoff
+  e `classify_instrument()` sulla somma del gruppo.
+
+---
+
 *Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare.*
