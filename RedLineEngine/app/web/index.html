@@ -68,12 +68,12 @@ window.addEventListener('error', function(e) {
       <h1>Come vuoi il mix?</h1>
 
       <div class="field">
-        <label>Note libere (facoltativo) — scrivi in linguaggio semplice cosa vorresti diverso</label>
+        <label for="creative_brief">Note libere (facoltativo) — scrivi in linguaggio semplice cosa vorresti diverso</label>
         <textarea id="creative_brief" rows="3" placeholder="es. vorrei un suono più caldo, quasi da vinile, e la voce un po' più protagonista — lascia vuoto per usare solo le impostazioni qui sotto"></textarea>
       </div>
 
       <div class="field field-row">
-        <label>Preset</label>
+        <label for="preset-select">Preset</label>
         <select id="preset-select" style="flex:1">
           <option value="">-- Carica preset --</option>
         </select>
@@ -81,18 +81,18 @@ window.addEventListener('error', function(e) {
       </div>
 
       <div class="field">
-        <label>Aggressività <span id="aggressiveness-val">3</span>/5</label>
+        <label for="aggressiveness">Aggressività <span id="aggressiveness-val">3</span>/5</label>
         <input type="range" id="aggressiveness" min="1" max="5" value="3" step="1"
                oninput="document.getElementById('aggressiveness-val').textContent = this.value">
       </div>
 
       <div class="field">
-        <label>Calore (freddo/brillante &larr;&rarr; caldo)</label>
+        <label for="warmth">Calore (freddo/brillante &larr;&rarr; caldo)</label>
         <input type="range" id="warmth" min="-1" max="1" value="0" step="0.1">
       </div>
 
       <div class="field">
-        <label>Presenza voce (indietro &larr;&rarr; protagonista)</label>
+        <label for="vocal_prominence">Presenza voce (indietro &larr;&rarr; protagonista)</label>
         <input type="range" id="vocal_prominence" min="-1" max="1" value="0" step="0.1">
       </div>
 
@@ -101,22 +101,22 @@ window.addEventListener('error', function(e) {
       </div>
 
       <div class="field">
-        <label>Stereo Width (0=mono, 0.5=stretto, 1.0=originale)</label>
+        <label for="stereo_width">Stereo Width (0=mono, 0.5=stretto, 1.0=originale)</label>
         <input type="range" id="stereo_width" min="0" max="1" value="0" step="0.05">
       </div>
 
       <div class="field">
-        <label>Transient Attack (dB, positivo=pi&ugrave; incisivo)</label>
+        <label for="transient_attack">Transient Attack (dB, positivo=pi&ugrave; incisivo)</label>
         <input type="range" id="transient_attack" min="-6" max="6" value="0" step="0.5">
       </div>
 
       <div class="field">
-        <label>Transient Sustain (dB, negativo=taglia la coda)</label>
+        <label for="transient_sustain">Transient Sustain (dB, negativo=taglia la coda)</label>
         <input type="range" id="transient_sustain" min="-6" max="6" value="0" step="0.5">
       </div>
 
       <div class="field">
-        <label>Genere di riferimento (opzionale, lascia vuoto per usare quello rilevato)</label>
+        <label for="genre_override">Genere di riferimento (opzionale, lascia vuoto per usare quello rilevato)</label>
         <input type="text" id="genre_override" placeholder="es. Hip-Hop, Pop / Rock...">
       </div>
 
@@ -132,7 +132,7 @@ window.addEventListener('error', function(e) {
       </div>
 
       <div class="field">
-        <label>Come procedere</label>
+        <label for="workflow_mode">Come procedere</label>
         <select id="workflow_mode">
           <option value="auto">Tutto in sequenza (mix + mastering automatico)</option>
           <option value="stop_at_mix">Fermati dopo il mix per ascoltare ed eventualmente correggere</option>
@@ -148,7 +148,7 @@ window.addEventListener('error', function(e) {
 
       <div id="progress-wrap" class="progress-wrap">
         <div class="progress-bar">
-          <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+          <div id="progress-fill" class="progress-fill" style="width:0%" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Avanzamento render"></div>
           <span class="progress-bar-label" id="progress-pct">0%</span>
         </div>
         <div class="progress-meta">
@@ -220,14 +220,14 @@ window.addEventListener('error', function(e) {
 
         <div class="module">
           <div class="module-title"><span class="module-icon">▤</span>Compressore</div>
-          <canvas id="comp-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="comp-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione compressore"></canvas>
           <div class="gr-meter"><div class="gr-fill" id="gr-fill"></div></div>
           <div class="module-detail" id="comp-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">◎</span>De-esser</div>
-          <canvas id="deess-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="deess-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione de-esser"></canvas>
           <div class="deess-dial" id="deess-dial">&mdash;</div>
           <div class="module-detail" id="deess-detail">in attesa...</div>
         </div>
@@ -240,31 +240,31 @@ window.addEventListener('error', function(e) {
 
         <div class="module module-qc">
           <div class="module-title"><span class="module-icon">◈</span>Ascolto / QC</div>
-          <canvas id="qc-canvas" class="qc-canvas" width="220" height="40"></canvas>
+          <canvas id="qc-canvas" class="qc-canvas" width="220" height="40" role="img" aria-label="Forma d'onda QC"></canvas>
           <div class="module-detail" id="qc-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">〜</span>Riverbero / Spazio</div>
-          <canvas id="reverb-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="reverb-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione riverbero"></canvas>
           <div class="module-detail" id="reverb-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">▲</span>Saturazione</div>
-          <canvas id="sat-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="sat-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione saturazione"></canvas>
           <div class="module-detail" id="saturation-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">◆</span>Master (Multiband/Limiter)</div>
-          <canvas id="master-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="master-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione limiter"></canvas>
           <div class="module-detail" id="master-detail">in attesa...</div>
         </div>
 
         <div class="module">
           <div class="module-title"><span class="module-icon">↔</span>Mid/Side</div>
-          <canvas id="midside-canvas" class="plugin-canvas" width="220" height="46"></canvas>
+          <canvas id="midside-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione mid/side"></canvas>
           <div class="module-detail" id="midside-detail">in attesa...</div>
         </div>
       </div>
@@ -305,234 +305,13 @@ window.addEventListener('error', function(e) {
 
   <div id="avatar-panel">
     <div id="assistant" class="assistant">
-      <canvas id="fx-canvas" class="fx-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
+      <canvas id="fx-canvas" class="fx-canvas" role="img" aria-label="Avatar 3D reattivo" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
       <div id="easter-egg-label" class="easter-egg-label hidden">◉ REDLINE MODE</div>
       <!-- Plain-language speech bubble: fires on macro phase changes only
            (see sayBubble()/simplifyMacroMessage() in app.js), a friendlier
            parallel narration next to the technical log for non-expert
            users, without changing the technical log itself. -->
-      <div id="speech-bubble" class="speech-bubble hidden"><span id="speech-bubble-text"></span></div>
-      <svg id="avatar-svg" viewBox="0 0 200 320" class="assistant-svg">
-        <image id="avatar-bg" href="motus_base.png" x="0" y="0" width="200" height="320" opacity="0.15" preserveAspectRatio="xMidYMid slice" />
-
-        <defs>
-          <!-- SKIN: radial gradient, light from upper-left -->
-          <radialGradient id="skinGrad" cx="35%" cy="30%" r="65%">
-            <stop offset="0%" stop-color="#2E2E2E" />
-            <stop offset="50%" stop-color="#1A1A1A" />
-            <stop offset="100%" stop-color="#0A0A0A" />
-          </radialGradient>
-
-          <!-- LIPS -->
-          <linearGradient id="lipGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#3A1A1A" />
-            <stop offset="100%" stop-color="#1A0A0A" />
-          </linearGradient>
-
-          <!-- HAIR -->
-          <radialGradient id="hairGrad" cx="50%" cy="20%" r="60%">
-            <stop offset="0%" stop-color="#222" />
-            <stop offset="100%" stop-color="#050505" />
-          </radialGradient>
-
-          <!-- GLOW FILTER (keep existing) -->
-          <filter id="redline-glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-
-          <!-- IRIS GRADIENT -->
-          <radialGradient id="irisGrad" cx="40%" cy="35%" r="50%">
-            <stop offset="0%" stop-color="#FF003F" />
-            <stop offset="60%" stop-color="#8A001A" />
-            <stop offset="100%" stop-color="#2A0008" />
-          </radialGradient>
-
-          <!-- LENS REFLECTION -->
-          <linearGradient id="lensReflect" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="rgba(255,255,255,0.15)" />
-            <stop offset="50%" stop-color="rgba(255,255,255,0)" />
-            <stop offset="100%" stop-color="rgba(255,255,255,0.05)" />
-          </linearGradient>
-        </defs>
-
-        <!-- HAIR BACK (behind head) -->
-        <g id="hair-back">
-          <path d="M55 85 Q50 60 70 45 Q100 30 130 45 Q150 60 145 85 Q155 70 160 90 Q165 120 160 150 L155 155 Q150 140 140 135 Q130 150 100 155 Q70 150 60 135 Q50 140 45 155 L40 150 Q35 120 40 90 Q45 70 55 85Z" fill="url(#hairGrad)" />
-          <!-- Hair strands on sides -->
-          <path d="M55 85 Q45 100 42 130 Q40 145 45 155" fill="none" stroke="#1A1A1A" stroke-width="2" />
-          <path d="M145 85 Q155 100 158 130 Q160 145 155 155" fill="none" stroke="#1A1A1A" stroke-width="2" />
-          <!-- Bangs/fringe -->
-          <path d="M65 50 Q75 65 70 80 Q80 70 90 55 Q100 50 110 55 Q120 70 130 80 Q125 65 135 50" fill="url(#hairGrad)" opacity="0.8" />
-        </g>
-
-        <!-- NECK + BODY -->
-        <g id="neck-body">
-          <!-- Neck -->
-          <path d="M85 185 Q80 200 82 220 L118 220 Q120 200 115 185Z" fill="url(#skinGrad)" />
-          <!-- Neck shadow left -->
-          <path d="M85 185 Q80 200 82 220 L90 220 Q88 200 90 185Z" fill="#050505" opacity="0.4" />
-          <!-- Shoulders -->
-          <path d="M82 220 Q60 225 40 240 Q30 250 25 270 L175 270 Q170 250 160 240 Q140 225 118 220Z" fill="url(#skinGrad)" />
-          <!-- Collarbone hint -->
-          <path d="M85 240 Q100 245 115 240" fill="none" stroke="#1A1A1A" stroke-width="0.8" opacity="0.5" />
-          <!-- Clothing/jacket collar -->
-          <path d="M40 255 Q60 245 82 230 L118 230 Q140 245 160 255 L165 270 L35 270Z" fill="#0D0D0D" />
-          <path d="M40 255 Q60 245 82 230 L118 230 Q140 245 160 255" fill="none" stroke="#1A1A1A" stroke-width="1" />
-        </g>
-
-        <!-- HEAD BASE -->
-        <g id="avatar-head">
-          <!-- Skull base with skin gradient -->
-          <path d="M55 100 Q50 60 70 45 Q100 30 130 45 Q150 60 145 100 L140 130 Q138 150 125 170 Q110 185 100 188 Q90 185 75 170 Q62 150 60 130Z" fill="url(#skinGrad)" />
-
-          <!-- Forehead highlight -->
-          <path d="M70 55 Q100 40 130 55 Q135 70 130 85 Q100 80 70 85 Q65 70 70 55Z" fill="rgba(255,255,255,0.04)" />
-
-          <!-- Cheekbone left -->
-          <path d="M55 110 Q50 120 55 130 Q60 125 62 115Z" fill="rgba(255,255,255,0.03)" />
-          <!-- Cheekbone right -->
-          <path d="M145 110 Q150 120 145 130 Q140 125 138 115Z" fill="rgba(255,255,255,0.03)" />
-
-          <!-- Jaw shadow left -->
-          <path d="M60 130 Q55 150 75 170 Q70 155 65 135Z" fill="#050505" opacity="0.3" />
-          <!-- Jaw shadow right -->
-          <path d="M140 130 Q145 150 125 170 Q130 155 135 135Z" fill="#050505" opacity="0.3" />
-
-          <!-- NOSE -->
-          <!-- Nose bridge -->
-          <path id="nose-bridge" d="M98 85 Q97 110 96 130 Q100 135 104 130 Q103 110 102 85Z" fill="url(#skinGrad)" />
-          <!-- Nose bridge highlight -->
-          <path d="M99 88 Q98 110 98 128" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-          <!-- Nose tip -->
-          <ellipse id="nose-tip" cx="100" cy="133" rx="5" ry="3.5" fill="#1E1E1E" />
-          <!-- Nose tip highlight -->
-          <ellipse cx="99" cy="132" rx="2" ry="1.5" fill="rgba(255,255,255,0.06)" />
-          <!-- Nostrils -->
-          <path d="M94 135 Q97 137 99 135" fill="none" stroke="#333" stroke-width="0.8" />
-          <path d="M106 135 Q103 137 101 135" fill="none" stroke="#333" stroke-width="0.8" />
-
-          <!-- EYEBROWS -->
-          <path id="eyebrow-left" d="M62 78 Q72 73 85 77" fill="none" stroke="#444" stroke-width="2" stroke-linecap="round" />
-          <path id="eyebrow-right" d="M115 77 Q128 73 138 78" fill="none" stroke="#444" stroke-width="2" stroke-linecap="round" />
-
-          <!-- EYES -->
-          <!-- Left eye socket shadow -->
-          <ellipse cx="74" cy="90" rx="12" ry="8" fill="#080808" opacity="0.5" />
-          <!-- Right eye socket shadow -->
-          <ellipse cx="126" cy="90" rx="12" ry="8" fill="#080808" opacity="0.5" />
-
-          <!-- Left eye -->
-          <g id="eye-left">
-            <!-- Upper eyelid -->
-            <path id="eyelid-left" d="M62 90 Q74 80 86 90" fill="none" stroke="#555" stroke-width="1.8" stroke-linecap="round" />
-            <!-- Eyelid crease -->
-            <path d="M64 86 Q74 78 84 86" fill="none" stroke="#333" stroke-width="0.6" opacity="0.5" />
-            <!-- Lower eyelid -->
-            <path d="M62 90 Q74 96 86 90" fill="none" stroke="#444" stroke-width="1" stroke-linecap="round" />
-            <!-- Iris -->
-            <circle id="iris-left" cx="74" cy="90" r="4" fill="url(#irisGrad)" />
-            <!-- Pupil -->
-            <circle cx="74" cy="90" r="2" fill="#000" />
-            <!-- Eye reflection -->
-            <circle cx="73" cy="89" r="1.2" fill="rgba(255,255,255,0.3)" />
-          </g>
-
-          <!-- Right eye -->
-          <g id="eye-right">
-            <!-- Upper eyelid -->
-            <path id="eyelid-right" d="M114 90 Q126 80 138 90" fill="none" stroke="#555" stroke-width="1.8" stroke-linecap="round" />
-            <!-- Eyelid crease -->
-            <path d="M116 86 Q126 78 136 86" fill="none" stroke="#333" stroke-width="0.6" opacity="0.5" />
-            <!-- Lower eyelid -->
-            <path d="M114 90 Q126 96 138 90" fill="none" stroke="#444" stroke-width="1" stroke-linecap="round" />
-            <!-- Iris -->
-            <circle id="iris-right" cx="126" cy="90" r="4" fill="url(#irisGrad)" />
-            <!-- Pupil -->
-            <circle cx="126" cy="90" r="2" fill="#000" />
-            <!-- Eye reflection -->
-            <circle cx="125" cy="89" r="1.2" fill="rgba(255,255,255,0.3)" />
-          </g>
-
-          <!-- Under-eye bags/shadow (subtle) -->
-          <path d="M64 94 Q74 98 84 94" fill="none" stroke="#111" stroke-width="0.5" opacity="0.3" />
-          <path d="M116 94 Q126 98 136 94" fill="none" stroke="#111" stroke-width="0.5" opacity="0.3" />
-
-          <!-- MOUTH -->
-          <g id="mouth">
-            <!-- Upper lip -->
-            <path id="upper-lip" d="M88 155 Q92 150 100 152 Q108 150 112 155 Q106 156 100 155 Q94 156 88 155Z" fill="url(#lipGrad)" />
-            <!-- Lower lip -->
-            <path id="lower-lip" d="M88 155 Q92 162 100 163 Q108 162 112 155 Q106 157 100 156 Q94 157 88 155Z" fill="url(#lipGrad)" />
-            <!-- Lip line -->
-            <path d="M88 155 Q94 153 100 154 Q106 153 112 155" fill="none" stroke="#1A0505" stroke-width="0.8" />
-            <!-- Lower lip highlight -->
-            <path d="M92 158 Q100 161 108 158" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" />
-          </g>
-
-          <!-- Chin shadow -->
-          <path d="M90 168 Q100 175 110 168 Q105 180 100 182 Q95 180 90 168Z" fill="#080808" opacity="0.4" />
-
-          <!-- GLASSES (keep existing style, enhanced) -->
-          <g id="glasses">
-            <!-- Left lens -->
-            <rect id="lens-left" x="55" y="82" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#666" stroke-width="1.5" />
-            <!-- Left lens reflection -->
-            <rect x="56" y="83" width="36" height="26" rx="3" fill="url(#lensReflect)" />
-            <!-- Right lens -->
-            <rect id="lens-right" x="107" y="82" width="38" height="28" rx="4" fill="#0A0A0A" stroke="#666" stroke-width="1.5" />
-            <!-- Right lens reflection -->
-            <rect x="108" y="83" width="36" height="26" rx="3" fill="url(#lensReflect)" />
-            <!-- Bridge -->
-            <line x1="93" y1="92" x2="107" y2="92" stroke="#666" stroke-width="1.5" />
-            <!-- Temple arms -->
-            <line x1="55" y1="90" x2="48" y2="88" stroke="#666" stroke-width="1.5" stroke-linecap="round" />
-            <line x1="145" y1="90" x2="152" y2="88" stroke="#666" stroke-width="1.5" stroke-linecap="round" />
-            <!-- Nose pads -->
-            <ellipse cx="96" cy="100" rx="1.5" ry="2.5" fill="#444" />
-            <ellipse cx="104" cy="100" rx="1.5" ry="2.5" fill="#444" />
-          </g>
-
-          <!-- NOSE PIERCING -->
-          <circle id="piercing-nose" cx="110" cy="135" r="2.5" fill="#E0E0E0" filter="url(#redline-glow)" />
-
-          <!-- EARRINGS -->
-          <g id="earring-left" class="svg-earring" style="transform-origin: 50px 138px;">
-            <!-- Earring chain -->
-            <path d="M50 100 Q40 115 52 135" fill="none" stroke="#666" stroke-width="1" opacity="0.5" />
-            <!-- Earring hoop -->
-            <circle cx="50" cy="138" r="5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
-            <!-- Earring highlight -->
-            <circle cx="48" cy="136" r="1.5" fill="rgba(255,255,255,0.2)" />
-          </g>
-
-          <g id="earring-right" class="svg-earring" style="transform-origin: 150px 138px;">
-            <!-- Earring chain -->
-            <path d="M150 100 Q160 115 148 135" fill="none" stroke="#666" stroke-width="1" opacity="0.5" />
-            <!-- Earring hoop -->
-            <circle cx="150" cy="138" r="5" fill="none" stroke="#E0E0E0" stroke-width="1.5" />
-            <!-- Earring highlight -->
-            <circle cx="148" cy="136" r="1.5" fill="rgba(255,255,255,0.2)" />
-          </g>
-
-          <!-- HEADPHONES (keep existing style) -->
-          <g id="headphones" class="headphones-svg">
-            <!-- Band -->
-            <path d="M46 88 C46 15 154 15 154 88" class="headphones-band" fill="none" stroke="#FF003F" stroke-width="2" />
-            <!-- Left cup -->
-            <ellipse cx="45" cy="98" rx="12" ry="28" class="headphones-cup" fill="none" stroke="#FF003F" stroke-width="1.5" />
-            <!-- Left cup padding -->
-            <ellipse cx="45" cy="98" rx="8" ry="22" fill="rgba(255,0,63,0.05)" />
-            <!-- Right cup -->
-            <ellipse cx="155" cy="98" rx="12" ry="28" class="headphones-cup" fill="none" stroke="#FF003F" stroke-width="1.5" />
-            <!-- Right cup padding -->
-            <ellipse cx="155" cy="98" rx="8" ry="22" fill="rgba(255,0,63,0.05)" />
-          </g>
-        </g>
-      </svg>
+      <div id="speech-bubble" class="speech-bubble hidden" aria-live="polite"><span id="speech-bubble-text"></span></div>
       <div class="assistant-label" id="assistant-label">pronto</div>
 
       <div class="monitor-toggle">
@@ -542,7 +321,7 @@ window.addEventListener('error', function(e) {
     </div>
 
     <div id="terminal-box" class="terminal-box">
-      <div id="log" class="log"></div>
+      <div id="log" class="log" aria-live="polite"></div>
       <div id="llm-console-wrap" class="llm-console-wrap">
         <div class="llm-console-label">&#129504; Ragionamento IA locale (grezzo)</div>
         <div id="llm-console" class="llm-console"></div>
@@ -553,6 +332,7 @@ window.addEventListener('error', function(e) {
 
 </div>
 
+<script src="app_util.js"></script>
 <script src="app.js"></script>
 <script type="module" src="three-avatar.js"></script>
 </body>

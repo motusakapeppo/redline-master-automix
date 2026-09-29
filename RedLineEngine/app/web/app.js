@@ -55,7 +55,10 @@ function resetProgress() {
   const fill = document.getElementById("progress-fill");
   const pct = document.getElementById("progress-pct");
   const eta = document.getElementById("progress-eta");
-  if (fill) fill.style.width = "0%";
+  if (fill) {
+    fill.style.width = "0%";
+    fill.setAttribute("aria-valuenow", "0");
+  }
   if (pct) pct.textContent = "0%";
   if (eta) eta.textContent = "stima tempo rimanente: --";
 }
@@ -83,7 +86,10 @@ function bumpProgress(msg) {
   const pctValue = Math.min(97, (_progressSeen / _progressExpected) * 100);
   const fill = document.getElementById("progress-fill");
   const pctEl = document.getElementById("progress-pct");
-  if (fill) fill.style.width = `${pctValue.toFixed(0)}%`;
+  if (fill) {
+    fill.style.width = `${pctValue.toFixed(0)}%`;
+    fill.setAttribute("aria-valuenow", pctValue.toFixed(0));
+  }
   if (pctEl) pctEl.textContent = `${pctValue.toFixed(0)}%`;
 
   // Flavor bubbles at progress milestones -- only once per milestone per
@@ -115,49 +121,6 @@ function startIdleBreathing() {
   if (window.avatarAPI) window.avatarAPI.setActivity(0.3);
 }
 startIdleBreathing();
-
-function startBlinkCycle() {
-  // Three.js handles blink animation
-}
-startBlinkCycle();
-
-function startEyeSaccades() {
-  // Three.js handles eye animation
-}
-startEyeSaccades();
-
-function setBrowExpression(level) {
-  // Three.js handles expressions
-}
-
-function expressSurprise() {
-  // Three.js handles expressions
-}
-
-function expressConcentrate() {
-  // Three.js handles expressions
-}
-
-function expressRelax() {
-  // Three.js handles expressions
-}
-
-function expressFlinch(intensity) {
-  // Three.js handles expressions
-}
-
-function animateMouth(openAmount) {
-  // Three.js handles mouth animation
-}
-
-function startLipSync(text) {
-  // Three.js handles lip sync
-}
-
-function randomLookAround() {
-  // Three.js handles idle animation
-}
-randomLookAround();
 
 // --- Plugin explainer animations: small canvas visualizations that show
 // what each DSP stage actually DOES to the signal (a compressor pulling a
@@ -338,7 +301,7 @@ function animateMidSide(canvasId) {
 // — activity spikes on every real step/event and decays, driving the wave's
 // amplitude, instead of a canned idle loop with no relation to what's happening.
 let qcActivityLevel = 0;
-let qcCanvasAnimationStarted = false;
+let qcCanvasAnimationId = null;
 
 function bumpActivity() {
   qcActivityLevel = 1.0;
@@ -346,8 +309,10 @@ function bumpActivity() {
 }
 
 function startQcCanvasLoop() {
-  if (qcCanvasAnimationStarted) return;
-  qcCanvasAnimationStarted = true;
+  // Already running: reuse the existing loop instead of stacking a second
+  // RAF chain on the same canvas (bumpActivity fires dozens of times per
+  // second during a render).
+  if (qcCanvasAnimationId !== null) return;
   const canvas = document.getElementById("qc-canvas");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -369,9 +334,18 @@ function startQcCanvasLoop() {
     }
     ctx.stroke();
     phase += 0.15 + qcActivityLevel * 0.1;
-    requestAnimationFrame(draw);
+    qcCanvasAnimationId = requestAnimationFrame(draw);
   }
   draw();
+}
+
+// Cancels the QC canvas RAF loop -- called when a new render starts so a
+// previous render's loop can never keep running (or stack) across runs.
+function stopQcCanvasLoop() {
+  if (qcCanvasAnimationId !== null) {
+    cancelAnimationFrame(qcCanvasAnimationId);
+    qcCanvasAnimationId = null;
+  }
 }
 
 function showScreen(id) {
@@ -456,6 +430,7 @@ async function startRun() {
   redrawEq();
   resetProgress();
   resetPipelineRail();
+  stopQcCanvasLoop();
   setAssistantLabel("al lavoro...");
 
   const prefs = {
@@ -652,6 +627,17 @@ function setPipelineStage(stage) {
   playWhoosh();
 }
 
+// #log is a live, unbounded stream (a real render fires dozens of onStep
+// lines per second) -- capped so it can't grow for the life of the session.
+const LOG_MAX_LINES = 400;
+
+// Shared eviction hook for #log: releases the per-line AbortController that
+// owns wireInteractiveLine's listeners the moment a line is pushed out by
+// the cap, instead of leaving them attached forever.
+function _evictLogLine(node) {
+  if (node && node._listenerAbort) node._listenerAbort.abort();
+}
+
 function onStep(msg) {
   try {
     const log = document.getElementById("log");
@@ -663,7 +649,10 @@ function onStep(msg) {
     const isMacro = !msg.startsWith("  ");
     line.className = isMacro ? "log-line log-macro" : "log-line log-micro";
     line.textContent = msg;
-    log.appendChild(line);
+    // Owns this line's interactive listeners (see wireInteractiveLine) so
+    // they can be aborted when the line is evicted by the log cap.
+    line._listenerAbort = new AbortController();
+    cappedAppend(log, line, LOG_MAX_LINES, _evictLogLine);
     log.scrollTop = log.scrollHeight;
     if (window.avatarAPI) window.avatarAPI.onStep(msg);
     bumpActivity();
@@ -692,17 +681,21 @@ function onStep(msg) {
 // frequency flashes exactly that point on the EQ curve; clicking a line
 // about saturation/distortion triggers a brief visual glitch on the rack.
 function wireInteractiveLine(line, msg) {
+  // Listeners are owned by the line's AbortController (set in onStep) so
+  // they're removed when the line is evicted by the log cap -- otherwise
+  // every line ever logged keeps its listeners alive for the whole session.
+  const opts = line._listenerAbort ? { signal: line._listenerAbort.signal } : undefined;
   const hzMatch = msg.match(/([\d.]+)\s*k?Hz/i);
   if (hzMatch) {
     const isKilo = /kHz/i.test(hzMatch[0]);
     const freq = parseFloat(hzMatch[1]) * (isKilo ? 1000 : 1);
     line.style.cursor = "pointer";
-    line.addEventListener("mouseenter", () => showEqHoverMarker(freq));
-    line.addEventListener("mouseleave", hideEqHoverMarker);
+    line.addEventListener("mouseenter", () => showEqHoverMarker(freq), opts);
+    line.addEventListener("mouseleave", hideEqHoverMarker, opts);
   }
   if (/satura/i.test(msg)) {
     line.style.cursor = "pointer";
-    line.addEventListener("click", triggerGlitch);
+    line.addEventListener("click", triggerGlitch, opts);
   }
 }
 
@@ -747,9 +740,6 @@ function reactToGlueCompression(ratio) {
 }
 
 function setListening(on) {
-  const hp = document.getElementById("headphones");
-  if (!hp) return;
-  hp.classList.toggle("active", on);
   if (window.avatarAPI) window.avatarAPI.onListening(on);
 }
 
@@ -1050,6 +1040,8 @@ async function renderDawWaveforms() {
     canvas.className = "daw-track-canvas";
     canvas.width = 600;
     canvas.height = 40;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", `Forma d'onda: ${name === "__MIX__" ? "MIX (riferimento)" : name}`);
     lane.appendChild(canvas);
 
     _drawWaveform(canvas, data.tracks[name]);
@@ -1676,9 +1668,8 @@ function addEventChip(text) {
   const chip = document.createElement("div");
   chip.className = "log-line log-chip";
   chip.textContent = text;
-  log.appendChild(chip);
+  cappedAppend(log, chip, LOG_MAX_LINES, _evictLogLine);
   log.scrollTop = log.scrollHeight;
-  while (log.children.length > 400) log.removeChild(log.firstChild);
 }
 
 // Generic per-stem parameter log: every event carrying `evt.stem` gets
@@ -1962,9 +1953,6 @@ function onEvent(evt) {
     case "qc_report": {
       if (window.avatarAPI) window.avatarAPI.onListening(true);
       setTimeout(() => { if (window.avatarAPI) window.avatarAPI.onListening(false); }, 2500);
-      const hp = document.getElementById("headphones");
-      hp.classList.add("active");
-      setTimeout(() => hp.classList.remove("active"), 2500);
       flashDetail(
         "qc-detail",
         `${evt.lufs} LUFS, peak ${evt.true_peak_db}dB, mono ${evt.mono_compatibility} — ${evt.passed ? "OK" : "corretto"}`

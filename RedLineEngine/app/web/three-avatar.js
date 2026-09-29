@@ -49,6 +49,10 @@ let idleFloatPhase = 0;
 // compression slam, de-esser bite, done celebration) so those moments read
 // as a snappy "hit" instead of only the subtler continuous vibration/glow.
 let punchScale = 0;
+// Ordered two-stage eye-glow decay for onDone (see below) -- tracked so a
+// repeated onDone cancels the previous sequence instead of letting two
+// independent timer chains clobber each other.
+let doneEyeTimer = null;
 
 // The skull GLB ships as a fully rigged, animated character (baked clips:
 // Idle, Yes, No, Bite_Front, Bite_InPlace, Dance, HitRecieve, ...) --
@@ -377,7 +381,6 @@ const PROP_CONFIGS = {
   headphones: { url: 'assets/headphones.glb', targetHeight: 1.7, position: [0, 0.75, 0], tint: '#9098A8' },
   vinyl: { url: 'assets/vinyl.glb', targetHeight: 1.3, position: [1.5, -0.2, -0.3], tint: '#7A8290', spin: true },
   cassette: { url: 'assets/cassette.glb', targetHeight: 0.9, position: [1.4, -0.1, 0], tint: '#8890A0' },
-  music_note: { url: 'assets/music_note.glb', targetHeight: 0.8, position: [-1.4, 0.6, 0], tint: '#9A5560' },
   guitar: { url: 'assets/guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
   bass: { url: 'assets/bass_guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
   piano: { url: 'assets/piano.glb', targetHeight: 1.4, position: [-1.5, -0.5, 0], tint: '#8890A0' },
@@ -1122,11 +1125,21 @@ function onDone() {
   punchScale = 1.0;
   playSkullAction('Dance');
 
+  // Ordered two-stage eye decay: bright flash -> softer glow -> rest. The
+  // second stage is scheduled from inside the first timeout so the two
+  // resets can't clobber each other (previously both were scheduled at
+  // once, so the 400ms reset killed the 600ms glow before it ever showed).
   if (eyeLeft) eyeLeft.intensity = 5.0;
   if (eyeRight) eyeRight.intensity = 5.0;
-  setTimeout(() => {
-    if (eyeLeft) eyeLeft.intensity = 0.05;
-    if (eyeRight) eyeRight.intensity = 0.05;
+  clearTimeout(doneEyeTimer);
+  doneEyeTimer = setTimeout(() => {
+    if (eyeLeft) eyeLeft.intensity = 2.5;
+    if (eyeRight) eyeRight.intensity = 2.5;
+    doneEyeTimer = setTimeout(() => {
+      if (eyeLeft) eyeLeft.intensity = 0.05;
+      if (eyeRight) eyeRight.intensity = 0.05;
+      doneEyeTimer = null;
+    }, 400);
   }, 600);
 
   if (particles) {
@@ -1140,13 +1153,6 @@ function onDone() {
     }
     pos.needsUpdate = true;
   }
-
-  if (eyeLeft) eyeLeft.intensity = 2.5;
-  if (eyeRight) eyeRight.intensity = 2.5;
-  setTimeout(() => {
-    if (eyeLeft) eyeLeft.intensity = 0.05;
-    if (eyeRight) eyeRight.intensity = 0.05;
-  }, 400);
 
   // The vinyl is the "here's the finished record" beat -- shown briefly at
   // the end, not left up permanently (this function doesn't run again
