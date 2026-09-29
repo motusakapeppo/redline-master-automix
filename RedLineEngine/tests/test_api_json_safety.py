@@ -13,6 +13,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app"))
 
+pytest.importorskip("webview")  # app/api.py imports pywebview at module scope
+
 from api import _sanitize_for_json  # noqa: E402
 
 from redline.input_loader import Stems

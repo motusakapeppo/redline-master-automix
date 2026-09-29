@@ -16,7 +16,7 @@ from .analyze import AnalysisResult
 from .dsp_utils import to_mid_side, from_mid_side, db_to_gain
 from .ltas import match_ltas
 from .qc import run_qc, _mono_compatibility, assess_qc_pass, resolve_target
-from .analysis.loudness import crest_factor, spectral_band_energies
+from .analysis.loudness import crest_factor, integrated_lufs, spectral_band_energies
 from .correlometer import measure_bass_phase_shift_deg_abs
 
 StepCallback = Callable[[str], None]
@@ -431,7 +431,7 @@ def render_master(
     # audio. Re-measure all of them against the FINAL signal, reusing the same
     # helpers run_qc itself uses (no new measurement math), and recompute the
     # pass/fail decision via the shared assess_qc_pass() helper.
-    report.lufs = _measure_perceptual(mastered, sr, meter)["lufs"]
+    report.lufs = integrated_lufs(mastered, sr)
     report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
     report.mono_compatibility = _mono_compatibility(mastered)
     report.bass_phase_shift_deg = measure_bass_phase_shift_deg_abs(mastered, sr)

@@ -183,6 +183,10 @@ def test_render_master_qc_report_reflects_final_audio():
     target = resolve_target("Pop / Rock")
     deviations = {name: bands[name] - target[name] for name in target}
     fresh_lufs = integrated_lufs(mastered, sr)
+    # The emitted lufs must reflect the final audio using the SAME (stereo)
+    # convention run_qc uses -- the event rounds to 1 decimal. Pre-fix this
+    # quoted the mono-summed value (~3dB off on correlated stereo).
+    assert emitted["lufs"] == pytest.approx(round(fresh_lufs, 1), abs=0.05)
     fresh_peak = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
     fresh_bass = measure_bass_phase_shift_deg_abs(mastered, sr)
 

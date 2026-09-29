@@ -16,3 +16,5 @@ noisereduce==3.0.3
 huggingface_hub==1.22.0
 llama-cpp-python==0.3.2
 sounddevice==0.4.6
+# Desktop GUI runtime (app/api.py, app/main.py)
+pywebview==6.2.1
