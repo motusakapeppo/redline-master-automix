@@ -170,7 +170,7 @@ def elastic_align(double_signal: np.ndarray, lead_signal: np.ndarray, sr: int, n
                     stretched_segment = librosa.effects.time_stretch(segment.astype(np.float32), rate=local_ratio)
                     stretched += 1
                 except Exception:
-                    logger.warning("Time-stretch failed for window %d — leaving as-is", w, exc_info=True)
+                    logger.warning("Time-stretch failed for window %d — leaving as-is", start, exc_info=True)
                     stretched_segment = segment
 
             # time_stretch changes length — always force back to the window's

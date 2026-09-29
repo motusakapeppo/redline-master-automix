@@ -60,6 +60,44 @@ def test_short_signal_is_noop():
     assert np.array_equal(result.audio, short)
 
 
+def test_time_stretch_failure_is_caught_and_segment_preserved(monkeypatch):
+    # Regression test: the except handler around librosa.effects.time_stretch
+    # used to log an undefined variable (`w`), so a time-stretch failure
+    # raised NameError from inside the handler instead of degrading
+    # gracefully. Force the failure and assert the window is left as-is.
+    import redline.elastic_align as ea
+
+    sr = 22050
+    seconds = 6.0
+    t = np.arange(int(sr * seconds), dtype=np.float32) / sr
+    # Continuous tone (no silent windows) so every window is eligible for
+    # stretching; identical lead/double => safe ~1.0 ratio => the stretch
+    # branch is actually entered and the forced failure is hit.
+    tone = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+    stereo_double = np.stack([tone, tone], axis=1)
+    stereo_lead = np.stack([tone, tone], axis=1)
+
+    # Baseline: a time_stretch that returns the segment unchanged. The
+    # failure path must produce byte-identical output to this no-op stretch.
+    monkeypatch.setattr(ea.librosa.effects, "time_stretch", lambda seg, rate: seg)
+    baseline = elastic_align(stereo_double, stereo_lead, sr)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("forced time_stretch failure")
+
+    monkeypatch.setattr(ea.librosa.effects, "time_stretch", _boom)
+
+    # Must not propagate the RuntimeError (nor a NameError from the handler).
+    result = elastic_align(stereo_double, stereo_lead, sr)
+
+    assert result.audio.shape == stereo_double.shape
+    assert result.windows_total > 0
+    # Every window failed to stretch, so nothing was actually warped and the
+    # signal must come back exactly as the no-op-stretch baseline.
+    assert result.windows_stretched == 0
+    assert np.array_equal(result.audio, baseline.audio)
+
+
 def test_transients_survive_window_boundaries():
     # Regression test: the old non-overlapping-window implementation used
     # only the *rising* half of a Hann window as its "fade" (0 -> ~1, never
