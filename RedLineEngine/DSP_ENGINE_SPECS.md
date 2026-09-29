@@ -806,4 +806,69 @@ processati indipendentemente.
 
 ---
 
-*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare.*
+## 9. Addendum Settembre 2026 — Audit di disposizione post-riconciliazione `research_report.md` (Wave 2, task D2)
+
+Contesto: la riconciliazione di `docs/research_report.md` (commit `40b7e56`, task D1) ha
+corretto la colonna "Current" della tabella §4.6 del report, che precedeva il commit di
+calibrazione `033043c`. Questo addendum è la verifica indipendente (task D2) di ogni riga
+di quella tabella e delle Sezioni 1-3 del report contro il codice live, con la regola di
+decisione concordata: **nessuna modifica di costanti audio senza validazione d'ascolto**
+(utente non disponibile) — una delta "di gusto" (non un difetto misurabile) si RINVIa, non
+si applica. Esito: **zero modifiche al codice**; nessuna delta difendibile residua.
+
+### 9.1 Disposizione riga-per-riga della tabella §4.6 (13 righe, verificate sul live)
+
+| # | Raccomandazione report | Decisione | Valore live misurato (file:line) | Razionale |
+|---|---|---|---|---|
+| 1 | Hip-Hop presence 3500Hz +2.5dB | APPLICATA — nessuna azione | `EQBand(3500, 2.5, 0.8, "peak")` — `redline/analysis/genre.py:81` | Verificato identico |
+| 2 | Hip-Hop air 10000Hz +2.0dB | APPLICATA | `EQBand(10000, 2.0, 0.7, "high_shelf")` — `genre.py:82` | Verificato identico |
+| 3 | Pop 250Hz −0.5dB | APPLICATA | `EQBand(250, -0.5, 1.2, "peak")` — `genre.py:49` | Verificato identico |
+| 4 | Pop air 12000Hz +2.5dB | APPLICATA | `EQBand(12000, 2.5, 0.7, "high_shelf")` — `genre.py:52` | Verificato identico |
+| 5 | Classical air 10000Hz +1.5dB | APPLICATA | `EQBand(10000, 1.5, 0.7, "high_shelf")` — `genre.py:62` | Verificato identico |
+| 6 | EDM air 10000Hz +2.5dB | APPLICATA | `EQBand(10000, 2.5, 0.7, "high_shelf")` — `genre.py:42` | Verificato identico |
+| 7 | EDM sub 60Hz +4.0dB | APPLICATA | `EQBand(60, 4.0, 0.7, "low_shelf")` — `genre.py:38` | Verificato identico |
+| 8 | PARALLEL_BUS_MIX 0.15 → 0.20 | **RIGETTATA (ulteriore modifica)** | `PARALLEL_BUS_MIX = 0.20` — `redline/mixengine.py:150` | Il valore live è già 0.20: la raccomandazione è già soddisfatta, nulla da "alzare". La Sezione 6.1 (riga 584) documenta la riduzione deliberata da 22% a 15% perché mix 22% + 8:1 favoriva i transienti della batteria sulla voce; il commento in `mixengine.py:145-150` documenta il successivo riporto a 0.20 entro il range di ricerca 10-20%. Non si alza oltre (riaprirebbe esattamente il problema chiuso in 6.1) e non si sposta in alcuna direzione senza ascolto. |
+| 9 | MUSIC_BUS_SIDE_WIDTH_DB 1.0 → 1.5 | APPLICATA | `MUSIC_BUS_SIDE_WIDTH_DB = 1.5` — `mixengine.py:188` | Verificato identico |
+| 10 | DRUM_SATURATION_MIX 0.18 → 0.22 | APPLICATA | `DRUM_SATURATION_MIX = 0.22` — `mixengine.py:194` | Verificato identico |
+| 11 | BASS_EXCITER_MIX 0.25 → 0.30 | APPLICATA | `BASS_EXCITER_MIX = 0.30` — `mixengine.py:202` | Verificato identico |
+| 12 | Drum room send 0.08 → 0.10 | APPLICATA | `def drum_room_send(..., mix: float = 0.10)` — `redline/fxsends.py:42` | Verificato identico |
+| 13 | Foreground air 8000Hz +1.0dB → 10000Hz +1.5dB | APPLICATA | `FOREGROUND_AIR_SHELF_HZ = 10000.0` / `FOREGROUND_AIR_GAIN_DB = 1.5` — `redline/depth.py:30-31` | Verificato identico |
+
+### 9.2 Scansione Sezioni 1-3 del report: nessuna delta aperta
+
+Compressione bus per genere (§2.1-2.5) — tutte le raccomandazioni numerate già applicate:
+
+| Genere | Raccomandazione report | Valore live (`redline/analysis/genre.py`) |
+|---|---|---|
+| EDM/Urban | ratio 5:1 → 3-4:1; attack 3 → 10-15ms; thr −22 → −16/−18 | `ratio=3.5, attack_ms=12.0, threshold_db=-18.0` — `genre.py:44` |
+| Pop/Rock | attack 8 → 15-20ms | `attack_ms=18.0` — `genre.py:54` |
+| Acoustic/Classical | (nessuna modifica suggerita) | invariato — `genre.py:64` |
+| Jazz | attack 12 → 15-20ms | `attack_ms=18.0` — `genre.py:74` |
+| Hip-Hop | attack 5 → 10ms; thr −20 → −16/−18 | `attack_ms=10.0, threshold_db=-17.0` — `genre.py:84` |
+
+Catene blueprint (§2.6-2.8) e target LUFS (§3): verificati identici al live —
+`mixengine.py:433-434` (peak catcher/leveler voce), `mixengine.py:444` (glue batteria),
+`masterengine.py:48-64` (ceiling TP/clip, split multiband, ricette low/mid/high),
+`masterengine.py:41-46` + `_target_lufs_for_genre` (`masterengine.py:85-88`) (LUFS per
+piattaforma, selezione genre-aware). Nessuna delta.
+
+Note residue di gusto nel §1, senza raccomandazione numerata né difetto misurabile — RINVIATE (richiedono ascolto, non modifica meccanica):
+- Rock low shelf +1dB vs "+2dB per più peso" (§1.1) — live `EQBand(80, 1.0, …)` `genre.py:48`.
+- Pop 1kHz leggero taglio vs 0.0dB; presence 3kHz vs 4kHz "più moderno" (§1.2) — live `genre.py:50-51`.
+- EDM sub +4 vs "+4/+5dB club" (§1.3) — già al valore raccomandato e applicato (`genre.py:38`).
+- Jazz warmth boost 150-300Hz (§1.6) — live `genre.py:69`.
+
+Staleness residua del report (documentata qui, non corretta nel report per vincolo del task D2):
+- §4.1 colonna "Current" outdated anche per `PARALLEL_BUS_MIX` (15% → live 0.20, `mixengine.py:150`), `DRUM_SATURATION_MIX` (18% → 0.22, `:194`), `BASS_EXCITER_MIX` (25% → 0.30, `:202`), `MUSIC_BUS_SIDE_WIDTH_DB` (1.0 → 1.5, `:188`) — oltre alle 4 già elencate nella nota di riconciliazione del report.
+- Tabella §2 "RedLine" per-genere: attacchi/soglie EDM/Pop/Jazz/Hip-Hop anteriori a `033043c` (le raccomandazioni derivate sono comunque applicate, vedi tabella sopra).
+
+### 9.3 Esito
+
+Nessuna delta difendibile contro una misura/standard e non contraddicente una decisione
+documentata: **nessuna costante modificata, nessun test aggiunto**. Le voci rinviate
+richiedono validazione d'ascolto (A/B loudness-matched via `redline/ab_compare.py`)
+prima di qualsiasi ulteriore modifica audio.
+
+---
+
+*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare. La Sezione 9 documenta l'audit di disposizione post-riconciliazione del research report (zero modifiche audio).*
