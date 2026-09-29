@@ -44,6 +44,39 @@ def test_validate_dsp_automation_rejects_wrong_section_type_mismatch():
     assert result is None
 
 
+def test_validate_dsp_automation_rejects_global_when_user_names_a_section():
+    # Confirmed against the real model: asked "nella strofa taglia un po' il
+    # nasale", it returned target_section="global" instead of a verse section.
+    # A whole-song application contradicts a request that explicitly names one
+    # section, so it must be rejected -- same "prefer no-op over wrong-target"
+    # principle as the section-type mismatch check.
+    suggestion = {
+        "target_section": "global",
+        "dsp_updates": {"eq_adjustments": [{"type": "bell", "freq": 250, "gain_db": 2.0}]},
+    }
+    assert validate_dsp_automation(
+        suggestion, STRUCTURE, total_duration_sec=90.0, user_text="nella strofa taglia un po' il nasale"
+    ) is None
+    # Same for a chorus request mapped to global.
+    assert validate_dsp_automation(
+        suggestion, STRUCTURE, total_duration_sec=90.0, user_text="nel ritornello vorrei piu' aria"
+    ) is None
+
+
+def test_validate_dsp_automation_accepts_global_when_no_section_named():
+    # A genuinely whole-song request ("rendi tutto il brano piu' caldo") names
+    # no section, so target_section="global" is correct and must still pass.
+    suggestion = {
+        "target_section": "global",
+        "dsp_updates": {"eq_adjustments": [{"type": "bell", "freq": 250, "gain_db": 2.0}]},
+    }
+    result = validate_dsp_automation(
+        suggestion, STRUCTURE, total_duration_sec=90.0, user_text="rendi tutto il brano piu' caldo"
+    )
+    assert result is not None
+    assert result["time_range"] == (0.0, 90.0)
+
+
 def test_validate_dsp_automation_accepts_matching_section():
     suggestion = {
         "target_section": "chorus_1",

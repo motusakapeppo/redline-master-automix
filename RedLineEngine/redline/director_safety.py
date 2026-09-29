@@ -168,7 +168,9 @@ def validate_dsp_automation(
     instead, a wrong-section mistake plain range-clamping can't catch since
     chorus_1 is a perfectly valid, in-range section name. Applying a change
     to the wrong section is worse than doing nothing, so a mismatch here
-    rejects the whole suggestion rather than silently "correcting" it."""
+    rejects the whole suggestion rather than silently "correcting" it. The
+    same applies to a "global" target when the user named a section: a
+    whole-song application contradicts the request, so it is rejected too."""
     if not isinstance(suggestion, dict):
         return None
 
@@ -177,6 +179,8 @@ def validate_dsp_automation(
 
     target_section = suggestion.get("target_section")
     if target_section == "global":
+        if user_text is not None and _mentioned_section_type(user_text) is not None:
+            return None  # user named a section, so a whole-song "global" contradicts the request
         time_range = (0.0, float(total_duration_sec))
     elif isinstance(target_section, str):
         match = next((s for s in structure_map if s["name"] == target_section), None)
