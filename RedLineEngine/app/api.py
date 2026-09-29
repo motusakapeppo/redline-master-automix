@@ -72,6 +72,19 @@ def _sanitize_for_json(data):
 _MIX_HISTORY_CAP = 8
 
 
+def _wrap_js_call(js: str) -> str:
+    """Guard a single queued JS call in its own try/catch.
+
+    ``_drain`` joins every pending call into one ``;``-separated
+    ``evaluate_js`` string. Without a per-call guard, one throwing call
+    aborts the rest of the joined script -- and the outer Python
+    ``except Exception: pass`` swallows the error, so every later event in
+    that batch is silently lost. Wrapping each call individually means a
+    failure in one can no longer take down its neighbours; the error is
+    still surfaced to the browser console instead of vanishing."""
+    return f"try {{ {js} }} catch (e) {{ console.error('RedLine event error', e); }}"
+
+
 class Api:
     def __init__(self) -> None:
         self._window: webview.Window | None = None
@@ -172,7 +185,7 @@ class Api:
                 last_js_time = time.perf_counter()
                 if self._window is not None:
                     try:
-                        self._window.evaluate_js(';\n'.join(batch))
+                        self._window.evaluate_js(';\n'.join(_wrap_js_call(call) for call in batch))
                     except Exception:
                         pass  # window may be closing — swallow silently
 

@@ -653,33 +653,39 @@ function setPipelineStage(stage) {
 }
 
 function onStep(msg) {
-  const log = document.getElementById("log");
-  const line = document.createElement("div");
-  // The engine's own narration convention already distinguishes macro
-  // phases ("Elaborazione stem 'X'...", no leading spaces) from micro
-  // sub-steps ("  'X': risonanza a 250Hz...", 2-space indented) -- reuse it
-  // for visual hierarchy in the unified log instead of a separate panel.
-  const isMacro = !msg.startsWith("  ");
-  line.className = isMacro ? "log-line log-macro" : "log-line log-micro";
-  line.textContent = msg;
-  log.appendChild(line);
-  log.scrollTop = log.scrollHeight;
-  if (window.avatarAPI) window.avatarAPI.onStep(msg);
-  bumpActivity();
-  bumpProgress(msg);
-  if (isMacro) {
-    const bubbleText = simplifyMacroMessage(msg);
-    if (bubbleText) sayBubble(bubbleText);
-    const stage = detectPipelineStage(msg);
-    if (stage) setPipelineStage(stage);
-  }
-  wireInteractiveLine(line, msg);
+  try {
+    const log = document.getElementById("log");
+    const line = document.createElement("div");
+    // The engine's own narration convention already distinguishes macro
+    // phases ("Elaborazione stem 'X'...", no leading spaces) from micro
+    // sub-steps ("  'X': risonanza a 250Hz...", 2-space indented) -- reuse it
+    // for visual hierarchy in the unified log instead of a separate panel.
+    const isMacro = !msg.startsWith("  ");
+    line.className = isMacro ? "log-line log-macro" : "log-line log-micro";
+    line.textContent = msg;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+    if (window.avatarAPI) window.avatarAPI.onStep(msg);
+    bumpActivity();
+    bumpProgress(msg);
+    if (isMacro) {
+      const bubbleText = simplifyMacroMessage(msg);
+      if (bubbleText) sayBubble(bubbleText);
+      const stage = detectPipelineStage(msg);
+      if (stage) setPipelineStage(stage);
+    }
+    wireInteractiveLine(line, msg);
 
-  // "Elaborazione stem 'X' (...)" / "  'X': ..." narration lines create or
-  // re-select that stem's row immediately, so the row exists (and lights up)
-  // even before its first tagged badge event arrives.
-  const stemMatch = msg.match(/'([^']+)'/);
-  if (stemMatch) touchStemRow(stemMatch[1]);
+    // "Elaborazione stem 'X' (...)" / "  'X': ..." narration lines create or
+    // re-select that stem's row immediately, so the row exists (and lights up)
+    // even before its first tagged badge event arrives.
+    const stemMatch = msg.match(/'([^']+)'/);
+    if (stemMatch) touchStemRow(stemMatch[1]);
+  } catch (e) {
+    // A malformed narration payload must never break the log/UI pipeline.
+    console.error("RedLine onStep error", e);
+    return;
+  }
 }
 
 // Turns a log line into a "console" element: hovering a line that mentions a
@@ -1798,6 +1804,7 @@ function renderStemChannelStrip(name) {
 }
 
 function onEvent(evt) {
+  try {
   bumpActivity();
   _recordStemParam(evt);
   switch (evt.type) {
@@ -2116,6 +2123,11 @@ function onEvent(evt) {
         addEventChip(`⚙️ ${evt.type}`);
       }
       break;
+  }
+  } catch (e) {
+    // A malformed event payload must never break rendering of later events.
+    console.error("RedLine onEvent error", e);
+    return;
   }
 }
 
