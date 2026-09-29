@@ -809,6 +809,14 @@ def render_mix(
     solo_names = [name for name, d in descriptors.items() if not (d.role == "vocal" and d.layer == "double") and name in working_tracks]
     callback_lock = threading.Lock()
 
+    def _guarded_on_step(msg: str) -> None:
+        with callback_lock:
+            on_step(msg)
+
+    def _guarded_on_event(evt: dict) -> None:
+        with callback_lock:
+            on_event(evt)
+
     # --- Link groups (naming.py's link_id): mic/take pairs of the same
     # physical source (Kick_In/Kick_Out, Synth_Pad_L/R). Resonance cut freq/
     # gain/Q is measured on the group's own SUMMED dry signal and applied
@@ -836,14 +844,6 @@ def render_mix(
         if group_resonance is not None:
             _guarded_on_step(f"Gruppo linkato '{link_id}' ({', '.join(members)}): risonanza comune {group_resonance.freq:.0f}Hz, taglio {group_resonance.gain_db:.1f}dB applicato a tutti i membri")
         _guarded_on_event({"type": "link_group", "link_id": link_id, "members": members, "resonance_freq_hz": round(group_resonance.freq, 1) if group_resonance else None})
-
-    def _guarded_on_step(msg: str) -> None:
-        with callback_lock:
-            on_step(msg)
-
-    def _guarded_on_event(evt: dict) -> None:
-        with callback_lock:
-            on_event(evt)
 
     for name in solo_names:
         d = descriptors[name]
