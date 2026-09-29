@@ -88,6 +88,18 @@ def _target_lufs_for_genre(genre_name: str, platform: str) -> float:
     return PLATFORM_TARGETS.get(platform, PLATFORM_TARGETS["spotify"])
 
 
+def _perceptual_lufs_target(genre_name: str, platform: str, genre_default: float) -> float:
+    """LUFS target for the iterative feedback loop. The user's chosen platform
+    wins whenever it isn't "auto" (so an explicit "apple" pulls toward -16
+    instead of the genre default); "auto" keeps the genre-based default that
+    resolve_perceptual_target() already resolved (club for EDM, spotify
+    otherwise). Pure and side-effect-free so the override is unit-testable
+    without running the whole mastering chain."""
+    if platform == "auto":
+        return genre_default
+    return _target_lufs_for_genre(genre_name, platform)
+
+
 def _soft_clip(signal: np.ndarray, ceiling_db: float, drive: float = 1.6) -> np.ndarray:
     """Transparent-ish tanh soft clip: shaves only the extreme peaks that
     poke above the ceiling, leaving everything under it untouched — this is
@@ -207,6 +219,7 @@ def _apply_reference_correction(
     on_step: StepCallback,
     on_event: EventCallback,
     on_beep: BeepCallback = _noop_beep,
+    platform: str = "auto",
 ) -> tuple[np.ndarray, list[str]]:
     """Bounded iterative feedback loop against reference_profiles.py's
     non-spectral targets (LUFS, crest factor, mono/stereo-width
@@ -216,11 +229,18 @@ def _apply_reference_correction(
     exceed the safe ranges already defined there. Runs up to
     MASTER_CORRECTION_MAX_PASSES passes, stopping early once every metric is
     within tolerance or a pass fails to improve on the last (avoids
-    oscillation between two corrections fighting each other)."""
+    oscillation between two corrections fighting each other).
+
+    `platform` (default "auto") overrides the LUFS target with the user's
+    chosen platform target -- otherwise this loop would fight the
+    platform-aware target render_master already computed and passed to
+    run_qc. Crest-factor and mono/stereo-width targets stay genre-based
+    (they aren't platform-dependent)."""
     from .reference_profiles import resolve_perceptual_target
     from .director_safety import clamp_params
 
     target = resolve_perceptual_target(genre_name)
+    target["target_lufs"] = _perceptual_lufs_target(genre_name, platform, target["target_lufs"])
     meter = pyln.Meter(sr)
     notes: list[str] = []
     corrected = mastered
@@ -399,7 +419,7 @@ def render_master(
     on_step("Feedback iterativo: confronto LUFS/crest/larghezza stereo contro il profilo di riferimento del genere...")
     on_beep()
     mastered, feedback_notes = _apply_reference_correction(
-        mastered, sr, analysis.genre.name, ceiling, on_step, on_event, on_beep
+        mastered, sr, analysis.genre.name, ceiling, on_step, on_event, on_beep, platform=platform
     )
     if feedback_notes:
         report.corrections_applied = list(report.corrections_applied) + feedback_notes

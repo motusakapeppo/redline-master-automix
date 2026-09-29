@@ -10,6 +10,7 @@ import numpy as np
 from redline.masterengine import (
     _apply_reference_correction,
     _measure_perceptual,
+    _perceptual_lufs_target,
     MASTER_CORRECTION_MAX_PASSES,
 )
 from redline.director_safety import PARAM_RANGES
@@ -101,3 +102,51 @@ def test_correction_improves_or_maintains_distance_to_target_on_average():
     after = _measure_perceptual(corrected, sr, meter)
 
     assert abs(after["lufs"] - target["target_lufs"]) <= abs(before["lufs"] - target["target_lufs"]) + 0.5
+
+
+def test_perceptual_lufs_target_platform_overrides_genre_default():
+    """An explicit platform must win over the genre default (the bug: the
+    feedback loop ignored the user's chosen platform and kept pulling toward
+    the genre's club/spotify target)."""
+    # apple (-16) beats the EDM genre default (club, -9)
+    assert _perceptual_lufs_target("EDM / Urban", "apple", -9.0) == -16.0
+    # youtube (-13) beats the Pop/Rock genre default (spotify, -14)
+    assert _perceptual_lufs_target("Pop / Rock", "youtube", -14.0) == -13.0
+    # club (-9) beats the Pop/Rock genre default (spotify, -14)
+    assert _perceptual_lufs_target("Pop / Rock", "club", -14.0) == -9.0
+
+
+def test_perceptual_lufs_target_auto_preserves_genre_default():
+    """platform="auto" must preserve today's behaviour exactly: the genre
+    default resolved by resolve_perceptual_target() is returned untouched."""
+    assert _perceptual_lufs_target("EDM / Urban", "auto", -9.0) == -9.0
+    assert _perceptual_lufs_target("Pop / Rock", "auto", -14.0) == -14.0
+
+
+def test_apply_reference_correction_uses_platform_lufs_target():
+    """Driving the loop with platform="apple" must narrate a -16 LUFS target
+    (not the genre's -14/-9 default), proving the override reaches the loop."""
+    sr = 44100
+    signal = _worst_case_signal(sr)
+    ceiling = 10.0 ** (-1.0 / 20.0)
+
+    steps: list[str] = []
+    _apply_reference_correction(
+        signal, sr, "Pop / Rock", ceiling, on_step=steps.append,
+        on_event=lambda _e: None, platform="apple",
+    )
+    assert any("target -16.0" in s for s in steps), steps
+
+
+def test_apply_reference_correction_auto_keeps_genre_lufs_target():
+    """platform="auto" (the default) must keep the genre-based target."""
+    sr = 44100
+    signal = _worst_case_signal(sr)
+    ceiling = 10.0 ** (-1.0 / 20.0)
+
+    steps: list[str] = []
+    _apply_reference_correction(
+        signal, sr, "Pop / Rock", ceiling, on_step=steps.append,
+        on_event=lambda _e: None,
+    )
+    assert any("target -14.0" in s for s in steps), steps
