@@ -279,21 +279,53 @@ From `redline/masterengine.py` lines 34-39:
 
 ### 4.6 Summary of Recommended Changes
 
-| Priority | File:Line | Current | Recommended | Rationale |
-|----------|-----------|---------|-------------|-----------|
-| **HIGH** | genre.py:81-82 | Hip-Hop presence 2000Hz +2.0dB | 3500Hz +2.5dB | 2kHz is too low for vocal clarity; 3.5kHz is standard |
-| **HIGH** | genre.py:83 | Hip-Hop air 10000Hz 0.0dB | 10000Hz +2.0dB | Modern hip-hop needs air for hi-hats and ad-libs |
-| **MEDIUM** | genre.py:47-48 | Pop 250Hz -2.0dB | 250Hz -0.5dB or +1.0dB | Pop typically boosts warmth, not cuts it |
-| **MEDIUM** | genre.py:52 | Pop air 10000Hz +2.0dB | 12000Hz +2.5dB | Modern pop air shelf is at 12-15kHz |
-| **MEDIUM** | genre.py:57-58 | Classical air 10000Hz +3.0dB | 10000Hz +1.5dB | +3dB is not minimal; classical should be subtle |
-| **MEDIUM** | genre.py:42 | EDM air 10000Hz +1.0dB | 10000Hz +2.5dB | EDM needs more top-end shimmer |
-| **LOW** | genre.py:37 | EDM sub 60Hz +3.0dB | 60Hz +4.0dB | Club-oriented EDM benefits from more sub |
-| **LOW** | mixengine.py:131 | PARALLEL_BUS_MIX = 0.15 | 0.20 | 15% is subtle; 20% is more audible and standard |
-| **LOW** | mixengine.py:159 | MUSIC_BUS_SIDE_WIDTH_DB = 1.0 | 1.5 | +1dB width is subtle; +1.5dB is more standard |
-| **LOW** | mixengine.py:165 | DRUM_SATURATION_MIX = 0.18 | 0.22 | 18% is conservative; 22% is more common |
-| **LOW** | mixengine.py:173 | BASS_EXCITER_MIX = 0.25 | 0.30 | 25% is conservative; 30% gives more audible harmonics |
-| **LOW** | fxsends.py:42 | Drum room send 0.08 | 0.10 | 8% is subtle; 10% gives more cohesion |
-| **LOW** | depth.py:30-31 | Foreground air 8000Hz +1.0dB | 10000Hz +1.5dB | Higher frequency and gain for more natural air |
+> **Reconciliation note (September 2026).** This section was written before the
+> calibration commit `033043c` ("Apply research report: fix #2 (pyloudnorm) and
+> #5 (genre/constants calibration)"). **Every recommendation in the table below
+> has since been applied to the code**, so the "Current" column no longer
+> reflects the live constants and must not be read as pending work. The
+> "Status (verified)" column added below records the measured value in the
+> current source, with a `file:line` reference for each claim. The `File:Line`
+> column also predates `033043c`; current locations are given in the Status
+> column.
+>
+> - **Applied (12 of 13 rows):** genre.py rows 1-7, mixengine.py rows 9-11,
+>   fxsends.py row 12, depth.py row 13. See the per-row status column.
+> - **Applied but contradicts a documented decision (1 row):**
+>   `PARALLEL_BUS_MIX` (row 8). The live value is **0.20**
+>   (`redline/mixengine.py:150`), which is exactly what this report recommended,
+>   but `DSP_ENGINE_SPECS.md` §6.1 (`DSP_ENGINE_SPECS.md:584`) deliberately
+>   lowered this value to **15%** to stop the parallel bus from favoring drum
+>   transients over the vocal. The recommendation therefore re-opens a decision
+>   the spec had already closed. This is the one item that needs a human call,
+>   not a mechanical apply.
+> - **Obsolete:** the "Current" column values throughout this table (they predate
+>   `033043c`). Row 8's stated "Current = 0.15" is the clearest example: the live
+>   value is 0.20.
+> - **Deferred:** none. No §4.6 recommendation remains unimplemented.
+>
+> Related staleness outside this table: §4.1's "Current" column is also out of
+> date for four constants that changed after `033043c`:
+> `LEAD_PRESENCE_GAIN_DB` is now **1.5** (`redline/mixengine.py:139`, report says +3.0),
+> `VOCAL_DUCK_BAND_HZ` is now **(2000, 3200)** (`redline/mixengine.py:144`, report says 1000-4000),
+> `BASE_VOCAL_PROMINENCE_DB` is now **2.0** (`redline/mixengine.py:164`, report says +3.0),
+> and `MUSIC_BUS_MID_DIP_DB` is now **0.0** (`redline/mixengine.py:187`, report says -3.0).
+
+| Priority | File:Line | Current | Recommended | Rationale | Status (verified against code) |
+|----------|-----------|---------|-------------|-----------|--------------------------------|
+| **HIGH** | genre.py:81-82 | Hip-Hop presence 2000Hz +2.0dB | 3500Hz +2.5dB | 2kHz is too low for vocal clarity; 3.5kHz is standard | **APPLIED** (`genre.py:81` = `EQBand(3500, 2.5, 0.8, "peak")`) |
+| **HIGH** | genre.py:83 | Hip-Hop air 10000Hz 0.0dB | 10000Hz +2.0dB | Modern hip-hop needs air for hi-hats and ad-libs | **APPLIED** (`genre.py:82` = `EQBand(10000, 2.0, 0.7, "high_shelf")`) |
+| **MEDIUM** | genre.py:47-48 | Pop 250Hz -2.0dB | 250Hz -0.5dB or +1.0dB | Pop typically boosts warmth, not cuts it | **APPLIED** (`genre.py:49` = `EQBand(250, -0.5, 1.2, "peak")`) |
+| **MEDIUM** | genre.py:52 | Pop air 10000Hz +2.0dB | 12000Hz +2.5dB | Modern pop air shelf is at 12-15kHz | **APPLIED** (`genre.py:52` = `EQBand(12000, 2.5, 0.7, "high_shelf")`) |
+| **MEDIUM** | genre.py:57-58 | Classical air 10000Hz +3.0dB | 10000Hz +1.5dB | +3dB is not minimal; classical should be subtle | **APPLIED** (`genre.py:62` = `EQBand(10000, 1.5, 0.7, "high_shelf")`) |
+| **MEDIUM** | genre.py:42 | EDM air 10000Hz +1.0dB | 10000Hz +2.5dB | EDM needs more top-end shimmer | **APPLIED** (`genre.py:42` = `EQBand(10000, 2.5, 0.7, "high_shelf")`) |
+| **LOW** | genre.py:37 | EDM sub 60Hz +3.0dB | 60Hz +4.0dB | Club-oriented EDM benefits from more sub | **APPLIED** (`genre.py:38` = `EQBand(60, 4.0, 0.7, "low_shelf")`) |
+| **LOW** | mixengine.py:131 | PARALLEL_BUS_MIX = 0.15 | 0.20 | 15% is subtle; 20% is more audible and standard | **APPLIED, CONTRADICTS DSP_ENGINE_SPECS §6.1**: live value is **0.20** (`mixengine.py:150`); spec §6.1 (`DSP_ENGINE_SPECS.md:584`) deliberately set 15% to stop the parallel bus favoring drums over the vocal |
+| **LOW** | mixengine.py:159 | MUSIC_BUS_SIDE_WIDTH_DB = 1.0 | 1.5 | +1dB width is subtle; +1.5dB is more standard | **APPLIED** (`mixengine.py:188` = `1.5`) |
+| **LOW** | mixengine.py:165 | DRUM_SATURATION_MIX = 0.18 | 0.22 | 18% is conservative; 22% is more common | **APPLIED** (`mixengine.py:194` = `0.22`) |
+| **LOW** | mixengine.py:173 | BASS_EXCITER_MIX = 0.25 | 0.30 | 25% is conservative; 30% gives more audible harmonics | **APPLIED** (`mixengine.py:202` = `0.30`) |
+| **LOW** | fxsends.py:42 | Drum room send 0.08 | 0.10 | 8% is subtle; 10% gives more cohesion | **APPLIED** (`fxsends.py:42` default `mix: float = 0.10`) |
+| **LOW** | depth.py:30-31 | Foreground air 8000Hz +1.0dB | 10000Hz +1.5dB | Higher frequency and gain for more natural air | **APPLIED** (`depth.py:30-31` = `10000.0` / `1.5`) |
 
 ---
 
