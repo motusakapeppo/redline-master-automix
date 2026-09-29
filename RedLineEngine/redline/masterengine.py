@@ -15,8 +15,9 @@ from . import config
 from .analyze import AnalysisResult
 from .dsp_utils import to_mid_side, from_mid_side, db_to_gain
 from .ltas import match_ltas
-from .qc import run_qc, _mono_compatibility
-from .analysis.loudness import crest_factor
+from .qc import run_qc, _mono_compatibility, assess_qc_pass, resolve_target
+from .analysis.loudness import crest_factor, spectral_band_energies
+from .correlometer import measure_bass_phase_shift_deg_abs
 
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
@@ -402,8 +403,30 @@ def render_master(
     )
     if feedback_notes:
         report.corrections_applied = list(report.corrections_applied) + feedback_notes
-        report.lufs = _measure_perceptual(mastered, sr, meter)["lufs"]
+
+    # The feedback loop above changes the audio (loudness makeup, extra glue,
+    # side-channel width), so every metric run_qc measured *before* it ran is
+    # now stale — including `passed`, which could otherwise claim True while
+    # quoting a mono-compatibility value that no longer matches the returned
+    # audio. Re-measure all of them against the FINAL signal, reusing the same
+    # helpers run_qc itself uses (no new measurement math), and recompute the
+    # pass/fail decision via the shared assess_qc_pass() helper.
+    report.lufs = _measure_perceptual(mastered, sr, meter)["lufs"]
     report.true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
+    report.mono_compatibility = _mono_compatibility(mastered)
+    report.bass_phase_shift_deg = measure_bass_phase_shift_deg_abs(mastered, sr)
+    _target = resolve_target(analysis.genre.name)
+    _bands = spectral_band_energies(mastered, sr)
+    report.band_deviations = {name: _bands[name] - _target[name] for name in _target}
+    report.passed = assess_qc_pass(
+        lufs=report.lufs,
+        target_lufs=target_lufs,
+        true_peak_db=report.true_peak_db,
+        ceiling_db=TRUE_PEAK_CEILING_DB,
+        mono_compatibility=report.mono_compatibility,
+        bass_phase_shift_deg=report.bass_phase_shift_deg,
+        deviations=report.band_deviations,
+    )
 
     on_event({
         "type": "qc_report",

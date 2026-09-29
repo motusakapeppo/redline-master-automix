@@ -133,6 +133,37 @@ def _build_correction_board(
     return Pedalboard(fx), notes
 
 
+def assess_qc_pass(
+    lufs: float,
+    target_lufs: float,
+    true_peak_db: float,
+    ceiling_db: float,
+    mono_compatibility: float,
+    bass_phase_shift_deg: float,
+    deviations: dict[str, float],
+) -> bool:
+    """Pure pass/fail decision for a QC measurement — the exact boolean logic
+    run_qc uses to set QcReport.passed, extracted so callers that re-measure
+    the final audio (e.g. masterengine.render_master after its own feedback
+    loop) can recompute `passed` against reality instead of quoting a stale
+    decision made before their corrections ran.
+
+    Thresholds (unchanged from run_qc's original inline expression):
+      - LUFS within 1.0 LU of target
+      - true peak at or below ceiling + 0.1dB
+      - mono compatibility above 0.6
+      - bass phase shift at or below DEFAULT_PHASE_THRESHOLD_DEG
+      - every spectral deviation under DEVIATION_THRESHOLD * 2
+    """
+    return (
+        abs(lufs - target_lufs) < 1.0
+        and true_peak_db <= ceiling_db + 0.1
+        and mono_compatibility > 0.6
+        and bass_phase_shift_deg <= DEFAULT_PHASE_THRESHOLD_DEG
+        and all(abs(d) < DEVIATION_THRESHOLD * 2 for d in deviations.values())
+    )
+
+
 def run_qc(
     mastered: np.ndarray,
     sr: int,
@@ -210,12 +241,14 @@ def run_qc(
         notes.append(f"bass mono-fold below {DEFAULT_BAND_HZ[1]:.0f}Hz (phase shift was over {DEFAULT_PHASE_THRESHOLD_DEG:.0f}°)")
         true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
 
-    passed = (
-        abs(final_lufs - target_lufs) < 1.0
-        and true_peak_db <= true_peak_ceiling_db + 0.1
-        and mono_compat > 0.6
-        and bass_phase_shift <= DEFAULT_PHASE_THRESHOLD_DEG
-        and all(abs(d) < DEVIATION_THRESHOLD * 2 for d in deviations.values())
+    passed = assess_qc_pass(
+        lufs=final_lufs,
+        target_lufs=target_lufs,
+        true_peak_db=true_peak_db,
+        ceiling_db=true_peak_ceiling_db,
+        mono_compatibility=mono_compat,
+        bass_phase_shift_deg=bass_phase_shift,
+        deviations=deviations,
     )
 
     report = QcReport(
