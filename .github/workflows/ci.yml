@@ -1,0 +1,90 @@
+# RedLine Engine — CI
+#
+# Runner choice: windows-latest, not ubuntu-latest.
+#   - redline/audition.py imports `sounddevice` at module level, and
+#     tests/test_audition.py + tests/test_audition_loopback.py import it at
+#     collection time. On Linux that needs a system libportaudio2 package;
+#     on Windows the sounddevice wheel bundles PortAudio.
+#   - The app itself is Windows-bound: app/api.py uses os.startfile(), the
+#     GUI is pywebview/cefpython3, and the Neural Monitor targets MME/WASAPI
+#     (see redline/audition.py). CI should match the only platform this
+#     ships on.
+#
+# Dependency strategy: requirements.txt pins the DSP stack but also lists
+# torch, demucs, matchering and llama-cpp-python, which are huge and/or need
+# a compiler. None of them are needed to run the test suite:
+#   - torch/demucs/matchering are imported lazily inside functions
+#     (input_loader.separate_with_demucs, masterengine.render_master_reference)
+#     and no test exercises those paths. `pip install torch` on Windows would
+#     pull the ~2.5 GB CUDA wheel for nothing.
+#   - llama-cpp-python has no Windows wheel on PyPI (a source build needs
+#     CMake/MSVC). The LLM-gated tests call is_available(), which returns
+#     False when the gitignored models/*.gguf is absent — as it always is in
+#     CI — so those tests skip themselves. No action needed.
+#   - huggingface_hub is only a demucs transitive dep, unused by tests.
+# The install step filters requirements.txt (single source of truth) and
+# installs everything else with its exact pin.
+#
+# ci_validate.py is deliberately NOT run here: its final step rewrites
+# .flags.json (machine-local, gitignored) — a local developer action, not
+# something CI should do.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  test:
+    name: pytest + gain staging (Windows, Python 3.10)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: RedLineEngine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: RedLineEngine/requirements.txt
+
+      - name: Install dependencies (filtered requirements.txt)
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # Drop the heavy/optional deps (see header comment). Everything
+          # else keeps its exact pin from requirements.txt.
+          $exclude = '^(torch|demucs|matchering|llama-cpp-python|huggingface_hub)([=<>!]|$)'
+          Get-Content requirements.txt |
+            Where-Object { $_ -notmatch $exclude } |
+            Set-Content "$env:RUNNER_TEMP\requirements-ci.txt"
+          python -m pip install -r "$env:RUNNER_TEMP\requirements-ci.txt"
+          # pytest is a dev tool, not listed in requirements.txt.
+          python -m pip install pytest==9.1.1
+
+      - name: Gain staging verification (verify_gain.py)
+        shell: pwsh
+        run: |
+          $output = python verify_gain.py | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0 -or $output -notmatch 'ALL CHECKS PASSED') {
+            Write-Error "verify_gain.py did not report ALL CHECKS PASSED"
+            exit 1
+          }
+
+      - name: Test suite (pytest)
+        run: python -m pytest tests -q
