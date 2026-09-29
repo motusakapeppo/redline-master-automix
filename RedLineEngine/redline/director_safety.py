@@ -8,7 +8,7 @@ instead of rejecting the whole suggestion outright."""
 from __future__ import annotations
 
 from .llm_classifier import BUS_CATEGORIES
-from .naming import SECTION_HINTS
+from .naming import SECTION_HINTS, _contains_word
 
 # Known DSP parameters an LLM might plausibly suggest (Director Mode), and
 # the safe range each is clamped to — these mirror the guardrails already
@@ -132,10 +132,15 @@ def _section_type(name: str) -> str | None:
 def _mentioned_section_type(user_text: str) -> str | None:
     """Which section type (if any) the user's own text names -- reuses
     naming.py's existing SECTION_HINTS keyword lists (chorus/verse/bridge)
-    instead of a second, separately-maintained keyword list."""
-    lowered = user_text.lower()
+    instead of a second, separately-maintained keyword list.
+
+    Matched with naming._contains_word (word-boundary), not a bare
+    substring: SECTION_HINTS' short tokens ("str", "rit") are prefixes of
+    unrelated words -- "strumentale" contains "str" and "ritmo" contains
+    "rit", so a plain `in` check misread an instrumental/rhythm request as
+    naming a verse/chorus section."""
     for section_type, keywords in SECTION_HINTS.items():
-        if any(kw in lowered for kw in keywords):
+        if _contains_word(user_text, keywords):
             return section_type
     return None
 

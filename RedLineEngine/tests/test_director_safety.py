@@ -1,4 +1,9 @@
-from redline.director_safety import validate_classification, clamp_params, validate_dsp_automation
+from redline.director_safety import (
+    validate_classification,
+    clamp_params,
+    validate_dsp_automation,
+    _mentioned_section_type,
+)
 from redline.llm_classifier import BUS_CATEGORIES
 
 _STRUCTURE = [{"name": "chorus_1", "start": 30.0, "end": 60.0}]
@@ -80,3 +85,16 @@ def test_validate_dsp_automation_rejects_untranslatable_metaphor():
 def test_validate_dsp_automation_rejects_unrelated_text():
     result = validate_dsp_automation(_SUGGESTION, _STRUCTURE, 180.0, user_text="che tempo fa oggi a Milano?")
     assert result is None
+
+
+def test_mentioned_section_type_ignores_substring_false_positives():
+    # "strumentale" contains "str" and "ritmo" contains "rit" -- SECTION_HINTS'
+    # short tokens must only match as standalone words, not inside unrelated
+    # words, or an instrumental/rhythm request is misread as naming a section.
+    assert _mentioned_section_type("strumentale") is None
+    assert _mentioned_section_type("migliora il ritmo") is None
+
+
+def test_mentioned_section_type_matches_real_section_words():
+    assert _mentioned_section_type("nella strofa") == "verse"
+    assert _mentioned_section_type("nel ritornello") == "chorus"
