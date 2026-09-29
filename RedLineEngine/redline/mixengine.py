@@ -78,6 +78,7 @@ from .naming import parse_stem, StemDescriptor
 from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
 from .resonance import find_resonance
+from .logging_setup import get_logger
 from .alignment import align_to_reference
 from .masking import find_masking_cut, find_midrange_masking_cut
 from .vocalstack import classify_register, RECIPES, EqCut
@@ -113,6 +114,8 @@ from .depth import (
 # stock animation). Both are optional so tests/CLI can ignore either.
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
+
+logger = get_logger(__name__)
 
 
 def _noop(_msg: str) -> None:
@@ -864,7 +867,18 @@ def render_mix(
             for name in solo_names
         }
         for name, future in futures.items():
-            processed[name] = future.result()
+            try:
+                processed[name] = future.result()
+            except Exception as exc:
+                # One stem's DSP chain failing must not abort the whole render
+                # (same graceful-degradation philosophy as
+                # pipeline_rollback.PipelineRollback.guard). Fall back to the
+                # stem's dry signal -- downstream bus math indexes
+                # processed[name] unconditionally for every solo stem, so the
+                # failed stem must still be present, never omitted.
+                logger.warning("Stem '%s' fallito, uso il dry come fallback: %s", name, exc)
+                _guarded_on_event({"type": "stem_failed", "stem": name, "error": str(exc)})
+                processed[name] = working_tracks[name]
             # Neural Monitor during the mix stage, not just the final
             # master: was previously only wired into masterengine's
             # multiband compression step, so live audition reflected the
