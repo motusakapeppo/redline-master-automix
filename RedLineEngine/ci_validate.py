@@ -18,6 +18,8 @@ import os
 import subprocess
 import sys
 
+from redline import config as redline_config
+
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 FLAGS_PATH = os.path.join(ROOT, ".flags.json")
@@ -67,14 +69,22 @@ def _run_pytest() -> tuple[bool, str]:
 
 
 def _enable_all_flags() -> None:
-    """Write .flags.json with all features enabled."""
-    all_on = {
-        "ENABLE_LIVE_AUDITION": True,
-        "ENABLE_BLUEPRINT_CHAINS": True,
-        "ENABLE_LTAS_MATCHING": True,
-        "ENABLE_RT60_CALIBRATION": True,
-        "ENABLE_LLM_ADVISORY": True,
-    }
+    """Write .flags.json with every known feature flag enabled.
+
+    The flag surface is derived from redline.config.DEFAULTS so new flags are
+    never silently left out. Keys already on disk that are not part of
+    DEFAULTS (e.g. ENABLE_DIRECTOR_MODE) are preserved with their current
+    value — this must not clobber machine-local user settings.
+    """
+    all_on: dict = {}
+    if os.path.exists(FLAGS_PATH):
+        try:
+            with open(FLAGS_PATH, "r", encoding="utf-8") as f:
+                all_on = json.load(f)
+        except Exception:
+            all_on = {}
+    for flag in redline_config.DEFAULTS:
+        all_on[flag] = True
     with open(FLAGS_PATH, "w", encoding="utf-8") as f:
         json.dump(all_on, f, indent=4)
     print(f"[CI] Flags written to {FLAGS_PATH}")
