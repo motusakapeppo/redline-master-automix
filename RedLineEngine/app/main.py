@@ -25,6 +25,22 @@ def _web_dir() -> Path:
 
 
 def _run() -> None:
+    # Another app on this machine (an AI assistant installed as "cliched32" /
+    # "robina...") writes two WebView2 environment variables globally, into
+    # HKCU\Environment, so they are inherited by *every* process:
+    #   WEBVIEW2_USER_DATA_FOLDER           -> C:\Users\motus\AppData\Local\cliched32
+    #   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -> custom --user-agent, --autoplay-policy
+    # WebView2 reads these BEFORE the user data folder we pass via
+    # webview.start(storage_path=...), so they hijack our browser process onto
+    # that app's shared folder with different options. Every WebView2 host on
+    # the machine then collides on the same folder with mismatched config and
+    # initialization fails with HRESULT 0x8007139F ("resource not in the
+    # correct state") -- the window opens black/blank with no visible error.
+    # Neutralize them for THIS process only (does not affect HKCU or the other
+    # app), before pywebview spawns the browser process.
+    os.environ.pop("WEBVIEW2_USER_DATA_FOLDER", None)
+    os.environ.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
+
     import webview
 
     from api import Api
