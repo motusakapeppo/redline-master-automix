@@ -871,4 +871,168 @@ prima di qualsiasi ulteriore modifica audio.
 
 ---
 
-*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare. La Sezione 9 documenta l'audit di disposizione post-riconciliazione del research report (zero modifiche audio).*
+## 10. Addendum Settembre 2026 — Universalizzazione (lingue, strumenti, generi, parametri, piattaforme)
+
+Giro di ampiezza (Wave 1/2, Track A/B/C1/E1/G): il motore riconosce più lingue e
+convenzioni DAW, più famiglie di strumenti e più generi, e l'utente può pilotare più
+parametri. **Nessun default esistente è cambiato**: le espansioni sono additive e i
+nuovi parametri sono neutri di default. Ogni conteggio è verificato sul codice live
+(`redline.genres.GENRE_NAMES`, `redline.instrumentstack.RECIPES`,
+`redline.platforms.PLATFORM_TARGETS`, `redline.presets._BUILTIN_PRESETS`).
+
+### 10.1 Nomenclatura stem multilingua e DAW-aware (`naming.py`)
+
+Il parsing dei nomi file (ruolo/layer/sezione/pan/link) ora copre:
+
+- **Lingue**: inglese, italiano, spagnolo, francese, tedesco. Esempi di token aggiunti:
+  voce (`voz`, `voces`, `voix`, `stimme`, `gesang`), basso (`bajo`, `basse`), batteria
+  (`bateria`, `bombo`, `caja`, `batterie`, `caisse claire`, `schlagzeug`, `trommel`).
+- **Convenzioni DAW**: i numeri di traccia iniziali (`01_Kick`, `02 - Snare`, `01Kick`)
+  vengono rimossi per il matching degli hint (il `raw_name` e il `link_id` conservano la
+  stringa originale); le varianti numerate di take (`L1`, `R1`, `L100`) sono riconosciute
+  dai pattern `_R_NUM_PATTERN`/`_L_NUM_PATTERN`.
+- **Elementi di kit** aggiunti: `hat`, `hihat`, `hi-hat`, `cymbal`, `crash`, `ride`,
+  `tom`, `clap`, `rim`, `overhead` (sottostringa), più `oh`/`hh` a word boundary.
+- **Sezioni** aggiunte: `prechorus`, `intro`, `outro`, `drop`, `breakdown`, `refrain`,
+  `interlude`, `coda`, `tag` (oltre a chorus/verse/bridge già presenti).
+- **Pan esplicito**: token di centro (`center`/`centre`/`mono`) forzano `pan=0.0` anche
+  se un altro token suggerirebbe un lato; `L1`/`R1` numerati riconosciuti.
+- **Token di link** aggiunti per i gruppi multi-mic/multi-take: `dx`, `sx`, `r`, `right`,
+  `l`, `left`, `in`, `out`, `top`, `bottom`, `close`, `far`, `near`, `mic1`, `mic2`, `amp`,
+  `front`, `back`, `di`.
+
+**Fix di falsi positivi**: i token corti/pericolosi sono ora matchati a word boundary
+(`textmatch.contains_word`), il che elimina casi reali come `percent` → batteria
+(il token `perc` era sottostringa) e `invoice` → voce (il token `voice` era sottostringa).
+La tabella morta `MAIN_HINTS` è stata rimossa.
+
+### 10.2 Famiglie di strumenti: da 16 a 21 categorie (`instrumentstack.py`)
+
+Cinque nuove categorie, ognuna con la propria ricetta (HPF, ratio/soglia/attack/release
+del compressore, EQ correttivo, bias di invio riverbero):
+
+| Categoria | HPF | EQ chiave | Compressione | Riverbero |
+|---|---|---|---|---|
+| `ACCORDION` (fisarmonica/armonica/melodica/bandoneon) | 120Hz | -1.5dB@350Hz (corpo ancia), +1.5dB@2kHz (presenza) | 2.2:1, attack 12ms | ×1.1 |
+| `HARPSICHORD` (clavicembalo/clavicordo/spinetta) | 180Hz | -2dB@400Hz (corpo), +1.5dB@4kHz (definizione plettro) | 2.5:1, attack 3ms | ×0.7 |
+| `FOLK_PLUCK` (banjo/mandolino/ukulele/lap steel/dobro/dulcimer) | 110Hz | +1.5dB@3kHz (attacco plettro), +1dB shelf 9kHz (aria) | 2.8:1, attack 4ms | ×0.95 |
+| `WORLD_STRINGS` (erhu/oud/bouzouki/balalaika/kora...) | 140Hz | -1.5dB@3.2kHz (ruvidezza), +1dB shelf 9kHz (aria) | 2.0:1, attack 18ms | ×1.25 |
+| `WORLD_WINDS` (duduk/shakuhachi/bansuri/ney/ocarina/cornamusa/zampogna...) | 180Hz | -1dB@450Hz (mud di fiato), +1.5dB shelf 7.5kHz (aria) | 2.0:1, attack 15ms | ×1.2 |
+
+Le ricette EQ/compressione sono punti di partenza informati da fonti secondarie
+(iZotope genre guides, Sound On Sound, MusicProductionWiki), stesso status euristico
+delle ricette originali della §6.2 — non esiste uno standard primario per queste
+famiglie. **Fix di falsi positivi da sottostringa**: i token corti/pericolosi
+(`organ`, `harp`, `bell`, `pad`, `keys`, `arp`, `chant`, `coro`, `cori`, `mmh`, `ooh`,
+`aahs`, `wash`, `drone`, `swell`, `clav`, `clavi`, `b3`, `oud`, `ney`, `uke`, `lead`)
+sono matchati a word boundary, eliminando `organic` → organ e `sharp` → harp.
+
+### 10.3 Generi: da 6 a 21 (`analysis/genre.py`, `reference_profiles.py`, `qc.py`, `fxsends.py`)
+
+I 6 profili originali (EDM/Urban, Pop/Rock, Acoustic/Classical, Jazz/Vintage, Hip-Hop,
+Balanced) sono **invariati**. I 15 nuovi sono additivi. `detect_genre` è stato esteso
+**solo nel ramo finale `else`** (la regione che il vecchio albero mappava a "Balanced"),
+quindi nessun input esistente cambia genere misurato.
+
+Ancoraggi di loudness/crest (LUFS integrato / PLR crest, dB) e target risolti:
+
+| Genere | LUFS tipico | Crest tipico | Crest target | Mono target | Bus EQ chiave | Glue comp |
+|---|---|---|---|---|---|---|
+| Lo-Fi | -10..-13 | 10-14 | 12.0 | 0.80 | -2dB@4kHz, -3dB shelf 10kHz (roll-off nastro) | 2.5:1, 25ms |
+| Cinematic | -14..-18 | 14-20 | 17.0 | 0.70 | +2dB shelf 40Hz, +2dB shelf 12kHz | 1.8:1, 30ms |
+| Drum & Bass | -6..-9 | 8-12 | 10.0 | 0.90 | +3.5dB shelf 50Hz, +2dB@4kHz | 4.0:1, 8ms |
+| Reggaeton | -8..-10 | 9-13 | 11.0 | 0.88 | +3.5dB shelf 55Hz, -2dB@300Hz | 3.5:1, 12ms |
+| Metal | -8..-11 | 10-14 | 12.0 | 0.82 | -3dB@400Hz (mid scoop), +2.5dB@3kHz | 4.5:1, 5ms |
+| Country | -12..-16 | 12-16 | 14.0 | 0.78 | +1dB@1.5kHz, +1.5dB@3.5kHz | 2.5:1, 20ms |
+| Gospel | -12..-16 | 12-16 | 14.0 | 0.74 | +1.5dB shelf 70Hz, +2dB shelf 11kHz | 2.5:1, 22ms |
+| Funk | -10..-14 | 11-15 | 13.0 | 0.80 | -1.5dB@350Hz, +2dB@4kHz | 3.0:1, 10ms |
+| Ambient | -14..-18 | 15-22 | 18.5 | 0.66 | +2.5dB shelf 12kHz | 1.5:1, 40ms |
+| Trap | -8..-11 | 8-12 | 10.0 | 0.90 | +4dB shelf 45Hz, +2.5dB@5kHz | 4.0:1, 8ms |
+| R&B | -12..-16 | 11-15 | 13.0 | 0.84 | +2.5dB shelf 60Hz, -2dB@300Hz | 3.0:1, 15ms |
+| Blues | -12..-16 | 12-16 | 14.0 | 0.76 | +1dB shelf 70Hz, +1.5dB@3kHz | 2.5:1, 20ms |
+| Reggae | -10..-14 | 11-15 | 13.0 | 0.86 | +3dB shelf 50Hz, -2dB@300Hz | 3.0:1, 18ms |
+| Afrobeats | -9..-12 | 9-13 | 11.0 | 0.88 | +3dB shelf 55Hz, +2dB@4kHz | 3.5:1, 12ms |
+| K-Pop | -7..-10 | 9-13 | 11.0 | 0.82 | +3dB shelf 60Hz, +2.5dB@3.5kHz | 3.5:1, 10ms |
+
+**Fonti degli ancoraggi di loudness**: Spotify normalizza a -14 LUFS, Apple Music a -16,
+YouTube a -14 (dal 2019); i master club/EDM girano più caldi (-6..-9). I range di
+crest/PLR sono il carattere dinamico tipico del genere (tabelle PLR di
+MusicProductionWiki, loudness-war references). I target di crest sono il punto medio del
+range ricercato; i target mono interpolano tra il floor di pass/fail di `qc.py` (> 0.6)
+e la correlazione perfetta (1.0) — generi club/sub-heavy più stretti, generi con
+stereo di sala più larghi. Le mosse EQ/dinamica sono informate da fonti secondarie
+(iZotope genre guides, Sound on Sound, MusicProductionWiki), marcate `[secondary]` nel
+codice dove non esiste una spec primaria.
+
+Ogni nuovo genere ha anche un target spettrale a 6 bande in `qc.TARGET_BAND_RATIOS`
+e un bias dry/wet in `fxsends.py` (`DRY_GENRES` = EDM/Hip-Hop/Trap/Drum & Bass/
+Reggaeton/Afrobeats; `WET_GENRES` = Ambient/Cinematic/Gospel).
+
+### 10.4 `genre_override` ora cablato (`analyze.py`, `cli.py`, `batch.py`, `app/api.py`)
+
+Prima campo morto: una selezione di genere utente/preset non aveva alcun effetto.
+Ora `analyze()` accetta `genre_override` e `apply_genre_override()` sostituisce
+`analysis.genre` con il profilo richiesto (via `redline.genres.resolve_genre_name`,
+con warning e fallback al genere misurato se il nome è sconosciuto). CLI, batch e API
+lo passano tutti, quindi la scelta di genere pilota realmente bus EQ, target LUFS e QC.
+
+### 10.5 Piattaforme: correzione YouTube e nuove piattaforme (`platforms.py`)
+
+| Piattaforma | LUFS target | Nota |
+|---|---|---|
+| Spotify | -14.0 | invariato |
+| Apple Music | -16.0 | invariato |
+| YouTube | **-14.0** | **corretto da -13**: YouTube normalizza a -14 LUFS dal 2019 |
+| Tidal | -14.0 | nuovo |
+| Amazon Music | -14.0 | nuovo |
+| Deezer | -14.0 | nuovo |
+| Club | -9.0 | invariato (target più caldo per materiale EDM/club) |
+
+`redline/platforms.py` è ora la fonte unica di verità; `masterengine` riesporta il dict,
+quindi `from redline.masterengine import PLATFORM_TARGETS` continua a restituire lo
+stesso oggetto. `PLATFORM_CHOICES` = `("auto",) + tuple(PLATFORM_TARGETS)`.
+
+### 10.6 7 nuovi parametri utente (`wizard.py`, `MixPreferences`)
+
+Tutti **neutri di default** (0.0 = default del motore, nessun cambiamento), quindi una
+`MixPreferences` non toccata si comporta esattamente come prima. Sono override opzionali
+consumati dal motore; il wizard interattivo non li chiede.
+
+| Parametro | Range | Semantica a 0.0 |
+|---|---|---|
+| `mono_compatibility_target` | 0.0..1.0 | auto/genre default (target QC mono) |
+| `bass_mono_below_hz` | 0.0..300.0 | default del motore (120 Hz) |
+| `reference_lufs_target` | -30.0..0.0 | usa il target piattaforma/genere |
+| `saturation_amount` | -1..+1 | default del motore, nessun cambiamento (scala la saturazione per-strumento/batteria) |
+| `deess_amount` | -1..+1 | default del motore, nessun cambiamento (scala l'intensità del de-esser) |
+| `compression_amount` | -1..+1 | default del motore, nessun cambiamento (bias globale sui ratio dei compressori per-stem) |
+| `vocal_reverb_amount` | -1..+1 | default del motore, nessun cambiamento (bias sull'invio spazio della voce) |
+
+Corretto anche un disallineamento di range dello schema su `stereo_width` (0.0..1.0) e
+`transient_attack`/`transient_sustain` (-6..+6), allineati al clamp di `__post_init__`.
+
+### 10.7 Nuovi moduli di infrastruttura
+
+- **`redline/textmatch.py`**: un unico matcher di token per le due semantiche usate
+  leggendo nomi scritti dall'utente — `contains_token(text, token, mode="substr"|"word")`,
+  `contains_any`, `contains_word`. Il boundary set è lo stesso che `naming.py` ha sempre
+  usato (whitespace, underscore, punto, slash, backslash, parentesi, graffe, quadre,
+  trattino). I token sono `re.escape`'d e il matching è case-insensitive.
+- **`redline/genres.py`**: registro canonico dei generi (`GENRE_NAMES`, 21 nomi, stesso
+  ordine di `analysis.genre._PROFILES`), con `resolve_genre_name()`/`is_known_genre()`.
+  `tests/test_registry.py` blocca i due insieme.
+- **`redline/platforms.py`**: registro canonico delle piattaforme (vedi §10.5).
+
+### 10.8 Conteggi verificati (live)
+
+| Elemento | Prima | Dopo | Fonte |
+|---|---|---|---|
+| Generi | 6 | **21** | `redline.genres.GENRE_NAMES` |
+| Categorie strumenti | 16 | **21** | `redline.instrumentstack.RECIPES` |
+| Piattaforme | 4 | **7** | `redline.platforms.PLATFORM_TARGETS` |
+| Preset built-in | 22 | **24** | `redline.presets._BUILTIN_PRESETS` |
+| Parametri utente neutri | 0 | **7** | `redline.wizard.MixPreferences` |
+
+---
+
+*Fine documento specifiche. Tutti i conflitti tra le tre fonti sono stati identificati e risolti nella Sezione 0, dove per ogni divergenza è stata scelta la soluzione migliore (più chiara, più specifica, o più adatta a un motore DSP headless). I valori numerici sono stati unificati nella Sezione 4. L'architettura di routing nella Sezione 5 integra tutte e tre le fonti in un flusso coerente. La Sezione 6 documenta il secondo giro di ricerca (fonti web) e le correzioni applicate per il problema "mix inascoltabile". La Sezione 7 documenta l'estensione Reference Profiles / Feedback Iterativo / Re-run Masking / A/B Compare. La Sezione 9 documenta l'audit di disposizione post-riconciliazione del research report (zero modifiche audio). La Sezione 10 documenta l'universalizzazione (lingue, strumenti, generi, parametri, piattaforme).*
