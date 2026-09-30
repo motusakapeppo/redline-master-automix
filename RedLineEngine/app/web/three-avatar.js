@@ -42,6 +42,10 @@ let celebrationWave = 0;
 let raveEyeGlowUntil = 0;
 let auditionTilt = 0;
 let idleFloatPhase = 0;
+// Live character-processor prop reaction (onProcessor): a decaying spin
+// impulse applied to the music_note prop while it is visible. Decays per
+// frame in animate() so the note does a quick twirl then settles.
+let processorSpin = 0;
 // Punch-scale: a quick squash/stretch impulse on hard hits (glue
 // compression slam, de-esser bite, done celebration) so those moments read
 // as a snappy "hit" instead of only the subtler continuous vibration/glow.
@@ -386,6 +390,10 @@ const PROP_CONFIGS = {
   bass: { url: 'assets/bass_guitar.glb', targetHeight: 1.9, position: [-1.5, -0.6, 0], tint: '#8890A0' },
   piano: { url: 'assets/piano.glb', targetHeight: 1.4, position: [-1.5, -0.5, 0], tint: '#8890A0' },
   wind: { url: 'assets/kazoo.glb', targetHeight: 0.9, position: [-1.4, -0.2, 0], tint: '#8890A0' },
+  // Live character-processor prop: a music note that pops in (with a spin)
+  // whenever a built-in processor is applied to a stem (onProcessor below).
+  // Mirrored to the right side, opposite the instrument props on the left.
+  music_note: { url: 'assets/music_note.glb', targetHeight: 1.0, position: [1.5, 0.1, 0], tint: '#FF3366' },
 };
 
 const INSTRUMENT_CYCLE_ORDER = ['guitar', 'bass', 'piano', 'wind'];
@@ -453,7 +461,10 @@ function _loadProp(name, onReady) {
     },
     undefined,
     (err) => {
-      console.error(`[three-avatar] Failed to load prop "${name}":`, err);
+      // console.warn, not console.error: a missing/failed prop asset is a
+      // cosmetic degradation (the prop simply stays hidden), not an app
+      // error -- and the QA harness counts console.error as a failure.
+      console.warn(`[three-avatar] Failed to load prop "${name}" (staying hidden):`, err);
       delete _propLoading[name];
     }
   );
@@ -461,6 +472,7 @@ function _loadProp(name, onReady) {
 
 function _hideAllPropVisuals() {
   for (const group of Object.values(_props)) group.visible = false;
+  processorSpin = 0;
 }
 
 function _hideAllProps() {
@@ -667,6 +679,18 @@ function animate() {
     _props.vinyl.rotation.z -= delta * 2.2; // steady spin, independent of the skull's own motion
   }
 
+  // Live processor prop: a decaying spin impulse (onProcessor) plus a gentle
+  // idle bob so the note reads as "just popped in" rather than a static decal.
+  if (_props.music_note && _props.music_note.visible) {
+    if (processorSpin > 0.001) {
+      _props.music_note.rotation.y += delta * processorSpin * 9;
+      processorSpin *= Math.max(0, 1 - delta * 3.5);
+    } else {
+      processorSpin = 0;
+    }
+    _props.music_note.position.y = PROP_CONFIGS.music_note.position[1] + Math.sin(time * 2.4) * 0.05;
+  }
+
   // Hover glow: smooth toward the current hover state; a fresh hover also
   // earns a subtle glance toward the pointer.
   hoverGlow += ((hovering ? 1 : 0) - hoverGlow) * 0.1;
@@ -772,6 +796,7 @@ function updateEyes(time) {
 
 function onSystemReady() {
   systemReadyPulse = 1.0;
+  _hideAllProps(); // a fresh session starts clean -- no stale processor prop
 
   if (eyeLeft) eyeLeft.intensity = 2.0;
   if (eyeRight) eyeRight.intensity = 2.0;
@@ -853,6 +878,21 @@ function onInstrument(instrument) {
   if (PROP_CONFIGS[instrument]) {
     _showProp(instrument);
   }
+}
+
+// Live character-processor reaction: a built-in processor (distortion,
+// saturation, ...) was applied to a stem -- pop in the music_note prop with
+// a spin impulse and a small eye/accent beat. Called by app.js's
+// character_processor case (guarded). The prop is hidden again by onDone /
+// onSystemReady via _hideAllProps, so it never stays up forever.
+function onProcessor(processorName) {
+  _showProp('music_note');
+  processorSpin = 1.0;
+  stepEyeBoost = Math.max(stepEyeBoost, 0.8);
+  accentTarget.set('#FF3366');
+  clearTimeout(stepAccentTimer);
+  stepAccentTimer = setTimeout(() => { accentTarget.set('#FF003F'); }, 500);
+  if (!_reduceMotion) _glanceTo(0.3, 0.05, 0.4);
 }
 
 function onDeepScan() {
@@ -970,6 +1010,7 @@ function onDone() {
   celebrationWave = 1.0;
   punchScale = 1.0;
   playSkullAction('Dance');
+  processorSpin = 0; // the processor prop's reaction ends with the render
 
   // Ordered two-stage eye decay: bright flash -> softer glow -> rest. The
   // second stage is scheduled from inside the first timeout so the two
@@ -1162,6 +1203,7 @@ window.avatarAPI = {
   onApprove,
   onReject,
   onInstrument,
+  onProcessor,
   onSaturation,
   onGlitch,
   onEasterEgg,

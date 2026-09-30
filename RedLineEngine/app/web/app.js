@@ -2615,6 +2615,7 @@ function onEvent(evt) {
       const procName = evt.processor || "processore";
       addEventChip(`\u{1F50C} ${evt.stem || "?"}: processore '${procName}'`);
       _pulseModuleById(PROCESSOR_MODULE_MAP[procName] || "sat");
+      if (window.avatarAPI && typeof window.avatarAPI.onProcessor === "function") window.avatarAPI.onProcessor(evt.processor);
       break;
     }
 
