@@ -72,6 +72,26 @@ def _sanitize_for_json(data):
 
 _MIX_HISTORY_CAP = 8
 
+# The 7 neutral-by-default mix parameters added in the "universalization" pass.
+# They must survive load_preset/save_preset/_build_mix_prefs, otherwise a
+# built-in preset that sets one (e.g. Lo-Fi's saturation_amount) would silently
+# lose it the moment it passes through the GUI bridge.
+_EXTRA_MIX_FIELDS = (
+    "mono_compatibility_target",
+    "bass_mono_below_hz",
+    "reference_lufs_target",
+    "saturation_amount",
+    "deess_amount",
+    "compression_amount",
+    "vocal_reverb_amount",
+)
+
+
+def _extra_mix_kwargs(prefs: dict) -> dict:
+    """Extracts the 7 extra mix fields from a raw prefs dict, defaulting each
+    to 0.0 (neutral) so an older JSON/preset lacking them stays valid."""
+    return {name: float(prefs.get(name, 0.0)) for name in _EXTRA_MIX_FIELDS}
+
 
 def _wrap_js_call(js: str) -> str:
     """Guard a single queued JS call in its own try/catch.
@@ -285,7 +305,7 @@ class Api:
         """
         try:
             prefs = PresetManager.load(name)
-            return {
+            result = {
                 "ok": True,
                 "name": name,
                 "aggressiveness": prefs.aggressiveness,
@@ -298,6 +318,9 @@ class Api:
                 "transient_attack": prefs.transient_attack,
                 "transient_sustain": prefs.transient_sustain,
             }
+            for field in _EXTRA_MIX_FIELDS:
+                result[field] = getattr(prefs, field)
+            return result
         except KeyError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
@@ -319,6 +342,7 @@ class Api:
                 stereo_width=float(prefs.get("stereo_width", 0.0)),
                 transient_attack=float(prefs.get("transient_attack", 0.0)),
                 transient_sustain=float(prefs.get("transient_sustain", 0.0)),
+                **_extra_mix_kwargs(prefs),
             )
             PresetManager.save(mp, name)
             return {"ok": True}
@@ -473,6 +497,7 @@ class Api:
             stereo_width=stereo_width,
             transient_attack=transient_attack,
             transient_sustain=transient_sustain,
+            **_extra_mix_kwargs(prefs),
         )
 
     def _do_mastering(self, mixed: np.ndarray, stems, analysis, out_dir: str, prefs: dict) -> str | None:
