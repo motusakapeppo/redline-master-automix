@@ -1604,12 +1604,19 @@ def render_mix(
         plugin = load_external_plugin(plugin_path)  # None on any failure
         if plugin is not None:
             info = describe_plugin(plugin)
-            if isinstance(info, dict):
-                on_event({
-                    "type": "plugin_hosted",
-                    "name": info.get("name"),
-                    "parameters": info.get("parameters", []),
-                })
+            # The emit must never be able to abort the render: a plugin whose
+            # parameter list contains a non-JSON-serializable value would make
+            # _emit's json.dumps raise, so it is wrapped like the DSP apply
+            # below (fail-safe parity with the character_processor hook).
+            try:
+                if isinstance(info, dict):
+                    on_event({
+                        "type": "plugin_hosted",
+                        "name": info.get("name"),
+                        "parameters": info.get("parameters", []),
+                    })
+            except Exception:
+                pass
             try:
                 mix_bus = Pedalboard([plugin])(mix_bus.T, sr).T
             except Exception:
