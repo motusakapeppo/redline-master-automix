@@ -74,6 +74,7 @@ from .dsp_utils import (
     transient_shaper,
 )
 from . import config
+from .processors import build_processor
 from .naming import parse_stem, StemDescriptor
 from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
@@ -266,6 +267,41 @@ def _vocal_space_mix_bias(space_mix: float, amount: float) -> float:
 
 
 _SILENT_STEM_DBFS = -90.0  # same threshold PreFlightValidator uses to flag "silenzio totale"
+
+
+def _maybe_apply_character_processor(
+    name: str,
+    audio: np.ndarray,
+    sr: int,
+    spec: dict | None,
+) -> np.ndarray:
+    """Wave 2 / Track F: optional per-stem "character" processor hook.
+
+    Returns ``audio`` UNCHANGED unless a ``spec`` is explicitly provided.
+    ``spec`` is ``{"processor": <name>, "params": {...}}``; when present and
+    the ``ENABLE_BUILTIN_PROCESSOR_VARIANTS`` flag is on, the named built-in
+    processor (see redline/processors.py) is built and applied. Any failure
+    (unknown processor, bad params, DSP error) leaves the audio untouched --
+    this hook can never abort a render.
+
+    With no spec (the only case reachable today -- there is no UI/config path
+    that supplies one yet) this is a strict no-op, so the default render is
+    bit-identical to before this hook existed.
+    """
+    if not spec:
+        return audio
+    if not config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS"):
+        return audio
+    proc_name = spec.get("processor")
+    if not proc_name:
+        return audio
+    effect = build_processor(proc_name, spec.get("params"))
+    if effect is None:
+        return audio
+    try:
+        return Pedalboard([effect])(audio.T, sr).T
+    except Exception:
+        return audio
 
 
 def _is_silent_stem(audio: np.ndarray) -> bool:
@@ -553,6 +589,15 @@ def _process_stem(
         on_event({"type": "saturation", "stem": name, "drive": _drum_drive, "mix": DRUM_SATURATION_MIX})
     elif role == "bass" and blueprint_chains:
         out = _bass_chain(out, sr, name, on_event, _sat_bias)
+
+    # --- Wave 2 (Track F): optional per-stem "character" processor. Gated by
+    # ENABLE_BUILTIN_PROCESSOR_VARIANTS (OFF by default). There is no UI/config
+    # path that supplies a spec yet, so `character_spec` is always None today
+    # and this call is a strict no-op -- the hook exists so a future caller can
+    # thread a spec through without touching the DSP chain above.
+    character_spec = None  # TODO(Track F): source from user config once a UI exists
+    if config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS"):
+        out = _maybe_apply_character_processor(name, out, sr, character_spec)
 
     return out
 
@@ -1522,6 +1567,27 @@ def render_mix(
         on_step(f"Transient shaper: attack={prefs.transient_attack:+.1f}dB, sustain={prefs.transient_sustain:+.1f}dB")
         on_event({"type": "transient_shaper", "attack_gain_db": round(prefs.transient_attack, 1), "sustain_gain_db": round(prefs.transient_sustain, 1)})
         mix_bus = transient_shaper(mix_bus, sr, attack_gain_db=prefs.transient_attack, sustain_gain_db=prefs.transient_sustain)
+
+    # --- Wave 2 (Track F): external plugin hosting SEAM (deliberately NOT
+    # wired into the render flow in this task).
+    #
+    # The fail-safe loader lives in redline/plugins.py and is tested
+    # standalone (load_external_plugin / is_plugin_hosting_available /
+    # describe_plugin). It is intentionally NOT called here yet: there is no
+    # UI/config path that supplies a user plugin path, and a live hosted
+    # plugin can crash the interpreter with no catchable exception, so wiring
+    # one into the render before that path exists would be untested risk for
+    # zero user benefit. When a plugin-path source is added, the intended
+    # integration point is exactly here (mix bus, before bus EQ/glue):
+    #
+    #   if config.is_enabled("ENABLE_PLUGIN_HOSTING") and plugin_path:
+    #       from .plugins import load_external_plugin
+    #       plugin = load_external_plugin(plugin_path)  # None on any failure
+    #       if plugin is not None:
+    #           mix_bus = Pedalboard([plugin])(mix_bus.T, sr).T
+    #
+    # Gated by ENABLE_PLUGIN_HOSTING (OFF by default); with the flag off this
+    # block is inert and the render is bit-identical to before Track F.
 
     # --- Pre-glue headroom: summing many buses can leave mix_bus several dB
     # over 0dBFS before the glue compressor even runs. A gentle glue ratio

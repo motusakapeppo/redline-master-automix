@@ -26,6 +26,12 @@ DEFAULTS = {
     "ENABLE_TRANSIENT_SHAPER": False,
     "ENABLE_FEEDBACK_DELAY": False,
     "ENABLE_BUS_EXPORT": False,
+    # Wave 2 / Track F: optional plugin hosting + built-in character
+    # processors. Both OFF by default -- with them off the render is
+    # bit-identical to before these features existed. Plugin hosting is
+    # user-supplied only and fail-safe (see redline/plugins.py).
+    "ENABLE_PLUGIN_HOSTING": False,
+    "ENABLE_BUILTIN_PROCESSOR_VARIANTS": False,
 }
 
 # Logging configuration (not feature flags — always available)
