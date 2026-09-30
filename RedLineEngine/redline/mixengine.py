@@ -1616,6 +1616,8 @@ def render_mix(
                         "parameters": info.get("parameters", []),
                     })
             except Exception:
+                # A non-serializable plugin parameter must never abort the
+                # render -- the event is purely informational, so drop it.
                 pass
             try:
                 mix_bus = Pedalboard([plugin])(mix_bus.T, sr).T
