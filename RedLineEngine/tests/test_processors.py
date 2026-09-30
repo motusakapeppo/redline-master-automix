@@ -75,8 +75,10 @@ def _make_stems(sr: int = 44100, seconds: float = 2.0) -> Stems:
 
 
 def test_processor_variants_flag_off_is_neutral(monkeypatch, tmp_path):
-    """With the flag OFF (default), render_mix must be bit-identical to
-    itself across runs -- i.e. the new hook is completely inert."""
+    """The hook must be inert with the flag OFF (default) AND with it ON while
+    no spec is supplied. Rendering twice with the flag off only proves
+    determinism; the real proof is that forcing the flag ON (still no spec)
+    produces the SAME bytes, since _process_stem passes spec=None today."""
     monkeypatch.setattr(config, "_FLAGS_PATH", str(tmp_path / "nonexistent.flags.json"))
     config.reload()
     try:
@@ -84,9 +86,13 @@ def test_processor_variants_flag_off_is_neutral(monkeypatch, tmp_path):
         analysis = analyze(stems)
         prefs = MixPreferences()
 
-        first = render_mix(stems, analysis, prefs)
-        second = render_mix(stems, analysis, prefs)
+        off = render_mix(stems, analysis, prefs)
 
-        assert np.array_equal(first, second)
+        # Force the flag ON for this render only; no spec is supplied by
+        # _process_stem, so the hook must still be a strict no-op.
+        config.set_override("ENABLE_BUILTIN_PROCESSOR_VARIANTS", True)
+        on = render_mix(stems, analysis, prefs)
+
+        assert np.array_equal(off, on)
     finally:
         config.reload()
