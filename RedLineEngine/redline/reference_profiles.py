@@ -63,6 +63,24 @@ CREST_FACTOR_TARGETS: dict[str, float] = {
     "Jazz / Vintage": 14.0,
     "Acoustic / Classical": 17.0,
     "Balanced": 12.0,
+    # --- Wave 1 / Track C1 expansion: midpoint of each genre's researched
+    # crest/PLR range (see genre.py's per-genre loudness anchors; ranges from
+    # MusicProductionWiki PLR tables + Spotify/Apple normalization docs).
+    "Lo-Fi": 12.0,        # 10-14
+    "Cinematic": 17.0,    # 14-20
+    "Drum & Bass": 10.0,  # 8-12
+    "Reggaeton": 11.0,    # 9-13
+    "Metal": 12.0,        # 10-14
+    "Country": 14.0,      # 12-16
+    "Gospel": 14.0,       # 12-16
+    "Funk": 13.0,         # 11-15
+    "Ambient": 18.5,      # 15-22
+    "Trap": 10.0,         # 8-12
+    "R&B": 13.0,          # 11-15
+    "Blues": 14.0,        # 12-16
+    "Reggae": 13.0,       # 11-15
+    "Afrobeats": 11.0,    # 9-13
+    "K-Pop": 11.0,        # 9-13
 }
 
 # Mono/stereo-width compatibility target: qc.py's own QC pass floor is
@@ -79,6 +97,23 @@ MONO_COMPATIBILITY_TARGETS: dict[str, float] = {
     "Jazz / Vintage": 0.72,         # wider live-kit/room stereo image is expected
     "Acoustic / Classical": 0.68,   # natural hall/room stereo decorrelation
     "Balanced": 0.78,
+    # --- Wave 1 / Track C1 expansion: same interpolation between qc.py's 0.6
+    # floor and 1.0 -- bass-heavy club genres tighter, wide/room genres looser.
+    "Lo-Fi": 0.80,
+    "Cinematic": 0.70,              # wide orchestral/hybrid stereo field
+    "Drum & Bass": 0.90,            # club sub, mono-critical
+    "Reggaeton": 0.88,              # dembow sub, club/PA
+    "Metal": 0.82,                  # tight but double-tracked guitars widen
+    "Country": 0.78,
+    "Gospel": 0.74,                 # big room/choir decorrelation
+    "Funk": 0.80,
+    "Ambient": 0.66,                # deliberately wide, decorrelated pads
+    "Trap": 0.90,                   # 808 sub, mono-critical
+    "R&B": 0.84,
+    "Blues": 0.76,
+    "Reggae": 0.86,                 # deep bass, mono-safe low end
+    "Afrobeats": 0.88,              # club sub
+    "K-Pop": 0.82,                  # polished, wide but controlled
 }
 
 

@@ -32,15 +32,20 @@ def test_is_known_genre():
 
 def test_platform_targets_match_choices():
     assert set(PLATFORM_TARGETS) == set(PLATFORM_CHOICES) - {"auto"}
-    assert PLATFORM_CHOICES == ("auto", "spotify", "apple", "youtube", "club")
+    assert PLATFORM_CHOICES == ("auto", "spotify", "apple", "youtube", "tidal", "amazon", "deezer", "club")
 
 
 def test_platform_target_values_unchanged():
-    # Behavior preservation: the exact values masterengine has always used.
+    # Behavior preservation: the exact values masterengine has always used,
+    # plus the 2026 correction (youtube -13 -> -14, since YouTube has
+    # normalized to -14 LUFS since 2019) and the added -14 platforms.
     assert PLATFORM_TARGETS == {
         "spotify": -14.0,
         "apple": -16.0,
-        "youtube": -13.0,
+        "youtube": -14.0,
+        "tidal": -14.0,
+        "amazon": -14.0,
+        "deezer": -14.0,
         "club": -9.0,
     }
 

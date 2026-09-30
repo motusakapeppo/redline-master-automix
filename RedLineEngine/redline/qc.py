@@ -33,6 +33,25 @@ TARGET_BAND_RATIOS: dict[str, dict[str, float]] = {
     "Acoustic / Classical": dict(sub_bass=0.08, bass=0.12, low_mid=0.18, mid=0.24, high_mid=0.20, air=0.18),
     "Jazz / Vintage": dict(sub_bass=0.10, bass=0.15, low_mid=0.18, mid=0.22, high_mid=0.18, air=0.17),
     "Balanced": dict(sub_bass=0.14, bass=0.16, low_mid=0.16, mid=0.18, high_mid=0.18, air=0.18),
+    # --- Wave 1 / Track C1 expansion. Approximate genre tendencies (same
+    # caveat as the six above: rough energy distribution, not a certified
+    # curve), each normalized to sum 1.0. Informed by the per-genre EQ moves
+    # in analysis/genre.py (secondary sources: iZotope genre guides, SOS).
+    "Lo-Fi": dict(sub_bass=0.12, bass=0.16, low_mid=0.18, mid=0.22, high_mid=0.18, air=0.14),
+    "Cinematic": dict(sub_bass=0.18, bass=0.18, low_mid=0.16, mid=0.16, high_mid=0.16, air=0.16),
+    "Drum & Bass": dict(sub_bass=0.26, bass=0.20, low_mid=0.10, mid=0.12, high_mid=0.16, air=0.16),
+    "Reggaeton": dict(sub_bass=0.24, bass=0.20, low_mid=0.11, mid=0.13, high_mid=0.16, air=0.16),
+    "Metal": dict(sub_bass=0.12, bass=0.16, low_mid=0.12, mid=0.16, high_mid=0.22, air=0.22),
+    "Country": dict(sub_bass=0.10, bass=0.15, low_mid=0.17, mid=0.22, high_mid=0.20, air=0.16),
+    "Gospel": dict(sub_bass=0.12, bass=0.16, low_mid=0.17, mid=0.21, high_mid=0.18, air=0.16),
+    "Funk": dict(sub_bass=0.12, bass=0.17, low_mid=0.15, mid=0.18, high_mid=0.20, air=0.18),
+    "Ambient": dict(sub_bass=0.10, bass=0.14, low_mid=0.16, mid=0.18, high_mid=0.20, air=0.22),
+    "Trap": dict(sub_bass=0.28, bass=0.20, low_mid=0.10, mid=0.12, high_mid=0.15, air=0.15),
+    "R&B": dict(sub_bass=0.18, bass=0.18, low_mid=0.15, mid=0.17, high_mid=0.17, air=0.15),
+    "Blues": dict(sub_bass=0.10, bass=0.15, low_mid=0.18, mid=0.22, high_mid=0.19, air=0.16),
+    "Reggae": dict(sub_bass=0.22, bass=0.20, low_mid=0.14, mid=0.15, high_mid=0.15, air=0.14),
+    "Afrobeats": dict(sub_bass=0.20, bass=0.19, low_mid=0.13, mid=0.15, high_mid=0.17, air=0.16),
+    "K-Pop": dict(sub_bass=0.16, bass=0.17, low_mid=0.13, mid=0.16, high_mid=0.19, air=0.19),
 }
 
 DEVIATION_THRESHOLD = 0.05  # ratio points (e.g. 0.05 = 5 percentage points) before correcting

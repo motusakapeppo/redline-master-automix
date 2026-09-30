@@ -1,21 +1,42 @@
 """Canonical genre registry.
 
-The six genre names the engine knows about, in the same order as
+The genre names the engine knows about, in the same order as
 redline.analysis.genre._PROFILES (the profile table itself stays where it
 is -- this module is the single source of truth for *names*, so callers
 that only need to validate or resolve a genre string don't have to import
 the analysis package). tests/test_registry.py locks the two together.
+
+The first six are the original registry (unchanged); the rest were added in
+Wave 1 / Track C1 and are appended in the same order as their _PROFILES
+entries.
 """
 
 from __future__ import annotations
 
 GENRE_NAMES: tuple[str, ...] = (
+    # Original six -- order and values frozen.
     "EDM / Urban",
     "Pop / Rock",
     "Acoustic / Classical",
     "Jazz / Vintage",
     "Hip-Hop",
     "Balanced",
+    # Wave 1 / Track C1 expansion.
+    "Lo-Fi",
+    "Cinematic",
+    "Drum & Bass",
+    "Reggaeton",
+    "Metal",
+    "Country",
+    "Gospel",
+    "Funk",
+    "Ambient",
+    "Trap",
+    "R&B",
+    "Blues",
+    "Reggae",
+    "Afrobeats",
+    "K-Pop",
 )
 
 

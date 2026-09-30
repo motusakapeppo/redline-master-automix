@@ -8,13 +8,22 @@ import numpy as np
 from pedalboard import Pedalboard, Reverb, Delay
 
 # Genre convention: EDM/Hip-Hop stay drier/tighter, Pop/Acoustic/Jazz get more space.
-DRY_GENRES = ("EDM", "Hip-Hop")
+# Wave 1 / Track C1: expanded to the club/rhythmic genres that want a tight,
+# dry lead (substring match, so "Drum & Bass"/"Reggaeton"/"Afrobeats" all hit).
+DRY_GENRES = ("EDM", "Hip-Hop", "Trap", "Drum & Bass", "Reggaeton", "Afrobeats")
+# Genres that deliberately want more space than the default wet amount.
+WET_GENRES = ("Ambient", "Cinematic", "Gospel")
 
 
 def genre_space_amount(genre_name: str, aggressiveness: int) -> float:
     """0..1 send amount for the lead vocal, informed by genre convention and
     the wizard's aggressiveness answer (more aggressive -> drier/tighter)."""
-    base = 0.10 if any(g in genre_name for g in DRY_GENRES) else 0.22
+    if any(g in genre_name for g in DRY_GENRES):
+        base = 0.10
+    elif any(g in genre_name for g in WET_GENRES):
+        base = 0.30
+    else:
+        base = 0.22
     aggressiveness_pull = (aggressiveness - 3) * 0.02  # +/-0.04 across the 1..5 range
     return float(np.clip(base - aggressiveness_pull, 0.04, 0.35))
 
