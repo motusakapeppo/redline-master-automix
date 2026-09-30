@@ -369,6 +369,9 @@ window.addEventListener('error', function(e) {
             <input type="checkbox" id="plugin-hosting-enable" onchange="togglePluginHosting()">
             Hosting plugin
           </label>
+          <input type="text" id="plugin-path" class="plugin-path-input"
+                 placeholder="Percorso plugin (.vst3/.dll)&hellip;" aria-label="Percorso plugin esterno">
+          <button id="plugin-probe" class="btn plugin-ctl-btn" onclick="probePluginPath()">Prova plugin</button>
         </div>
         <div id="plugin-panel-body" class="plugin-panel-body">
           <div class="plugin-panel-empty">

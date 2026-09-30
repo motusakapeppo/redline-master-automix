@@ -2089,6 +2089,32 @@ select { width: auto; }
   box-shadow: 0 0 0 2px rgba(255, 0, 63, 0.18);
 }
 
+/* External plugin path input -- same visual language as the processor select
+   so the hosting row reads as one control group. */
+.plugin-controls .plugin-path-input {
+  flex: 1 1 170px;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.plugin-controls .plugin-path-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 0, 63, 0.18);
+}
+
+.plugin-controls .plugin-path-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
 .plugin-ctl-btn {
   margin: 0;
   padding: 5px 10px;

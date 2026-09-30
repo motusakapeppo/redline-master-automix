@@ -161,6 +161,16 @@
     set_character_spec: function () { return Promise.resolve({ ok: true, spec: {} }); },
     enable_processor_variants: function () { return Promise.resolve({ ok: true }); },
     enable_plugin_hosting: function () { return Promise.resolve({ ok: true }); },
+    probe_plugin: function (path) {
+      return Promise.resolve(path
+        ? { ok: true, info: { name: "QA Test Plugin", parameters: [
+            { name: "gain", label: "Gain", raw_value: 0.0 },
+            { name: "mix", label: "Mix", raw_value: 1.0 },
+          ] } }
+        : { ok: false, error: "percorso vuoto" });
+    },
+    set_plugin_path: function (path) { return Promise.resolve({ ok: true, path: path || "" }); },
+    get_plugin_path: function () { return Promise.resolve({ ok: true, path: "" }); },
 
     // System
     system_ready: function () { return Promise.resolve(null); },

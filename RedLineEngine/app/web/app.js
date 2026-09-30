@@ -1920,6 +1920,38 @@ async function togglePluginHosting() {
   });
 }
 
+// Probes an external plugin path (read-only: loads + describes, never wired
+// into the render here). On success it stores the path via set_plugin_path so
+// a subsequent render actually hosts it, shows the real parameter list, and
+// enables hosting. Every call is guarded -- an older bridge or a bad path
+// degrades to a chip message, never an error.
+async function probePluginPath() {
+  return _busyRun(document.getElementById("plugin-probe"), async () => {
+    const input = document.getElementById("plugin-path");
+    const path = input ? input.value.trim() : "";
+    if (!path) {
+      addEventChip("\u26A0\uFE0F Indica il percorso di un plugin (.vst3/.dll).");
+      return;
+    }
+    const res = await _bridgeCall("probe_plugin", path);
+    if (!(res && res.ok && res.info)) {
+      addEventChip(`\u26A0\uFE0F Plugin non caricabile: ${res && res.error ? res.error : "nessuna info"}`);
+      return;
+    }
+    await _bridgeCall("set_plugin_path", path);
+    await _bridgeCall("enable_plugin_hosting", true);
+    const toggle = document.getElementById("plugin-hosting-enable");
+    if (toggle) toggle.checked = true;
+    if (typeof RedlinePluginState !== "undefined") {
+      renderPluginPanel(RedlinePluginState.pluginViewModel({
+        name: res.info.name || path.split(/[\\/]/).pop(),
+        parameters: res.info.parameters || [],
+      }));
+    }
+    addEventChip(`\u{1F50C} Plugin ospitato: ${res.info.name || path}`);
+  });
+}
+
 // Maps a built-in character processor name to the rack module it most
 // directly affects, so a character_processor event pulses the right card.
 const PROCESSOR_MODULE_MAP = {
