@@ -58,6 +58,8 @@ _NEW_PUBLIC_METHODS = {
     "get_plugin_path",
     "set_plugin_path",
     "cancel_run",
+    "enable_processor_variants",
+    "enable_plugin_hosting",
 }
 
 
@@ -218,3 +220,37 @@ def test_cancel_run_sets_event(api):
     result = api.cancel_run()
     assert result == {"ok": True, "cancelling": True}
     assert api._cancel_event.is_set() is True
+
+
+# ---------------------------------------------------------------------------
+# enable_processor_variants / enable_plugin_hosting (runtime flag toggles)
+# ---------------------------------------------------------------------------
+
+def test_enable_processor_variants_toggles_flag(api):
+    from redline import config
+
+    original = config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS")
+    try:
+        assert api.enable_processor_variants(True) == {"ok": True, "enabled": True}
+        assert config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS") is True
+        assert api.enable_processor_variants(False) == {"ok": True, "enabled": False}
+        assert config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS") is False
+    finally:
+        config.set_override("ENABLE_BUILTIN_PROCESSOR_VARIANTS", original)
+
+
+def test_enable_plugin_hosting_toggles_flag(api):
+    from redline import config
+
+    original = config.is_enabled("ENABLE_PLUGIN_HOSTING")
+    try:
+        assert api.enable_plugin_hosting(True) == {"ok": True, "enabled": True}
+        assert config.is_enabled("ENABLE_PLUGIN_HOSTING") is True
+    finally:
+        config.set_override("ENABLE_PLUGIN_HOSTING", original)
+
+
+def test_enable_toggles_never_raise_on_garbage(api):
+    # bool() coercion accepts anything; must never raise.
+    assert api.enable_processor_variants("yes")["ok"] is True
+    assert api.enable_plugin_hosting(None)["ok"] is True

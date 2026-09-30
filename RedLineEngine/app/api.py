@@ -409,6 +409,32 @@ class Api:
         self._cancel_event.set()
         return {"ok": True, "cancelling": True}
 
+    def enable_processor_variants(self, enabled: bool) -> dict:
+        """Runtime toggle for the built-in character-processor variants.
+
+        Additive, in-memory override (``config.set_override``) so the GUI can
+        turn the feature on/off without editing ``.flags.json``. Never raises;
+        the override is lost on restart (the file default is unaffected)."""
+        try:
+            config.set_override("ENABLE_BUILTIN_PROCESSOR_VARIANTS", bool(enabled))
+            return {"ok": True, "enabled": bool(enabled)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("enable_processor_variants fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def enable_plugin_hosting(self, enabled: bool) -> dict:
+        """Runtime toggle for external VST/AU plugin hosting.
+
+        Same additive, in-memory override semantics as
+        ``enable_processor_variants``. Hosting an untrusted plugin is the
+        user's explicit, opt-in choice; the file default stays OFF."""
+        try:
+            config.set_override("ENABLE_PLUGIN_HOSTING", bool(enabled))
+            return {"ok": True, "enabled": bool(enabled)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("enable_plugin_hosting fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
     def _cancelled(self) -> bool:
         """True if a cancel was requested. Cheap, never raises."""
         try:
