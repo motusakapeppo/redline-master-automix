@@ -31,7 +31,7 @@ import numpy as np
 
 from .vocalstack import EqCut
 from .analysis.loudness import crest_factor, spectral_band_energies
-from .textmatch import contains_any
+from .textmatch import contains_any, contains_word
 
 STRINGS = "strings"
 GUITAR_ACOUSTIC = "guitar_acoustic"
@@ -48,6 +48,11 @@ BELL = "bell"
 PLUCK = "pluck"
 VOCAL_CHOP = "vocal_chop"
 FX = "fx"
+ACCORDION = "accordion"
+HARPSICHORD = "harpsichord"
+FOLK_PLUCK = "folk_pluck"
+WORLD_STRINGS = "world_strings"
+WORLD_WINDS = "world_winds"
 GENERIC = "generic"  # fallback -- the old one-size-fits-all treatment, kept as a safe default
 
 # Naming library: filename-hint-first classification, deliberately wide and
@@ -99,6 +104,7 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
         # brand names are unambiguous on their own.
         "lead gtr", "rhythm gtr", "riff gtr", "guitar riff", "palm mute", "telecaster",
         "stratocaster", "les paul", "humbucker", "chitarra ritmica", "chitarra solista",
+        "lead guitar",
     ),
     KEYS: (
         "piano", "pno", "keys", "kbd", "tastiera", "tastiere", "pianoforte",
@@ -116,6 +122,9 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
         "organ", "organo", "hammond", "b3", "b-3", "leslie", "drawbar",
         "church organ", "pipe organ", "farfisa", "vox organ", "vox continental",
         "combo organ", "gospel organ", "organo a canne", "organo da chiesa",
+        # Sustained reed-organ family (harmonium/pump/reed organ) shares the
+        # organ's sustained, mid-present, slow-swell tonal character.
+        "harmonium", "pump organ", "reed organ", "armonium",
     ),
     BRASS: (
         "tromba", "trumpet", "tpt", "trpt", "horn", "horns", "french horn", "fr horn",
@@ -131,6 +140,14 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
     # body and colloquial "horn section" grouping) where trumpet/trombone are
     # honk-and-bite; lumping them together meant a flute got a trumpet's
     # bite-EQ and fast attack, which reads as harsh/unnatural.
+    # WORLD_WINDS (below) sits before WOODWINDS so its specific "pan flute"/
+    # "irish flute" phrases win over WOODWINDS' bare "flute" substring hint.
+    WORLD_WINDS: (
+        "duduk", "shakuhachi", "bansuri", "ney", "ocarina", "tin whistle", "low whistle",
+        "irish flute", "pan flute", "panflute", "quena", "zampoña", "bagpipes",
+        "cornamusa", "zampogna", "uilleann", "gaita", "hulusi", "bawu", "suona",
+        "dizi", "xiao",
+    ),
     WOODWINDS: (
         "flauto", "flute", "flt", "piccolo", "picc", "ottavino", "alto flute", "bass flute",
         # "clar" deliberately excluded -- substring of "clarity"/"declare",
@@ -208,6 +225,12 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
         "square lead", "saw lead", "acid lead", "tb303", "tb-303", "trance lead",
         "hardstyle lead", "festival lead", "detune lead", "unison lead", "mono lead",
         "poly lead", "solo synth", "synth solo", "riff synth", "linea melodica",
+        # Bare "lead" (word-matched) -- a stem named just "Lead" is a synth
+        # lead line. "lead guitar" is protected above in GUITAR_ELECTRIC.
+        "lead",
+        # Monophonic expressive lead -- a theremin is a single continuous
+        # pitch like a sustained synth lead, not a pad or a pluck.
+        "theremin",
     ),
     # Short, plucky, fast-decaying synth elements (arps, plucks, stabs) --
     # split from SYNTH_LEAD: a sustained lead line wants to hold its note and
@@ -236,12 +259,58 @@ _NAME_HINTS: dict[str, tuple[str, ...]] = {
         "spinback", "tape stop", "filter sweep fx", "cinematic hit",
         "effetto", "effetti", "transizione", "salita", "discesa", "impatto", "spazzata",
     ),
+    # Free-reed family (accordion/harmonica/melodica/bandoneon) -- sustained,
+    # mid-present, gentle-fast compressor, moderate reverb. Distinct from
+    # ORGAN (which covers the sustained reed-organ/harmonium side): accordion/
+    # harmonica sit more forward and melodic than a held organ bed.
+    ACCORDION: (
+        "accordion", "fisarmonica", "harmonica", "armonica", "melodica",
+        "bandoneon", "bandoneón", "concertina", "musette", "garmon",
+    ),
+    # Plucked-bright keyboard string (harpsichord/clavichord/spinet) --
+    # plucky attack, thin low end, fast compressor, dry. Deliberately NOT
+    # lumped with KEYS (piano) whose sustained felt/hammer tone wants a
+    # different low-mid treatment, nor with STRINGS (bowed swell).
+    HARPSICHORD: (
+        "harpsichord", "clavicembalo", "cembalo", "clavichord", "spinet",
+        "virginal", "clavecin",
+    ),
+    # Bright plucked folk strings (banjo/mandolin/ukulele/dobro/dulcimer) --
+    # fast attack, presence ~3kHz, light reverb. Distinct from GUITAR_ACOUSTIC
+    # (which targets the fuller-bodied steel/nylon guitar) and from PLUCK
+    # (synth arps/plucks): these are acoustic, present, and twangy.
+    FOLK_PLUCK: (
+        "banjo", "mandolin", "mandolino", "ukulele", "uke", "lap steel", "pedal steel",
+        "dobro", "resonator guitar", "dulcimer", "cavaquinho", "autoharp", "zither",
+        "hammered dulcimer",
+    ),
+    # Bowed/plucked world strings (erhu/oud/bouzouki/balalaika/kora...) --
+    # gentle compression, some reverb. NOTE: koto/guzheng/sitar/shamisen stay
+    # in PLUCK (existing behavior, don't break test_instrumentstack); only
+    # genuinely-new tokens are listed here.
+    WORLD_STRINGS: (
+        "erhu", "oud", "bouzouki", "balalaika", "kora", "ngoni", "sarangi", "sarod",
+        "pipa", "santoor", "morin khuur", "kamancheh", "rebab", "veena",
+    ),
     # Bare "guitar"/"gtr"/"chitarra" with no acoustic/electric qualifier defaults
     # to electric (the more common case in pop/rock stem packs) via the
     # fallback pass below, not listed here to keep acoustic/electric detection
     # unambiguous when the file *does* specify.
 }
 _BARE_GUITAR_HINTS = ("guitar", "gtr", "git", "guit", "chitarra")
+
+# Short tokens that false-positive as substrings inside unrelated longer
+# words ("organic" contains "organ", "sharp" contains "harp", "merchant"
+# contains "chant", "umbrella" contains "bell", "padding" contains "pad",
+# "monkeys" contains "keys", "warp" contains "arp"). These must match only on
+# word boundaries (textmatch.contains_word), while every other hint in
+# _NAME_HINTS keeps the forgiving substring semantics (contains_any). A hint
+# token listed here is matched as a standalone word, never as a substring.
+_WORD_HINTS: frozenset[str] = frozenset({
+    "organ", "harp", "bell", "pad", "keys", "arp", "arps", "chant", "coro", "cori",
+    "mmh", "ooh", "aahs", "wash", "drone", "swell", "clav", "clavi",
+    "b3", "oud", "ney", "uke", "lead",
+})
 
 
 @dataclass
@@ -521,15 +590,105 @@ RECIPES: dict[str, InstrumentRecipe] = {
         comp_makeup_db=1.0,
         reverb_send_bias=0.7,
     ),
+    # Free-reed family (accordion/harmonica/melodica/bandoneon): sustained,
+    # mid-present, gentle-fast compressor, moderate reverb. A light low-mid
+    # dip tames the reed body boxiness, and a midrange presence lift keeps
+    # the reed character articulate without the hard bite of brass.
+    ACCORDION: InstrumentRecipe(
+        hpf_hz=120.0,
+        comp_ratio=2.2,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=12.0,
+        comp_release_ms=160.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=350.0, gain_db=-1.5, q=1.0, kind="peak"),  # reed body boxiness
+            EqCut(freq=2000.0, gain_db=1.5, q=1.0, kind="peak"),  # reed presence
+        ],
+        reverb_send_bias=1.1,
+    ),
+    # Harpsichord/clavichord/spinet: plucky-bright attack, thin low end, fast
+    # compressor, dry. The pluck is short and articulate -- fast attack/early
+    # release keep every note distinct; a low-mid cut removes the boxy body a
+    # plucked keyboard string doesn't have.
+    HARPSICHORD: InstrumentRecipe(
+        hpf_hz=180.0,
+        comp_ratio=2.5,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=3.0,
+        comp_release_ms=80.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=400.0, gain_db=-2.0, q=1.0, kind="peak"),  # thin low end
+            EqCut(freq=4000.0, gain_db=1.5, q=1.0, kind="peak"),  # pluck definition
+        ],
+        reverb_send_bias=0.7,
+    ),
+    # Bright plucked folk strings (banjo/mandolin/ukulele/dobro/dulcimer):
+    # fast attack, presence ~3kHz, light reverb. Twangy and present -- a
+    # 3kHz lift brings out the pick attack, and a light reverb keeps it
+    # from sounding dry without blurring the pluck articulation.
+    FOLK_PLUCK: InstrumentRecipe(
+        hpf_hz=110.0,
+        comp_ratio=2.8,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=4.0,
+        comp_release_ms=100.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=3000.0, gain_db=1.5, q=1.0, kind="peak"),  # pick attack/presence
+            EqCut(freq=9000.0, gain_db=1.0, q=0.7, kind="high_shelf"),  # air
+        ],
+        reverb_send_bias=0.95,
+    ),
+    # Bowed/plucked world strings (erhu/oud/bouzouki/balalaika/kora...):
+    # gentle compression, some reverb. Similar to STRINGS but with a gentler
+    # scratch-cut and a touch more room, since these instruments are
+    # traditionally recorded/mixed with a natural ambient bloom.
+    WORLD_STRINGS: InstrumentRecipe(
+        hpf_hz=140.0,
+        comp_ratio=2.0,
+        comp_threshold_db=-20.0,
+        comp_attack_ms=18.0,
+        comp_release_ms=220.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=3200.0, gain_db=-1.5, q=1.2, kind="peak"),  # scratch/harshness
+            EqCut(freq=9000.0, gain_db=1.0, q=0.7, kind="high_shelf"),  # air
+        ],
+        reverb_send_bias=1.25,
+    ),
+    # World winds (duduk/shakuhachi/bansuri/bagpipes...): breathy-airy like
+    # WOODWINDS but distinct -- light compression (breath control, not punch)
+    # and an air shelf; slightly gentler mud cut than the Western woodwind
+    # recipe, since many of these carry a darker, reedy body that a hard cut
+    # would thin unnaturally.
+    WORLD_WINDS: InstrumentRecipe(
+        hpf_hz=180.0,
+        comp_ratio=2.0,
+        comp_threshold_db=-18.0,
+        comp_attack_ms=15.0,
+        comp_release_ms=170.0,
+        comp_makeup_db=2.5,
+        extra_eq=[
+            EqCut(freq=450.0, gain_db=-1.0, q=1.0, kind="peak"),  # breath/body mud
+            EqCut(freq=7500.0, gain_db=1.5, q=0.7, kind="high_shelf"),  # air/breathiness
+        ],
+        reverb_send_bias=1.2,
+    ),
 }
 
 
 def _name_hint(name: str) -> str | None:
-    # Substring semantics (textmatch.contains_any), deliberately NOT
-    # word-boundary yet -- switching this to word mode is a later task;
-    # behavior here must stay identical for now.
+    # Word-boundary matching for the short/dangerous tokens (see _WORD_HINTS)
+    # so they don't fire inside unrelated longer words; substring matching
+    # for everything else (unambiguous multi-char phrases are safe).
     for instrument, hints in _NAME_HINTS.items():
-        if contains_any(name, hints):
+        word_hints = tuple(h for h in hints if h in _WORD_HINTS)
+        substr_hints = tuple(h for h in hints if h not in _WORD_HINTS)
+        if word_hints and contains_word(name, word_hints):
+            return instrument
+        if substr_hints and contains_any(name, substr_hints):
             return instrument
     if contains_any(name, _BARE_GUITAR_HINTS):
         # "acoustic"/"acustic" can appear as its own token separated by an
@@ -581,7 +740,10 @@ def classify_instrument(name: str, audio: np.ndarray, sr: int) -> str:
 # instrument's own recipe in mixengine.py -- additive/multiplicative, never
 # replacing the base recipe's own tuning.
 _BRIGHT_SYNTH_KINDS = frozenset({SYNTH_LEAD, SYNTH_PAD, PLUCK, VOCAL_CHOP, FX})
-_WARM_ACOUSTIC_KINDS = frozenset({STRINGS, BRASS, WOODWINDS, KEYS, ORGAN, BELL, GUITAR_ACOUSTIC, CHOIR})
+_WARM_ACOUSTIC_KINDS = frozenset({
+    STRINGS, BRASS, WOODWINDS, KEYS, ORGAN, BELL, GUITAR_ACOUSTIC, CHOIR,
+    ACCORDION, HARPSICHORD, FOLK_PLUCK, WORLD_STRINGS, WORLD_WINDS,
+})
 
 
 def genre_bias(instrument_kind: str, genre_name: str) -> tuple[float, float]:

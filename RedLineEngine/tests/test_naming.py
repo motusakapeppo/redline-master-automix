@@ -2,6 +2,7 @@
 a user's production session ("Come i Tuoni"), so a real project's naming
 convention is what defines correctness here, not a synthetic example."""
 
+import redline.naming as naming
 from redline.naming import parse_stem
 
 
@@ -126,3 +127,108 @@ def test_808_is_recognized_as_bass():
     # applied that guts the sub-bass content it exists for.
     d = parse_stem("Intro - Stems Instrumental/808")
     assert d.role == "bass"
+
+
+# --- A1: word-boundary hardening + dead-code removal -----------------------
+
+
+def test_short_tokens_not_matched_inside_unrelated_words():
+    # "perc" inside "Percent"/"perception" must not read as a drum hint.
+    assert parse_stem("Percent Strings").role != "drums"
+    # "voice" inside "invoice" must not read as a vocal hint.
+    assert parse_stem("Invoice").role != "vocal"
+    # "str" inside "Spirit"/"Strong" must not read as a verse-section hint.
+    assert parse_stem("Vocal Spirit").section is None
+    assert parse_stem("Vocal Strong").section is None
+    # "low" inside "Slow" must not read as a low-register hint.
+    assert parse_stem("Vocal Slow Jam").register != "low"
+
+
+def test_harmonies_is_a_double():
+    # "harmony" alone never matched the plural "Harmonies" -- a real gap.
+    assert parse_stem("Vocal Harmonies").layer == "double"
+
+
+def test_main_hints_removed():
+    # MAIN_HINTS was dead code (never read); "Main"/"Lead" always yielded
+    # layer="primary" because no DOUBLE_HINTS token matched them.
+    assert not hasattr(naming, "MAIN_HINTS")
+    assert parse_stem("Vocal Main").layer == "primary"
+    assert parse_stem("Vocal Lead").layer == "primary"
+
+
+# --- A2: DAW conventions + kit elements ------------------------------------
+
+
+def test_daw_numeric_prefixes():
+    # Leading DAW track numbers ("01_Kick", "02 - Snare") and trailing take
+    # numbers ("Kick_01") must not hide the role hint.
+    assert parse_stem("01_Kick").role == "drums"
+    assert parse_stem("Kick_01").role == "drums"
+
+
+def test_kit_elements_are_drums():
+    for name in ("HiHat", "Crash", "Ride", "Tom", "Clap", "OH"):
+        assert parse_stem(name).role == "drums", name
+
+
+# --- A3: multilingual role hints -------------------------------------------
+
+
+def test_multilingual_roles():
+    assert parse_stem("Bateria").role == "drums"
+    assert parse_stem("Caisse claire").role == "drums"
+    assert parse_stem("Schlagzeug").role == "drums"
+    assert parse_stem("Voz").role == "vocal"
+    assert parse_stem("Voix").role == "vocal"
+    assert parse_stem("Stimme").role == "vocal"
+    assert parse_stem("Bajo").role == "bass"
+    assert parse_stem("Basse").role == "bass"
+
+
+def test_multilingual_collisions_do_not_break_existing_registers():
+    # "Basse" (FR bass) and "Bassa" (IT low register) are near-identical;
+    # the register reading must still win for a vocal take named "Bassa".
+    bassa = parse_stem("Vocal Stems/INTRO REC - AUTOTUNE_Db. Bassa - Autotune - L")
+    assert bassa.role == "vocal"
+    assert bassa.register == "low"
+    # A bare "Basse" is a bass instrument, not a vocal register.
+    assert parse_stem("Basse").role == "bass"
+
+
+# --- A4: sections, pan, link tokens ----------------------------------------
+
+
+def test_new_sections():
+    assert parse_stem("Vocal Prechorus").section == "prechorus"
+    assert parse_stem("Vocal Pre-Chorus").section == "prechorus"
+    assert parse_stem("Vocal Intro").section == "intro"
+    assert parse_stem("Vocal Outro").section == "outro"
+    assert parse_stem("Vocal Drop").section == "drop"
+    assert parse_stem("Vocal Breakdown").section == "breakdown"
+    assert parse_stem("Vocal Refrain").section == "refrain"
+    assert parse_stem("Vocal Interlude").section == "interlude"
+    assert parse_stem("Vocal Coda").section == "coda"
+    assert parse_stem("Vocal Tag").section == "tag"
+
+
+def test_explicit_center_pan():
+    assert parse_stem("Vocal Center").pan == 0.0
+    assert parse_stem("Vocal Centre").pan == 0.0
+    assert parse_stem("Vocal Mono").pan == 0.0
+
+
+def test_l1_r1_pan():
+    assert parse_stem("Vocal L1").pan < 0
+    assert parse_stem("Vocal R1").pan > 0
+    assert parse_stem("Vocal L100").pan < 0
+    assert parse_stem("Vocal R100").pan > 0
+
+
+def test_new_link_tokens():
+    assert parse_stem("Kick_Close").link_id == parse_stem("Kick_Far").link_id
+    assert parse_stem("Kick_Near").link_id is not None
+    assert parse_stem("Gtr_Mic1").link_id == parse_stem("Gtr_Mic2").link_id
+    assert parse_stem("Bass_Amp").link_id is not None
+    assert parse_stem("Gtr_Front").link_id == parse_stem("Gtr_Back").link_id
+    assert parse_stem("Bass_DI").link_id is not None
