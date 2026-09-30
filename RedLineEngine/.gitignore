@@ -19,3 +19,6 @@ reference_tracks/*/*.ogg
 # NO MIX/MIX/MASTERING audio player -- regenerated every render, never
 # something to commit.
 app/web/_preview/
+
+# Transient screenshots written by scripts/qa/run.js
+scripts/qa/shots/*.png
