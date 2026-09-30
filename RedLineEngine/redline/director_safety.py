@@ -122,8 +122,14 @@ def _mentions_acoustic_term(user_text: str) -> bool:
 
 
 def _section_type(name: str) -> str | None:
-    """"chorus_1" -> "chorus", "verse_3" -> "verse", "intro" -> "intro"."""
-    for section_type in list(SECTION_HINTS.keys()) + ["intro"]:
+    """"chorus_1" -> "chorus", "verse_3" -> "verse", "intro" -> "intro".
+
+    Longest key first: SECTION_HINTS now contains keys that prefix-collide
+    ("breakdown" vs "break", "prechorus" vs "chorus"), so a naive
+    first-match iteration could resolve "breakdown_1" to the shorter
+    "break". Sorting by descending length guarantees the most specific
+    section type wins."""
+    for section_type in sorted(SECTION_HINTS.keys(), key=len, reverse=True):
         if name.startswith(section_type):
             return section_type
     return None

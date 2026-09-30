@@ -3,6 +3,7 @@ from redline.director_safety import (
     clamp_params,
     validate_dsp_automation,
     _mentioned_section_type,
+    _section_type,
 )
 from redline.llm_classifier import BUS_CATEGORIES
 
@@ -98,3 +99,12 @@ def test_mentioned_section_type_ignores_substring_false_positives():
 def test_mentioned_section_type_matches_real_section_words():
     assert _mentioned_section_type("nella strofa") == "verse"
     assert _mentioned_section_type("nel ritornello") == "chorus"
+
+
+def test_director_safety_longest_section_match():
+    # New SECTION_HINTS keys can prefix-collide ("prechorus" vs a shorter
+    # key); the longest matching key must win so "prechorus_1" resolves to
+    # "prechorus", not a shorter prefix.
+    assert _section_type("prechorus_1") == "prechorus"
+    assert _section_type("chorus_1") == "chorus"
+    assert _section_type("breakdown_1") == "breakdown"
