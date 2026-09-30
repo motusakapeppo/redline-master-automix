@@ -13,14 +13,39 @@
  *   node scripts/qa/run.js --scenario smoke --fixture=tests/fixtures/events_full.jsonl
  *   node scripts/qa/run.js --scenario smoke --shots=docs/screenshots
  *   node scripts/qa/run.js --scenario smoke --engine=edge --budget=15000 --keep-temp
+ *   node scripts/qa/run.js --scenario smoke --phase=early   # 10_overhaul_early.png
+ *   node scripts/qa/run.js --scenario smoke --phase=mid     # 11_overhaul_mid.png
+ *   node scripts/qa/run.js --scenario smoke --phase=done    # 12_overhaul_done.png
+ *   node scripts/qa/run.js --scenario edge                  # edge/recovery suite
  *
  * Options:
- *   --scenario=<name>   Scenario to run (only "smoke" is implemented). Default: smoke.
+ *   --scenario=<name>   Scenario to run: "smoke" (fixture replay + 7 assertions)
+ *                       or "edge" (double-submit / cancel / empty states /
+ *                       slider readouts + console-error check, 5 assertions;
+ *                       behavioral, so it needs no fixture file). Default: smoke.
  *   --engine=<name>     Browser engine; only "edge" is supported. Default: edge.
  *   --fixture=<path>    Fixture file: .jsonl (one {"kind","payload"} per line,
  *                       as written by scripts/qa/gen_fixtures.py) or .json
  *                       (array of the same records). Omit to use the tiny
  *                       built-in inline fixture inside scripts/qa/inpage.js.
+ *   --upto=<n>          Replay only the FIRST n fixture records before
+ *                       asserting/screenshotting (phase-progress shots).
+ *                       Optional; default = all records (existing behavior).
+ *                       The in-page runner switches to a phase-specific
+ *                       assertion set when n < the full fixture length, so a
+ *                       truncated replay still publishes a PASS/FAIL verdict.
+ *   --phase=<name>      Convenience alias for the three overhaul progress
+ *                       shots; sets --upto and the output filename:
+ *                         early -> --upto=4  -> docs/screenshots/10_overhaul_early.png
+ *                         mid   -> --upto=8  -> docs/screenshots/11_overhaul_mid.png
+ *                         done  -> --upto=all-> docs/screenshots/12_overhaul_done.png
+ *                       (explicit --upto wins over the phase's default cut).
+ *                       What each phase replays (built-in fixture, 17 records):
+ *                         early: records 0-3 — load+analyze steps only; no
+ *                                stem rows yet, plugin panel still empty.
+ *                         mid:   records 0-7 — mix phase started; 'vocals'
+ *                                stem row exists, EQ + compressor live.
+ *                         done:  all 17 — full replay, full smoke set.
  *   --shots=<dir>       Directory to copy the screenshot into. Default: docs/screenshots.
  *   --budget=<ms>       Chromium --virtual-time-budget. Default: 15000.
  *   --timeout=<ms>      Hard wall-clock timeout for the Edge process. Default: 120000.
@@ -89,20 +114,30 @@ function parseArgs(argv) {
     scenario: "smoke",
     engine: "edge",
     fixture: null,
+    upto: null, // null = replay every fixture record (existing behavior)
+    phase: null,
     shots: path.join(REPO_ROOT, "docs", "screenshots"),
     budget: 15000,
     timeout: 120000,
     keepTemp: false,
   };
-  for (const arg of argv.slice(2)) {
-    const m = /^--([^=]+)(?:=(.*))?$/.exec(arg);
+  const args = argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const m = /^--([^=]+)(?:=(.*))?$/.exec(args[i]);
     if (!m) continue;
     const key = m[1];
-    const value = m[2];
+    let value = m[2];
+    // Support both "--key=value" and "--key value" (the latter only when the
+    // next token is not itself a flag).
+    if (value === undefined && i + 1 < args.length && !/^--/.test(args[i + 1])) {
+      value = args[++i];
+    }
     switch (key) {
       case "scenario": opts.scenario = value || "smoke"; break;
       case "engine": opts.engine = value || "edge"; break;
       case "fixture": opts.fixture = value ? path.resolve(process.cwd(), value) : null; break;
+      case "upto": opts.upto = value ? parseInt(value, 10) : null; break;
+      case "phase": opts.phase = value || null; break;
       case "shots": opts.shots = path.resolve(process.cwd(), value || "docs/screenshots"); break;
       case "budget": opts.budget = parseInt(value, 10) || 15000; break;
       case "timeout": opts.timeout = parseInt(value, 10) || 120000; break;
@@ -111,6 +146,32 @@ function parseArgs(argv) {
     }
   }
   return opts;
+}
+
+// Phase-progress shots: each phase is a cut point into the fixture plus a
+// distinct output filename. "done" replays everything (upto = null).
+const PHASES = {
+  early: { upto: 4, shot: "10_overhaul_early.png" },
+  mid: { upto: 8, shot: "11_overhaul_mid.png" },
+  done: { upto: null, shot: "12_overhaul_done.png" },
+};
+
+// Resolves --phase/--upto into { upto, shotName }. An explicit --upto always
+// wins over the phase's default cut; without either, the shot keeps the
+// historical "<scenario>.png" name and the full replay. A bare --upto (no
+// --phase) gets "<scenario>_upto<n>.png" so it can never clobber smoke.png.
+function resolvePhase(opts) {
+  const phase = opts.phase ? PHASES[opts.phase] : null;
+  if (opts.phase && !phase) {
+    throw new Error(`Unknown phase "${opts.phase}" (expected early|mid|done)`);
+  }
+  const explicitUpto = (opts.upto !== null && !isNaN(opts.upto)) ? opts.upto : null;
+  const upto = explicitUpto !== null ? explicitUpto : (phase ? phase.upto : null);
+  let shotName;
+  if (phase) shotName = phase.shot;
+  else if (explicitUpto !== null) shotName = `${opts.scenario}_upto${explicitUpto}.png`;
+  else shotName = `${opts.scenario}.png`;
+  return { upto, shotName };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +226,7 @@ function copyHarnessScripts(webRoot) {
   }
 }
 
-function writeBootLoader(webRoot, scenario) {
+function writeBootLoader(webRoot, scenario, upto, phaseName) {
   // document.write during parsing is synchronous and blocking, so both
   // scripts are guaranteed to execute before app_util.js/app.js (which sit
   // at the bottom of <body>).
@@ -173,6 +234,8 @@ function writeBootLoader(webRoot, scenario) {
     "/* __qa_boot.js — generated by scripts/qa/run.js. Do not edit. */",
     "(function () {",
     "  window.__QA_SCENARIO__ = " + JSON.stringify(scenario) + ";",
+    "  window.__QA_UPTO__ = " + (upto === null || upto === undefined ? "null" : String(upto)) + ";",
+    "  window.__QA_PHASE__ = " + JSON.stringify(phaseName || null) + ";",
     "  document.write('<script src=\"bridge_stub.js\"><\\/script>');",
     "  document.write('<script src=\"inpage.js\"><\\/script>');",
     "})();",
@@ -323,13 +386,18 @@ function parseVerdict(dom) {
 // Reporting
 // ---------------------------------------------------------------------------
 
-function printSummary(opts, parsed, shotDest, tempDir) {
+function printSummary(opts, parsed, shotDest, tempDir, phase) {
   const v = parsed.verdict;
   console.log("");
   console.log("=== RedLine QA harness ===");
   console.log(`scenario : ${opts.scenario}`);
   console.log(`engine   : ${opts.engine}`);
   console.log(`fixture  : ${opts.fixture || "(built-in inline fixture)"}`);
+  if (phase && phase.upto !== null) {
+    console.log(`phase    : ${opts.phase || "upto"} (replay first ${phase.upto} records)`);
+  } else if (opts.phase) {
+    console.log(`phase    : ${opts.phase} (full replay)`);
+  }
   console.log(`temp web : ${tempDir}`);
   console.log(`screenshot: ${shotDest}`);
   console.log("");
@@ -375,12 +443,20 @@ function printSummary(opts, parsed, shotDest, tempDir) {
 async function main() {
   const opts = parseArgs(process.argv);
 
-  if (opts.scenario !== "smoke") {
-    console.error(`Unknown scenario "${opts.scenario}" (only "smoke" is implemented).`);
+  if (opts.scenario !== "smoke" && opts.scenario !== "edge") {
+    console.error(`Unknown scenario "${opts.scenario}" (implemented: "smoke", "edge").`);
     process.exit(1);
   }
   if (opts.engine !== "edge") {
     console.error(`Unknown engine "${opts.engine}" (only "edge" is supported).`);
+    process.exit(1);
+  }
+
+  let phase;
+  try {
+    phase = resolvePhase(opts);
+  } catch (err) {
+    console.error(String(err && err.message ? err.message : err));
     process.exit(1);
   }
 
@@ -407,7 +483,7 @@ async function main() {
 
     // 2. Inject the QA boot loader at the top of <head>.
     copyHarnessScripts(tempDir);
-    writeBootLoader(tempDir, opts.scenario);
+    writeBootLoader(tempDir, opts.scenario, phase.upto, opts.phase);
     injectBootScript(tempDir);
 
     // 3. Optional fixture -> __qa_fixture.json in the temp web root.
@@ -427,7 +503,7 @@ async function main() {
 
     // 5. Screenshot -> shots dir.
     fs.mkdirSync(opts.shots, { recursive: true });
-    const shotDest = path.join(opts.shots, `${opts.scenario}.png`);
+    const shotDest = path.join(opts.shots, phase.shotName);
     if (fs.existsSync(run.shotPath)) {
       fs.copyFileSync(run.shotPath, shotDest);
     } else {
@@ -436,7 +512,7 @@ async function main() {
 
     // 6. Parse + report.
     const parsed = parseVerdict(run.dom);
-    const pass = printSummary(opts, parsed, shotDest, tempDir);
+    const pass = printSummary(opts, parsed, shotDest, tempDir, phase);
     exitCode = pass ? 0 : 1;
 
     if (!parsed.verdict && run.stderr) {

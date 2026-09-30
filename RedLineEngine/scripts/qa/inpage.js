@@ -13,9 +13,28 @@
  *     -> force the progress screen visible (real showScreen() + class fixup)
  *     -> load the fixture (window.__QA_FIXTURE__ | __qa_fixture.json | builtin)
  *     -> replay every record through the real onStep()/onEvent() globals
- *     -> run the smoke assertions
+ *        (or only the first window.__QA_UPTO__ records for phase shots)
+ *     -> run the smoke assertions (full replay) or the phase assertion set
+ *        (truncated replay)
  *     -> write {"pass":bool,"results":[...],"consoleErrors":[...]} into
  *        <pre id="__qa_result"> and set document.title = "QA:PASS|FAIL"
+ *
+ * Scenarios (window.__QA_SCENARIO__):
+ *   smoke (default) — fixture replay + 7 assertions (ids unchanged).
+ *   edge            — no replay; exercises double-submit single-flight,
+ *                     cancel path, intentional empty states and slider
+ *                     readouts (5 assertions).
+ *
+ * Phase shots (window.__QA_UPTO__ / window.__QA_PHASE__):
+ *   A truncated replay (upto < fixture length) swaps the two assertions that
+ *   need the full event stream (details_live_after_replay, plugin_panel) for
+ *   phase_progress + phase_dom_state, so early/mid cuts still publish a
+ *   meaningful 7-assertion verdict:
+ *     early (upto=4)   — load+analyze steps only; no stem rows yet, plugin
+ *                        panel still in its intentional empty state.
+ *     mid   (upto=8)   — mix phase started; 'vocals' stem row exists, EQ +
+ *                        compressor live, plugin panel still empty.
+ *     done  (upto=all) — full replay, full smoke assertion set.
  *
  * Zero dependencies. Plain script (no import/export). Never throws out of
  * the runner itself — a broken harness must still publish a FAIL verdict
@@ -72,6 +91,42 @@
       }
     } catch (err) { /* ignore */ }
   }, true);
+
+  // =====================================================================
+  // 1b. Bridge instrumentation — wrap the stub WITHOUT editing it.
+  //
+  // bridge_stub.js is loaded before this script (see __qa_boot.js), so
+  // window.pywebview.api already exists here. We:
+  //   - count every api method call in window.__QA_CALLS__ (per-method +
+  //     total), so the edge scenario can assert single-flight behavior;
+  //   - add a cancel_run stub when the bridge lacks one (the real bridge
+  //     gained cancel_run in the same overhaul; the stub predates it), so
+  //     the cancel path can be exercised end-to-end.
+  // The wrapper is transparent: same return value, same `this`.
+  // =====================================================================
+
+  window.__QA_CALLS__ = { total: 0, byMethod: {} };
+
+  function instrumentBridge() {
+    var api = window.pywebview && window.pywebview.api;
+    if (!api) return;
+
+    if (typeof api.cancel_run !== "function") {
+      api.cancel_run = function () { return Promise.resolve({ ok: true, cancelled: true }); };
+    }
+
+    Object.keys(api).forEach(function (name) {
+      var orig = api[name];
+      if (typeof orig !== "function") return;
+      api[name] = function () {
+        window.__QA_CALLS__.total++;
+        window.__QA_CALLS__.byMethod[name] = (window.__QA_CALLS__.byMethod[name] || 0) + 1;
+        return orig.apply(this, arguments);
+      };
+    });
+  }
+
+  instrumentBridge();
 
   // =====================================================================
   // 2. Built-in inline fixture (used when no --fixture is supplied).
@@ -165,12 +220,18 @@
   // 5. Replay — drive the REAL app globals exactly like app/api.py does.
   //    onStep(jsonString) / onEvent(jsonObject) (see api.py _narrate/_emit).
   //    Unknown or malformed records must be harmless.
+  //
+  //    `upto` (window.__QA_UPTO__) truncates the replay to the first N
+  //    records for phase-progress screenshots; null/undefined = all.
   // =====================================================================
 
-  function replay(records) {
-    var applied = { steps: 0, events: 0, skipped: 0 };
+  function replay(records, upto) {
+    var applied = { steps: 0, events: 0, skipped: 0, replayed: 0, total: records.length };
+    var limit = (typeof upto === "number" && isFinite(upto) && upto >= 0)
+      ? Math.min(upto, records.length)
+      : records.length;
 
-    for (var i = 0; i < records.length; i++) {
+    for (var i = 0; i < limit; i++) {
       var rec = records[i];
       if (!rec || typeof rec !== "object") { applied.skipped++; continue; }
 
@@ -200,6 +261,7 @@
       }
     }
 
+    applied.replayed = limit;
     return applied;
   }
 
@@ -228,35 +290,88 @@
 
   // =====================================================================
   // 7. Assertions (one result entry each)
+  //
+  //    Shared helpers push into a caller-owned results array so the smoke,
+  //    phase and edge sets can reuse them without duplicating logic.
   // =====================================================================
 
-  function runAssertions() {
+  function assertRailExists(results) {
+    var screen = document.getElementById("screen-progress");
+    var nodes = qaAll(".pipeline-node");
+    var pass = !!screen && nodes.length > 0;
+    results.push({
+      id: "rail_exists",
+      pass: pass,
+      detail: pass
+        ? "#screen-progress present, " + nodes.length + " .pipeline-node"
+        : "#screen-progress=" + (!!screen) + ", .pipeline-node count=" + nodes.length
+    });
+  }
+
+  function assertModulesPresent(results) {
+    var mods = qaAll(".module");
+    var pass = mods.length === 9;
+    results.push({
+      id: "modules_present",
+      pass: pass,
+      detail: ".module count=" + mods.length + " (expected exactly 9)"
+    });
+  }
+
+  function assertCancelControl(results) {
+    var el = document.querySelector('[data-qa="cancel-run"]') || document.getElementById("btn-cancel");
+    var pass = !!el;
+    results.push({
+      id: "cancel_control",
+      pass: pass,
+      detail: pass
+        ? "found " + describe(el)
+        : "no [data-qa=\"cancel-run\"] and no #btn-cancel in document"
+    });
+  }
+
+  function assertSliderReadouts(results) {
+    var ids = ["warmth", "vocal_prominence", "stereo_width", "transient_attack", "transient_sustain"];
+    var missing = [];
+    ids.forEach(function (id) {
+      var slider = document.getElementById(id);
+      if (!slider) { missing.push(id + " (slider #" + id + " missing)"); return; }
+      var val = document.getElementById(id + "-val");
+      if (!val) { missing.push(id + " (no #" + id + "-val)"); return; }
+      var field = slider.closest(".field");
+      if (field && !field.contains(val)) {
+        missing.push(id + " (#" + id + "-val exists but is not a sibling inside the same .field)");
+      }
+    });
+    var pass = missing.length === 0;
+    results.push({
+      id: "slider_readouts",
+      pass: pass,
+      detail: pass
+        ? "5/5 sliders have a #<id>-val sibling readout"
+        : "missing: " + missing.join("; ")
+    });
+  }
+
+  function assertNoConsoleErrors(results) {
+    var errs = window.__QA_CONSOLE_ERRORS__ || [];
+    var pass = errs.length === 0;
+    results.push({
+      id: "no_console_errors",
+      pass: pass,
+      detail: pass
+        ? "0 console.error / window.onerror during load + replay"
+        : errs.length + " captured: " + errs.slice(0, 5).join(" | ")
+    });
+  }
+
+  // --- smoke set: the original 7 assertions, ids unchanged ---------------
+
+  function runSmokeAssertions() {
     var results = [];
 
-    // --- rail_exists -----------------------------------------------------
-    (function () {
-      var screen = document.getElementById("screen-progress");
-      var nodes = qaAll(".pipeline-node");
-      var pass = !!screen && nodes.length > 0;
-      results.push({
-        id: "rail_exists",
-        pass: pass,
-        detail: pass
-          ? "#screen-progress present, " + nodes.length + " .pipeline-node"
-          : "#screen-progress=" + (!!screen) + ", .pipeline-node count=" + nodes.length
-      });
-    })();
-
-    // --- modules_present -------------------------------------------------
-    (function () {
-      var mods = qaAll(".module");
-      var pass = mods.length === 9;
-      results.push({
-        id: "modules_present",
-        pass: pass,
-        detail: ".module count=" + mods.length + " (expected exactly 9)"
-      });
-    })();
+    assertRailExists(results);
+    assertModulesPresent(results);
 
     // --- details_live_after_replay ---------------------------------------
     (function () {
@@ -278,42 +393,8 @@
       });
     })();
 
-    // --- cancel_control --------------------------------------------------
-    (function () {
-      var el = document.querySelector('[data-qa="cancel-run"]') || document.getElementById("btn-cancel");
-      var pass = !!el;
-      results.push({
-        id: "cancel_control",
-        pass: pass,
-        detail: pass
-          ? "found " + describe(el)
-          : "no [data-qa=\"cancel-run\"] and no #btn-cancel in document"
-      });
-    })();
-
-    // --- slider_readouts -------------------------------------------------
-    (function () {
-      var ids = ["warmth", "vocal_prominence", "stereo_width", "transient_attack", "transient_sustain"];
-      var missing = [];
-      ids.forEach(function (id) {
-        var slider = document.getElementById(id);
-        if (!slider) { missing.push(id + " (slider #" + id + " missing)"); return; }
-        var val = document.getElementById(id + "-val");
-        if (!val) { missing.push(id + " (no #" + id + "-val)"); return; }
-        var field = slider.closest(".field");
-        if (field && !field.contains(val)) {
-          missing.push(id + " (#" + id + "-val exists but is not a sibling inside the same .field)");
-        }
-      });
-      var pass = missing.length === 0;
-      results.push({
-        id: "slider_readouts",
-        pass: pass,
-        detail: pass
-          ? "5/5 sliders have a #<id>-val sibling readout"
-          : "missing: " + missing.join("; ")
-      });
-    })();
+    assertCancelControl(results);
+    assertSliderReadouts(results);
 
     // --- plugin_panel ----------------------------------------------------
     (function () {
@@ -335,20 +416,235 @@
       });
     })();
 
-    // --- no_console_errors -----------------------------------------------
+    assertNoConsoleErrors(results);
+    return results;
+  }
+
+  // --- phase set: used when the replay was truncated (--upto/--phase) ----
+  //     Same 7-assertion shape, but the two assertions that need the FULL
+  //     event stream (details_live_after_replay, plugin_panel) are replaced
+  //     by phase_progress + phase_dom_state, which verify the DOM is
+  //     consistent with exactly the slice that was replayed.
+
+  function runPhaseAssertions(applied, records) {
+    var results = [];
+
+    assertRailExists(results);
+    assertModulesPresent(results);
+
+    // --- phase_progress --------------------------------------------------
     (function () {
-      var errs = window.__QA_CONSOLE_ERRORS__ || [];
-      var pass = errs.length === 0;
+      var expected = (typeof window.__QA_UPTO__ === "number" && isFinite(window.__QA_UPTO__))
+        ? window.__QA_UPTO__
+        : applied.replayed;
+      var fill = document.getElementById("progress-fill");
+      var pct = fill ? parseInt(fill.getAttribute("aria-valuenow") || "0", 10) : 0;
+      var pass = applied.replayed === expected && pct > 0;
       results.push({
-        id: "no_console_errors",
+        id: "phase_progress",
         pass: pass,
         detail: pass
-          ? "0 console.error / window.onerror during load + replay"
-          : errs.length + " captured: " + errs.slice(0, 5).join(" | ")
+          ? "replayed " + applied.replayed + "/" + applied.total + " records, progress bar at " + pct + "%"
+          : "replayed " + applied.replayed + " (expected " + expected + "), progress bar at " + pct + "%"
       });
     })();
 
+    // --- phase_dom_state -------------------------------------------------
+    // Consistency check between the replayed slice and the DOM: whatever the
+    // cut, the page must show exactly the state that slice implies.
+    (function () {
+      var slice = records.slice(0, applied.replayed);
+      var problems = [];
+
+      var stemMentioned = slice.some(function (r) {
+        if (!r || typeof r !== "object") return false;
+        if (r.kind === "event" && r.payload && typeof r.payload === "object" && r.payload.stem) return true;
+        if (r.kind === "step" && /'[^']+'/.test(String(r.payload))) return true;
+        return false;
+      });
+      var eqEvent = slice.some(function (r) {
+        return r && r.kind === "event" && r.payload && r.payload.type === "bus_eq_band";
+      });
+      var compEvent = slice.some(function (r) {
+        return r && r.kind === "event" && r.payload && r.payload.type === "compressor" && r.payload.stem;
+      });
+      var pluginEvent = slice.some(function (r) {
+        return r && r.kind === "event" && r.payload &&
+          (r.payload.type === "character_processor" || r.payload.type === "plugin_hosted");
+      });
+      var hasStep = slice.some(function (r) { return r && r.kind === "step"; });
+
+      var stemRows = qaAll(".stem-row");
+      var stemEmpty = document.getElementById("stem-rows-empty");
+      if (stemMentioned && stemRows.length === 0) problems.push("slice mentions a stem but no .stem-row exists");
+      if (!stemMentioned && !stemEmpty) problems.push("no stem in slice but #stem-rows-empty is gone");
+
+      function isIdle(id) {
+        var el = document.getElementById(id);
+        var t = elText(el);
+        return !t || t === "in attesa..." || /^in attesa di dati/i.test(t);
+      }
+      if (eqEvent && isIdle("eq-detail")) problems.push("bus_eq_band replayed but #eq-detail still idle");
+      if (compEvent && isIdle("comp-detail")) problems.push("compressor replayed but #comp-detail still idle");
+
+      var pluginEmpty = document.querySelector("#plugin-panel .plugin-panel-empty");
+      if (pluginEvent && pluginEmpty) problems.push("plugin event replayed but .plugin-panel-empty still shown");
+      if (!pluginEvent && !pluginEmpty) problems.push("no plugin event in slice but .plugin-panel-empty is gone");
+
+      var advanced = qaAll(".pipeline-node.active, .pipeline-node.complete").length;
+      if (hasStep && advanced === 0) problems.push("steps replayed but no .pipeline-node is active/complete");
+
+      var pass = problems.length === 0;
+      results.push({
+        id: "phase_dom_state",
+        pass: pass,
+        detail: pass
+          ? "DOM consistent with slice: " + stemRows.length + " .stem-row, rail advanced=" + advanced +
+            ", plugin empty=" + !!pluginEmpty
+          : problems.join("; ")
+      });
+    })();
+
+    assertCancelControl(results);
+    assertSliderReadouts(results);
+    assertNoConsoleErrors(results);
     return results;
+  }
+
+  // --- edge set: recovery behaviors the smoke path doesn't exercise ------
+  //     Order matters: the empty-state snapshot is taken FIRST because the
+  //     interactions below intentionally replace the plugin panel and the
+  //     log idle state.
+
+  function runEdgeAssertions(done) {
+    var results = [];
+    var calls = window.__QA_CALLS__;
+
+    // --- empty_states_present --------------------------------------------
+    (function () {
+      var pluginEmpty = document.querySelector("#plugin-panel .plugin-panel-empty");
+      var stemEmpty = document.getElementById("stem-rows-empty");
+      var logIdle = document.getElementById("log-idle");
+      var missing = [];
+      if (!pluginEmpty) missing.push("#plugin-panel .plugin-panel-empty");
+      if (!stemEmpty) missing.push("#stem-rows-empty");
+      if (!logIdle) missing.push("#log-idle");
+      var pass = missing.length === 0;
+      results.push({
+        id: "empty_states_present",
+        pass: pass,
+        detail: pass
+          ? "intentional empty states present: #plugin-panel .plugin-panel-empty, #stem-rows-empty, #log-idle"
+          : "missing empty state(s): " + missing.join(", ")
+      });
+    })();
+
+    // --- double_submit_single_flight -------------------------------------
+    // Two rapid clicks on #processor-apply: RedlineBusy.run() must let the
+    // first through and swallow the second, so the stub bridge sees exactly
+    // ONE enable_processor_variants + ONE set_character_spec call.
+    (function () {
+      var sel = document.getElementById("processor-select");
+      var btn = document.getElementById("processor-apply");
+      if (!sel || !btn) {
+        results.push({
+          id: "double_submit_single_flight",
+          pass: false,
+          detail: "missing #processor-select or #processor-apply"
+        });
+        finishEdge();
+        return;
+      }
+
+      // The select is populated asynchronously by loadBuiltinProcessors();
+      // wait (bounded) until the stub's processors have landed.
+      var tries = 0;
+      (function waitForOptions() {
+        if (sel.options.length > 1 || tries >= 40) {
+          sel.value = "distortion";
+          var beforeEnable = calls.byMethod.enable_processor_variants || 0;
+          var beforeSpec = calls.byMethod.set_character_spec || 0;
+
+          btn.click();
+          var busySeen = btn.classList.contains("is-busy") || btn.disabled;
+          btn.click(); // second rapid click while the first is still in flight
+
+          setTimeout(function () {
+            var enableCalls = (calls.byMethod.enable_processor_variants || 0) - beforeEnable;
+            var specCalls = (calls.byMethod.set_character_spec || 0) - beforeSpec;
+            var pass = enableCalls === 1 && specCalls === 1 && busySeen;
+            results.push({
+              id: "double_submit_single_flight",
+              pass: pass,
+              detail: pass
+                ? "2 rapid clicks -> enable_processor_variants=" + enableCalls +
+                  ", set_character_spec=" + specCalls + ", is-busy observed mid-flight=" + busySeen
+                : "enable_processor_variants=" + enableCalls + " (want 1), set_character_spec=" +
+                  specCalls + " (want 1), is-busy observed=" + busySeen
+            });
+            runCancelCheck();
+          }, 60);
+          return;
+        }
+        tries++;
+        setTimeout(waitForOptions, 25);
+      })();
+    })();
+
+    // --- cancel_path ------------------------------------------------------
+    function runCancelCheck() {
+      var btn = document.getElementById("btn-cancel");
+      if (!btn) {
+        results.push({ id: "cancel_path", pass: false, detail: "no #btn-cancel in document" });
+        runSliderCheck();
+        return;
+      }
+      var before = calls.byMethod.cancel_run || 0;
+      btn.click();
+      var disabledNow = !!btn.disabled;
+      var busyNow = !!(window.RedlineBusy && window.RedlineBusy.isBusy(btn));
+      setTimeout(function () {
+        var cancelCalls = (calls.byMethod.cancel_run || 0) - before;
+        var pass = cancelCalls === 1 && (disabledNow || busyNow);
+        results.push({
+          id: "cancel_path",
+          pass: pass,
+          detail: pass
+            ? "cancel_run called " + cancelCalls + "x, button busy/disabled after click (disabled=" +
+              disabledNow + ", is-busy=" + busyNow + ")"
+            : "cancel_run calls=" + cancelCalls + " (want 1), disabled=" + disabledNow + ", is-busy=" + busyNow
+        });
+        runSliderCheck();
+      }, 60);
+    }
+
+    // --- slider_readout_update -------------------------------------------
+    function runSliderCheck() {
+      var slider = document.getElementById("warmth");
+      var val = document.getElementById("warmth-val");
+      var before = val ? String(val.textContent) : null;
+      var pass = false;
+      var after = before;
+      if (slider && val) {
+        slider.value = "0.7";
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        after = String(val.textContent);
+        pass = before !== after && after === "0.7";
+      }
+      results.push({
+        id: "slider_readout_update",
+        pass: pass,
+        detail: pass
+          ? "#warmth set to 0.7 + input event -> #warmth-val \"" + before + "\" -> \"" + after + "\""
+          : "slider=" + !!slider + ", readout=" + !!val + ", before=\"" + before + "\", after=\"" + after + "\""
+      });
+      assertNoConsoleErrors(results);
+      finishEdge();
+    }
+
+    function finishEdge() {
+      done(results);
+    }
   }
 
   // =====================================================================
@@ -380,21 +676,54 @@
 
     forceProgressScreen();
 
+    var scenario = window.__QA_SCENARIO__ || "smoke";
+
+    function publishResults(results, extra) {
+      var pass = results.every(function (r) { return r.pass; });
+      var payload = {
+        pass: pass,
+        scenario: scenario,
+        results: results,
+        consoleErrors: (window.__QA_CONSOLE_ERRORS__ || []).slice(),
+        resourceErrors: (window.__QA_RESOURCE_ERRORS__ || []).slice()
+      };
+      if (extra) {
+        for (var k in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, k)) payload[k] = extra[k];
+        }
+      }
+      publish(payload);
+    }
+
+    if (scenario === "edge") {
+      // No fixture replay: the edge suite drives the real UI directly.
+      setTimeout(function () {
+        runEdgeAssertions(function (results) {
+          publishResults(results, {
+            fixtureSource: "(none — edge scenario)",
+            applied: { steps: 0, events: 0, skipped: 0, replayed: 0, total: 0 }
+          });
+        });
+      }, 50);
+      return;
+    }
+
     loadFixture(function (records, source) {
-      var applied = replay(records);
+      var upto = (typeof window.__QA_UPTO__ === "number" && isFinite(window.__QA_UPTO__))
+        ? window.__QA_UPTO__
+        : null;
+      var applied = replay(records, upto);
+      var truncated = applied.replayed < records.length;
 
       // Let rAF/setTimeout-driven DOM updates settle before asserting.
       setTimeout(function () {
-        var results = runAssertions();
-        var pass = results.every(function (r) { return r.pass; });
-        publish({
-          pass: pass,
-          scenario: window.__QA_SCENARIO__ || "smoke",
+        var results = truncated
+          ? runPhaseAssertions(applied, records)
+          : runSmokeAssertions();
+        publishResults(results, {
           fixtureSource: source,
           applied: applied,
-          results: results,
-          consoleErrors: (window.__QA_CONSOLE_ERRORS__ || []).slice(),
-          resourceErrors: (window.__QA_RESOURCE_ERRORS__ || []).slice()
+          phase: truncated ? (window.__QA_PHASE__ || ("upto-" + applied.replayed)) : "full"
         });
       }, 50);
     });
