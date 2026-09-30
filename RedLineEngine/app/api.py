@@ -28,6 +28,12 @@ from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
 from redline.dsp_utils import finalize_for_export
+from redline.processors import available_processors, describe_processor
+from redline.plugins import (
+    is_plugin_hosting_available,
+    load_external_plugin,
+    describe_plugin,
+)
 
 
 def _downsample_peaks(audio: np.ndarray, points: int) -> list[list[float]]:
@@ -168,6 +174,20 @@ class Api:
         self._mix_undo_stack: list[dict] = []
         self._mix_redo_stack: list[dict] = []
 
+        # Cooperative cancellation: cancel_run() sets this Event; the pipeline
+        # checks it at cheap stage boundaries (before load/analyze/mix/master).
+        # Native DSP calls are NOT interrupted mid-flight -- a running
+        # render_mix/render_master finishes its current call before the next
+        # boundary check can observe the flag. This is a deliberate limitation:
+        # there is no safe way to abort a native pedalboard/librosa call.
+        self._cancel_event = threading.Event()
+
+        # Additive GUI state for live plugin/processor inspection. Kept on
+        # underscore-private attributes so pywebview never exposes them as
+        # callable/JSON surface -- only the public methods below touch them.
+        self._character_spec: dict = {}
+        self._plugin_path: str = ""
+
     def _start_js_worker(self) -> None:
         """Daemon thread that drains the JS eval queue. A sentinel None shuts
         it down cleanly. Rate-limits actual evaluate_js calls to 60fps
@@ -283,6 +303,127 @@ class Api:
         this running process only (no .flags.json edit, no restart)."""
         config.set_override("ENABLE_LIVE_AUDITION", is_enabled)
         self._narrate(f"Neural Monitor: {'attivo' if is_enabled else 'disattivo'}")
+
+    # ------------------------------------------------------------------
+    # Live plugin / processor inspection (additive, fail-safe)
+    # ------------------------------------------------------------------
+
+    def list_builtin_processors(self) -> dict:
+        """Metadata for every built-in character processor, for the GUI's
+        processor picker. Fail-safe: any registry error degrades to
+        ``{"ok": False, "error": ...}`` instead of raising into the bridge."""
+        try:
+            return {
+                "ok": True,
+                "processors": [describe_processor(n) for n in available_processors()],
+            }
+        except Exception as exc:
+            logging.getLogger(__name__).error("list_builtin_processors fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def probe_plugin(self, plugin_path: str = "") -> dict:
+        """Read-only probe of a user-supplied plugin path.
+
+        Loads + describes the plugin via the fail-safe ``redline.plugins``
+        helpers and returns ``{"ok": True, "info": {...}}``. It NEVER loads
+        anything into the render path and NEVER raises: an empty/missing path,
+        an unavailable plugin host, or a plugin that describes to ``None`` all
+        return ``{"ok": False, "error": ...}``. (A native plugin crash is out
+        of process in future; for now this is read-only and guarded.)"""
+        try:
+            if not plugin_path or not isinstance(plugin_path, str):
+                return {"ok": False, "error": "Percorso plugin non specificato."}
+            if not os.path.exists(plugin_path):
+                return {"ok": False, "error": "File plugin non trovato."}
+            if not is_plugin_hosting_available():
+                return {"ok": False, "error": "Hosting plugin non disponibile."}
+            plugin = load_external_plugin(plugin_path)
+            if plugin is None:
+                return {"ok": False, "error": "Impossibile caricare il plugin."}
+            info = describe_plugin(plugin)
+            if info is None:
+                return {"ok": False, "error": "Il plugin non espone parametri descrivibili."}
+            return {"ok": True, "info": _sanitize_for_json(info)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("probe_plugin(%r) fallito: %s", plugin_path, exc)
+            return {"ok": False, "error": str(exc)}
+
+    def get_character_spec(self) -> dict:
+        """Return the current per-stem character spec ({} when unset)."""
+        return {"ok": True, "spec": copy.deepcopy(self._character_spec)}
+
+    def set_character_spec(self, spec: dict) -> dict:
+        """Validate + store a per-stem character spec.
+
+        Only known processor names (from ``available_processors()``) are
+        accepted; numeric params are clamped to each processor's declared
+        min/max; unknown stems and malformed entries are ignored. Returns the
+        normalized spec so the GUI can reflect exactly what was stored."""
+        try:
+            if not isinstance(spec, dict):
+                return {"ok": False, "error": "Spec non valida."}
+            known = set(available_processors())
+            normalized: dict = {}
+            for stem, entry in spec.items():
+                if not isinstance(entry, dict):
+                    continue
+                proc = entry.get("processor")
+                if proc not in known:
+                    continue
+                meta = describe_processor(proc) or {}
+                bounds = {p["name"]: p for p in meta.get("params", [])}
+                raw_params = entry.get("params") or {}
+                params: dict = {}
+                if isinstance(raw_params, dict):
+                    for pname, pval in raw_params.items():
+                        bound = bounds.get(pname)
+                        if bound is None:
+                            continue
+                        try:
+                            num = float(pval)
+                        except (TypeError, ValueError):
+                            continue
+                        num = max(float(bound["min"]), min(float(bound["max"]), num))
+                        params[pname] = num
+                normalized[str(stem)] = {"processor": proc, "params": params}
+            self._character_spec = normalized
+            return {"ok": True, "spec": copy.deepcopy(normalized)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("set_character_spec fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def get_plugin_path(self) -> dict:
+        """Return the currently configured external plugin path ("" if unset)."""
+        return {"ok": True, "path": self._plugin_path}
+
+    def set_plugin_path(self, path: str) -> dict:
+        """Store the external plugin path. No validation beyond isinstance str
+        -- a non-string is normalized to "" rather than rejected."""
+        self._plugin_path = path if isinstance(path, str) else ""
+        return {"ok": True, "path": self._plugin_path}
+
+    def cancel_run(self) -> dict:
+        """Request cooperative cancellation of the running pipeline. The
+        pipeline observes this at its next stage boundary; a native DSP call
+        already in flight is not interrupted."""
+        self._cancel_event.set()
+        return {"ok": True, "cancelling": True}
+
+    def _cancelled(self) -> bool:
+        """True if a cancel was requested. Cheap, never raises."""
+        try:
+            return self._cancel_event.is_set()
+        except Exception:
+            return False
+
+    def _check_cancelled(self) -> dict | None:
+        """Stage-boundary guard: returns the cancelled result dict (and
+        narrates) when a cancel is pending, else ``None`` so the caller
+        continues. Inserted only at cheap boundaries -- never mid-DSP."""
+        if self._cancelled():
+            self._narrate("Operazione annullata.")
+            return {"ok": False, "cancelled": True}
+        return None
 
     # ------------------------------------------------------------------
     # Preset API
@@ -531,7 +672,14 @@ class Api:
 
     def run_pipeline(self, input_path: str, prefs: dict, out_dir: str) -> dict:
         try:
+            # Fresh run: drop any stale cancel from a previous run, then check
+            # at each cheap stage boundary below (never mid-DSP).
+            self._cancel_event.clear()
             os.makedirs(out_dir, exist_ok=True)
+
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
 
             self._narrate("Carico l'audio...")
             stems = self._with_heartbeat(
@@ -539,6 +687,10 @@ class Api:
                 kind="separating",
             )
             self._narrate(f"Caricati {len(stems.names())} stem: {', '.join(stems.names())} @ {stems.sample_rate}Hz")
+
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
 
             self._narrate("Analizzo bpm, tonalità, genere, loudness e bilanciamento spettrale...")
             analysis = self._with_heartbeat(lambda: analyze(stems), kind="analyzing")
@@ -557,6 +709,10 @@ class Api:
             apply_genre_override(analysis, mix_prefs.genre_override)
             if mix_prefs.genre_override:
                 self._narrate(f"Genere impostato dall'utente: {analysis.genre.name}")
+
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
 
             self._narrate("Avvio il mix...")
             mixed = render_mix(
@@ -612,6 +768,10 @@ class Api:
                     "genre": analysis.genre.name,
                     "lufs": analysis.mix_lufs,
                 })
+
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
 
             master_path = self._do_mastering(mixed, stems, analysis, out_dir, prefs)
 
@@ -670,6 +830,10 @@ class Api:
         if self._last_mix is None or self._last_stems is None or self._last_analysis is None or self._last_out_dir is None:
             return {"ok": False, "error": "Nessun mix in cache da masterizzare."}
         try:
+            self._cancel_event.clear()
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
             master_path = self._do_mastering(self._last_mix, self._last_stems, self._last_analysis, self._last_out_dir, prefs)
             self._narrate("Fatto.")
             return _sanitize_for_json({
@@ -697,6 +861,10 @@ class Api:
         if self._last_stems is None or self._last_analysis is None or self._last_out_dir is None:
             return {"ok": False, "error": "Nessuno stem in cache da rielaborare."}
         try:
+            self._cancel_event.clear()
+            cancelled = self._check_cancelled()
+            if cancelled is not None:
+                return cancelled
             stems = self._last_stems
             out_dir = self._last_out_dir
 
