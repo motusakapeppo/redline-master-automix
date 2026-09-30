@@ -130,7 +130,7 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
    ```bash
    REDLINE_BLUEPRINT_CHAINS=1 REDLINE_LIVE_AUDITION=1 python app/main.py
    ```
-3. **CI auto-enable** — `ci_validate.py` enables all flags automatically on PASS.
+3. **CI auto-enable** — `ci_validate.py` enables every flag in `redline.config.DEFAULTS` on PASS, preserving any non-flag keys already in `.flags.json`.
 
 | Flag | Default | What it unlocks |
 |---|---|---|
@@ -139,9 +139,12 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
 | `ENABLE_RT60_CALIBRATION` | off | Auto-tunes Room/Plate reverb bus decay from a reference track's onset/decay analysis (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | Local LLM (llama.cpp, `redline/llm_classifier.py`) fallback for low-confidence stem naming, validated through `redline/director_safety.py` |
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — real dry/wet A/B playback of the master bus glue compression through your speakers (`redline/audition.py`). Toggled live from the GUI switch |
-| `ENABLE_DIRECTOR_MODE` | off | Pauses `render_mix` after stem role/register recognition and waits for GUI approval (`redline/director.py`) before any DSP runs |
+| `ENABLE_STEREO_WIDENING` | off | Mid/Side stereo widening (`dsp_utils.stereo_widen()`, mono crossover at 120Hz) — driven by the wizard's stereo-width slider/presets |
+| `ENABLE_TRANSIENT_SHAPER` | off | Dual-envelope transient shaper (`dsp_utils.transient_shaper()`, independent attack/sustain gain) — driven by the wizard's transient sliders/presets |
 | `ENABLE_FEEDBACK_DELAY` | off | Tape-style feedback delay applied to the full mix bus (`redline/feedback_delay.py`) — low-pass filter recurses inside the feedback loop so repeats darken progressively |
 | `ENABLE_BUS_EXPORT` | off | Reserved for a future GUI toggle; the CLI already exposes bus export unconditionally via `--export-buses` regardless of this flag |
+
+> Note: the stem-classification checkpoint (`redline/director.py`) is always active whenever a `director_gate` is supplied — which is always true in the desktop app. There is no separate on/off flag for it; a caller that wants a non-interactive render (tests, headless CLI) simply doesn't pass a gate.
 
 ### Creative Brief (free-text → LLM interpretation)
 
@@ -255,7 +258,7 @@ Two changes were made to speed up mixing/mastering of multi-stem sessions withou
 - **Vocal-masking ratio cache** (`masking.py`/`mixengine.py`): `find_masking_cut`/`find_midrange_masking_cut` measure the lead-vocal reference's own presence/midrange band ratio — a value that only depends on the vocal reference, not on whichever instrumental stem is being checked against it. The per-stem masking loop now measures it once per render and reuses it across every "other"-role stem instead of re-filtering the identical vocal audio once per stem (both functions still take no cache and behave exactly as before when called elsewhere, e.g. the music-bus-level masking check). Measured ~2x speedup on that segment on an 8-stem synthetic session; scales with stem count.
 - **Multiband filter reuse** (`masterengine.py`): `_multiband_compress`'s low/high `butter()` filter design depends only on sample rate, not on the signal, so it's now computed once per call and reused across stereo channels instead of being rebuilt identically for each one.
 
-Expect the biggest wall-clock improvement on sessions with many stems (backing vocal stacks, multi-mic drums), since those are exactly the cases that previously serialized the most per-stem work. All of the above were verified against the full test suite (272 tests) before and after, with identical results — no numerical/audio-output change, only execution speed.
+Expect the biggest wall-clock improvement on sessions with many stems (backing vocal stacks, multi-mic drums), since those are exactly the cases that previously serialized the most per-stem work. All of the above were verified against the full test suite before and after, with identical results — no numerical/audio-output change, only execution speed.
 
 #### GUI (`app/`)
 
@@ -505,21 +508,30 @@ python ci_validate.py
 
 This is the **automated CI entry point**. It:
 1. Runs `verify_gain.py` as a subprocess
-2. If PASS: auto-enables **all** feature flags in `.flags.json`
-3. If FAIL: exits with code 1 and diagnostic output
-4. Reports system ready status
+2. Runs the full pytest suite
+3. If **both** PASS: enables every flag in `redline.config.DEFAULTS` in `.flags.json` (preserving any non-flag keys already there)
+4. If either FAILS: exits with code 1 and diagnostic output, leaving flags untouched
 
 **Expected output:**
 ```
-[Step 1/2] Running gain staging verification...
+[Step 1/3] Running gain staging verification...
 ALL CHECKS PASSED — Gain staging is correct.
 
-[Step 2/2] Verification PASSED — enabling all feature flags...
+[Step 2/3] Running full pytest suite...
+308 passed
+
+[Step 3/3] Gain staging + full test suite PASSED — enabling feature flags...
 [CI] Flags written to .flags.json
 
 [CI] CI VALIDATION: PASS
 [CI] System ready — all flags enabled, Neural Monitor online.
 ```
+
+> `ci_validate.py` is a **local** gate (it rewrites the machine-local, gitignored `.flags.json`). It is deliberately **not** run by the GitHub Actions workflow — see below.
+
+### Continuous Integration (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every push to `master` and on pull requests. It uses a `windows-latest` runner with Python 3.10 (the app is Windows-bound: `app/api.py`/`audition.py` target MME/WASAPI, and `pywebview`/`sounddevice` are imported at test-collection time). Dependencies are installed from a filtered `requirements.txt` — the heavy/lazy-imported optional deps (`torch`, `demucs`, `matchering`, `llama-cpp-python`, `huggingface_hub`) are excluded because the test suite never imports them; `llama-cpp`-gated tests self-skip when the model is absent. The job runs `python -m pytest tests -q` and `python verify_gain.py`, and fails unless the gain check prints `ALL CHECKS PASSED`.
 
 ### Async UI Decoupling
 
@@ -668,13 +680,26 @@ Triggered by continued real-listening feedback: the lead vocal still sat too far
 - **Vocal doubles: English "R"/"L" pan hints recognized, not just Italian "dx"/"sx"** (`naming.py`): a real session's own files used a `"- L"`/`"- R"` suffix that was silently ignored (only `dx`/`sx` were recognized), so those doubles defaulted to `pan=0.0` and got hard-panned to whichever side the code's own `>=0` default happened to pick -- fighting the lead for the same central space instead of sitting where the filename already said they belonged.
 - **Lone unhinted double auto-split into a hard L+R pair** (`mixengine.py`): a register with exactly one double and no L/R/dx/sx hint at all used to default (`d.pan >= 0` is `True` for `pan==0.0` too) to hard-panning that single take to the same side every time, instead of spreading it. It's now split into two power-preserving-scaled copies panned hard left and hard right, matching the classic "there's only one harmony take, make it wide" production move. When a register has *multiple* unhinted doubles, they're now alternated hard L/R instead of all landing on the same side.
 
+**Recent hardening (September 2026, part 12 - quality pass: verified bug fixes, wiring, CI, audit):**
+A full audit followed by a wave-ordered fix pass (each change test-backed, atomic commit). Highlights:
+- **Multi-mic sessions no longer crash the render** (`mixengine.py`): `_guarded_on_step`/`_guarded_on_event` were referenced by the link-group loop *before* their `def`, an `UnboundLocalError` that aborted every session containing a mic/take pair (`Kick_In`/`Kick_Out`, snare top/bottom, pad L/R...). Reproduced, fixed, and covered by a new regression test — no test exercised link groups before.
+- **One failing stem no longer aborts the whole render** (`mixengine.py`): each pool result is now guarded; a failure logs, emits a `stem_failed` event, and falls back to that stem's dry signal so downstream bus math still finds every stem.
+- **QC report no longer stale after corrections** (`qc.py`/`masterengine.py`): `run_qc`'s pass/fail logic is extracted into `assess_qc_pass()`, and after the reference-correction feedback loop the report re-measures LUFS/true-peak/mono/phase/deviations against the *final* audio (using the same stereo-LUFS helper `run_qc` uses) instead of quoting pre-correction values.
+- **Platform-aware feedback loop** (`masterengine.py`): the correction loop now respects the chosen platform's LUFS target (Apple/YouTube/Club) instead of always pulling toward the genre default.
+- **Wrong-section LLM requests rejected** (`director_safety.py`): a request naming a section ("nella strofa...") that the model maps to `target_section="global"` is now rejected; section-keyword matching uses word boundaries so "strumentale"/"ritmo" no longer false-positive as verse/chorus.
+- **JS bridge no longer loses events** (`app/api.py`, `app/web/app.js`): every batched `evaluate_js` call is individually try/catch-wrapped, and `onEvent`/`onStep` guard their payloads — a malformed event can no longer abort the rest of a batch.
+- **Frontend lifecycle cleanup** (`app/web/`): the onStep log is now capped at 400 lines with `AbortController`-based listener cleanup (was unbounded DOM growth + leaked listeners), conflicting avatar timers are ordered, the QC RAF loop is cancellable, the long-dead hidden SVG avatar (~221 lines) and 10 no-op stubs are removed, and accessibility attributes added (label `for`, `aria-live`, `role="progressbar"`, canvas `role`/`aria-label`).
+- **CI added + a real packaging gap fixed**: `.github/workflows/ci.yml` runs pytest + `verify_gain.py`; `ci_validate.py` now derives its flag set from `redline.config.DEFAULTS` (no longer drops user keys); `ENABLE_STEREO_WIDENING`/`ENABLE_TRANSIENT_SHAPER` added to the flag docs; **`pywebview` was missing from `requirements.txt`** even though `app/api.py` imports it — added.
+- **Docs reconciled, no blind audio changes**: `docs/research_report.md` was annotated with a verified status per recommendation (all §4.6 items were already applied); `DSP_ENGINE_SPECS.md` §9 records the tuning audit and deliberately rejects raising `PARALLEL_BUS_MIX` (already 0.20; §6.1 documents the drum-vs-vocal rationale). Full suite: 308 passing.
+- **Reviewer-gate fixes**: an independent review caught a LUFS convention divergence (mono vs stereo, ~3 dB), the missing `pywebview` dependency, and a partially-vacuous test — all corrected.
+
 ### Known Issues & Troubleshooting
 
 Resolved issues (pyloudnorm dependency, research-report constants, WebView2 black window, Neural Monitor silence, file picker filters) have been removed from this table once verified fixed in the code — see git history for their diagnosis if needed. Only genuinely open items remain:
 
 | # | Issue | Status | Note |
 |---|-------|--------|------|
-| 1 | **Mix output quality still needs calibration** | **OPEN** | The research report (`docs/research_report.md`) documents discrepancies between current code constants and industry standards. A second calibration pass on varied material (rock, pop, jazz, electronic, classical) is needed before the output is consistently professional. |
+| 1 | **Mix output quality still needs calibration** | **OPEN** | `docs/research_report.md` has been reconciled against the live code (its §4.6 recommendations were all already applied; see the dated note in the report and `DSP_ENGINE_SPECS.md` §9). What remains is a listening-validation pass on varied material (rock, pop, jazz, electronic, classical) — objective constants are aligned, but the output has not been ear-tuned on real records. |
 | 2 | **No test for `DirectorGate.request_answer()`/`answer()`** | **OPEN** | The new checkpoint API (instrument-identity questions) has no unit test. The existing `test_director.py` only covers `request_approval()`/`approve()`. |
 | 3 | **`classify_instrument` cache not tested** | **MINOR** | `_instrument_cache` in `mixengine.py` avoids redundant spectral analysis but has no dedicated test. |
 | 4 | **Stereo widening / transient shaper not calibrated** | **OPEN** | Both modules work correctly on synthetic test audio but have not been tuned on real music. Default values may need adjustment. |
@@ -848,7 +873,7 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
    ```bash
    REDLINE_BLUEPRINT_CHAINS=1 REDLINE_LIVE_AUDITION=1 python app/main.py
    ```
-3. **Auto-abilitazione CI** — `ci_validate.py` attiva tutti i flag automaticamente al PASS.
+3. **Auto-abilitazione CI** — `ci_validate.py` attiva ogni flag in `redline.config.DEFAULTS` al PASS, preservando le chiavi non-flag già presenti in `.flags.json`.
 
 | Flag | Default | Cosa sblocca |
 |---|---|---|
@@ -857,8 +882,12 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
 | `ENABLE_RT60_CALIBRATION` | off | Calibrazione automatica del decadimento dei bus riverbero Room/Plate dall'analisi onset/decay di un riferimento (`redline/rt60.py`) |
 | `ENABLE_LLM_ADVISORY` | off | LLM locale (llama.cpp, `redline/llm_classifier.py`) per classificazione stem ambigui, validato da `redline/director_safety.py` |
 | `ENABLE_LIVE_AUDITION` | off | Neural Monitor — ascolto A/B dry/wet in tempo reale della glue compression del master bus attraverso le casse (`redline/audition.py`). Attivabile live dall'interruttore GUI |
+| `ENABLE_STEREO_WIDENING` | off | Allargamento stereo Mid/Side (`dsp_utils.stereo_widen()`, crossover mono a 120Hz) — pilotato dallo slider larghezza stereo/preset del wizard |
+| `ENABLE_TRANSIENT_SHAPER` | off | Transient shaper a doppio envelope (`dsp_utils.transient_shaper()`, gain attack/sustain indipendenti) — pilotato dagli slider transienti/preset del wizard |
 | `ENABLE_FEEDBACK_DELAY` | off | Feedback delay tape-style applicato all'intero bus mix (`redline/feedback_delay.py`) — il filtro low-pass ricorre dentro il loop di feedback, le ripetizioni si scuriscono progressivamente |
 | `ENABLE_BUS_EXPORT` | off | Riservato per un futuro interruttore GUI; il CLI espone già l'export dei bus incondizionatamente via `--export-buses`, a prescindere da questo flag |
+
+> Nota: il checkpoint di classificazione stem (`redline/director.py`) è sempre attivo quando viene fornito un `director_gate` — cosa sempre vera nell'app desktop. Non esiste un flag on/off separato; un chiamante che vuole un render non interattivo (test, CLI headless) semplicemente non passa un gate.
 
 ### Note Libere (testo libero → interpretazione LLM)
 
@@ -972,7 +1001,7 @@ Due modifiche velocizzano il mix/mastering di sessioni multi-stem senza cambiare
 - **Cache del rapporto di mascheramento vocale** (`masking.py`/`mixengine.py`): `find_masking_cut`/`find_midrange_masking_cut` misurano il rapporto di banda presenza/medio della voce guida di riferimento — un valore che dipende solo dalla voce di riferimento, non dallo stem strumentale confrontato. Il ciclo di mascheramento per-stem ora lo misura una sola volta per render e lo riusa per ogni stem di ruolo "other", invece di rifiltrare lo stesso identico audio vocale una volta per stem (entrambe le funzioni continuano a funzionare esattamente come prima quando chiamate senza cache altrove, es. il controllo di mascheramento a livello di bus musicale). Misurato ~2x di velocità su quel segmento in una sessione sintetica a 8 stem; scala con il numero di stem.
 - **Riuso dei filtri multibanda** (`masterengine.py`): il design dei filtri low/high `butter()` di `_multiband_compress` dipende solo dalla sample rate, non dal segnale, quindi ora viene calcolato una sola volta per chiamata e riusato tra i canali stereo invece di essere ricostruito identico per ciascuno.
 
-Il miglioramento maggiore si nota su sessioni con molti stem (stack di cori, batteria multi-microfono), cioè esattamente i casi che prima serializzavano più lavoro per-stem. Tutte le modifiche sopra sono state verificate con l'intera suite di test (272 test) prima e dopo, con risultati identici — nessun cambiamento numerico/di output audio, solo di velocità di esecuzione.
+Il miglioramento maggiore si nota su sessioni con molti stem (stack di cori, batteria multi-microfono), cioè esattamente i casi che prima serializzavano più lavoro per-stem. Tutte le modifiche sopra sono state verificate con l'intera suite di test prima e dopo, con risultati identici — nessun cambiamento numerico/di output audio, solo di velocità di esecuzione.
 
 #### GUI (`app/`)
 
@@ -1199,21 +1228,30 @@ python ci_validate.py
 
 Questo è il **punto d'ingresso CI automatizzato**. Esegue:
 1. Lancia `verify_gain.py` come sottoprocesso
-2. Se PASS: auto-attiva **tutti** i flag sperimentali in `.flags.json`
-3. Se FAIL: esce con codice 1 e output diagnostico
-4. Riporta lo stato di sistema pronto
+2. Esegue l'intera suite pytest
+3. Se **entrambi** PASS: attiva ogni flag in `redline.config.DEFAULTS` in `.flags.json` (preservando le chiavi non-flag già presenti)
+4. Se uno dei due FALLISCE: esce con codice 1 e output diagnostico, lasciando i flag intatti
 
 **Output atteso:**
 ```
-[Step 1/2] Running gain staging verification...
+[Step 1/3] Running gain staging verification...
 ALL CHECKS PASSED — Gain staging is correct.
 
-[Step 2/2] Verification PASSED — enabling all feature flags...
+[Step 2/3] Running full pytest suite...
+308 passed
+
+[Step 3/3] Gain staging + full test suite PASSED — enabling feature flags...
 [CI] Flags written to .flags.json
 
 [CI] CI VALIDATION: PASS
 [CI] System ready — all flags enabled, Neural Monitor online.
 ```
+
+> `ci_validate.py` è un gate **locale** (riscrive il `.flags.json` locale alla macchina, gitignorato). È deliberatamente **non** eseguito dal workflow GitHub Actions — vedi sotto.
+
+### Integrazione Continua (GitHub Actions)
+
+`.github/workflows/ci.yml` gira ad ogni push su `master` e sulle pull request. Usa un runner `windows-latest` con Python 3.10 (l'app è Windows-bound: `app/api.py`/`audition.py` puntano a MME/WASAPI, e `pywebview`/`sounddevice` sono importati al momento della collection dei test). Le dipendenze sono installate da un `requirements.txt` filtrato — le dipendenze pesanti/lazy-importate opzionali (`torch`, `demucs`, `matchering`, `llama-cpp-python`, `huggingface_hub`) sono escluse perché la suite non le importa mai; i test gated su `llama-cpp` si skippano da soli quando il modello è assente. Il job esegue `python -m pytest tests -q` e `python verify_gain.py`, e fallisce se il gain check non stampa `ALL CHECKS PASSED`.
 
 ### Disaccoppiamento UI Asincrono
 
@@ -1364,13 +1402,26 @@ Innescato da ulteriore ascolto reale: la voce principale restava troppo in primo
 - **Doppie vocali: riconosciuti anche gli hint di pan inglesi "R"/"L", non solo l'italiano "dx"/"sx"** (`naming.py`): i file di una sessione reale usavano un suffisso `"- L"`/`"- R"` che veniva silenziosamente ignorato (venivano riconosciuti solo `dx`/`sx`), quindi quelle doppie finivano con `pan=0.0` e venivano pannate a fondo su qualunque lato scegliesse di default il `>=0` del codice -- combattendo con la voce principale per lo stesso spazio centrale invece di stare dove il nome file già indicava.
 - **Doppia unica senza indicazione sdoppiata automaticamente in coppia L+R** (`mixengine.py`): un registro con esattamente una doppia e nessun hint L/R/dx/sx veniva di default (`d.pan >= 0` è `True` anche per `pan==0.0`) pannato a fondo sempre sullo stesso lato, invece di essere distribuito. Ora viene sdoppiato in due copie scalate in modo power-preserving e pannate a fondo sinistra e destra, la classica mossa di produzione "c'è una sola presa di armonia, allargala". Quando un registro ha *più* doppie senza indicazione, ora vengono alternate a fondo L/R invece di finire tutte sullo stesso lato.
 
+**Indurimento recente (Settembre 2026, parte 12 — giro qualità: fix verificati, cablaggi, CI, audit):**
+Un audit completo seguito da un giro di correzioni ordinato a ondate (ogni modifica coperta da test, commit atomico). Punti salienti:
+- **Le sessioni multi-microfono non fanno più crashare il render** (`mixengine.py`): `_guarded_on_step`/`_guarded_on_event` erano referenziate dal loop dei link group *prima* della loro `def`, un `UnboundLocalError` che abortiva ogni sessione con una coppia mic/take (`Kick_In`/`Kick_Out`, snare top/bottom, pad L/R...). Riprodotto, corretto, e coperto da un nuovo test di regressione — nessun test copriva i link group prima.
+- **Uno stem che fallisce non aborta più l'intero render** (`mixengine.py`): ogni risultato del pool è ora protetto; un fallimento logga, emette un evento `stem_failed`, e ricade sul segnale dry di quello stem così la matematica dei bus a valle trova comunque tutti gli stem.
+- **Report QC non più stantio dopo le correzioni** (`qc.py`/`masterengine.py`): la logica pass/fail di `run_qc` è estratta in `assess_qc_pass()`, e dopo il loop di correzione il report rimisura LUFS/true-peak/mono/fase/deviazioni sull'audio *finale* (usando lo stesso helper LUFS stereo di `run_qc`) invece di citare valori pre-correzione.
+- **Loop di feedback platform-aware** (`masterengine.py`): il loop di correzione ora rispetta il target LUFS della piattaforma scelta (Apple/YouTube/Club) invece di tirare sempre verso il default di genere.
+- **Richieste LLM su sezione sbagliata rifiutate** (`director_safety.py`): una richiesta che nomina una sezione ("nella strofa...") mappata dal modello a `target_section="global"` viene ora rifiutata; il matching delle keyword di sezione usa i word boundary, così "strumentale"/"ritmo" non danno più falsi positivi come verse/chorus.
+- **Il bridge JS non perde più eventi** (`app/api.py`, `app/web/app.js`): ogni chiamata `evaluate_js` del batch è avvolta nel proprio try/catch, e `onEvent`/`onStep` proteggono i payload — un evento malformato non può più abortare il resto di un batch.
+- **Pulizia ciclo di vita frontend** (`app/web/`): il log onStep ora è limitato a 400 righe con pulizia listener via `AbortController` (prima crescita DOM illimitata + listener non rimossi), i timer conflittuali dell'avatar sono ordinati, il loop RAF del QC è cancellabile, il vecchio SVG avatar nascosto (~221 righe) e 10 stub no-op sono rimossi, e aggiunti attributi di accessibilità (label `for`, `aria-live`, `role="progressbar"`, `role`/`aria-label` sulle canvas).
+- **CI aggiunta + un vero buco di packaging risolto**: `.github/workflows/ci.yml` esegue pytest + `verify_gain.py`; `ci_validate.py` deriva ora il set di flag da `redline.config.DEFAULTS` (non cancella più chiavi utente); `ENABLE_STEREO_WIDENING`/`ENABLE_TRANSIENT_SHAPER` aggiunti alla documentazione dei flag; **`pywebview` mancava da `requirements.txt`** benché `app/api.py` lo importi — aggiunto.
+- **Doc riconciliata, nessun cambio audio alla cieca**: `docs/research_report.md` è stato annotato con uno stato verificato per ogni raccomandazione (tutte quelle della §4.6 erano già applicate); `DSP_ENGINE_SPECS.md` §9 registra l'audit di tuning e rigetta deliberatamente l'innalzamento di `PARALLEL_BUS_MIX` (già 0.20; la §6.1 documenta la motivazione batteria-vs-voce). Suite completa: 308 passanti.
+- **Fix del reviewer gate**: una revisione indipendente ha colto una divergenza di convenzione LUFS (mono vs stereo, ~3 dB), la dipendenza `pywebview` mancante, e un test parzialmente vacuo — tutti corretti.
+
 ### Problemi Noti e Risoluzione
 
 I problemi risolti (dipendenza pyloudnorm, costanti del report di ricerca, finestra nera WebView2, silenzio del Neural Monitor, filtri del file picker) sono stati rimossi da questa tabella una volta verificata la correzione nel codice — consultare la storia git per la diagnosi se necessario. Restano solo i problemi genuinamente aperti:
 
 | # | Problema | Stato | Nota |
 |---|----------|-------|------|
-| 1 | **Qualità output mix ancora da calibrare** | **APERTO** | Il report di ricerca (`docs/research_report.md`) documenta discrepanze tra le costanti attuali e gli standard di settore. Serve un secondo giro di calibrazione su materiale variato (rock, pop, jazz, elettronica, classica). |
+| 1 | **Qualità output mix ancora da calibrare** | **APERTO** | `docs/research_report.md` è stato riconciliato con il codice reale (le raccomandazioni della §4.6 erano già tutte applicate; vedi la nota datata nel report e `DSP_ENGINE_SPECS.md` §9). Resta un giro di validazione d'ascolto su materiale variato (rock, pop, jazz, elettronica, classica) — le costanti oggettive sono allineate, ma l'output non è stato tarato a orecchio su brani reali. |
 | 2 | **Nessun test per `DirectorGate.request_answer()`/`answer()`** | **APERTO** | La nuova API checkpoint (domande identità strumenti) non ha test unitari. `test_director.py` copre solo `request_approval()`/`approve()`. |
 | 3 | **Cache `classify_instrument` non testata** | **MINORE** | `_instrument_cache` in `mixengine.py` evita analisi spettrale ridondante ma non ha test dedicati. |
 | 4 | **Stereo widening / transient shaper non calibrati** | **APERTO** | Entrambi i moduli funzionano su audio sintetico ma non sono stati tarati su musica reale. |
