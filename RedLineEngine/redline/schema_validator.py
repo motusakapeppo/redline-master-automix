@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from redline.logging_setup import get_logger
+from redline.platforms import PLATFORM_CHOICES
 
 logger = get_logger(__name__)
 
@@ -19,7 +20,7 @@ PRESET_SCHEMA = {
     "do_mastering": {"type": "bool", "default": True},
     "platform": {
         "type": "str",
-        "choices": ["auto", "spotify", "apple", "youtube", "club"],
+        "choices": list(PLATFORM_CHOICES),
         "default": "auto",
     },
     "stereo_width": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},

@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from redline.logging_setup import get_logger
+from redline.platforms import PLATFORM_CHOICES
 
 logger = get_logger(__name__)
 
@@ -38,8 +39,7 @@ class MixPreferences:
         self.stereo_width = float(max(0.0, min(1.0, self.stereo_width)))
         self.transient_attack = float(max(-6.0, min(6.0, self.transient_attack)))
         self.transient_sustain = float(max(-6.0, min(6.0, self.transient_sustain)))
-        valid_platforms = ("auto", "spotify", "apple", "youtube", "club")
-        if self.platform not in valid_platforms:
+        if self.platform not in PLATFORM_CHOICES:
             self.platform = "auto"
 
 

@@ -15,6 +15,7 @@ from . import config
 from .analyze import AnalysisResult
 from .dsp_utils import to_mid_side, from_mid_side, db_to_gain
 from .ltas import match_ltas
+from .platforms import PLATFORM_TARGETS  # canonical registry; re-exported here so existing importers keep working
 from .qc import run_qc, _mono_compatibility, assess_qc_pass, resolve_target
 from .analysis.loudness import crest_factor, integrated_lufs, spectral_band_energies
 from .correlometer import measure_bass_phase_shift_deg_abs
@@ -37,13 +38,10 @@ def _noop_beep() -> None:
     pass
 
 
-# LUFS integrated-loudness targets per platform (streaming normalizes to these)
-PLATFORM_TARGETS = {
-    "spotify": -14.0,
-    "apple": -16.0,
-    "youtube": -13.0,
-    "club": -9.0,  # louder target for EDM/club-oriented material
-}
+# LUFS integrated-loudness targets per platform (streaming normalizes to
+# these) -- canonical values live in redline.platforms and are imported at
+# the top of this module, so `from redline.masterengine import
+# PLATFORM_TARGETS` keeps working unchanged (same dict object).
 
 TRUE_PEAK_CEILING_DB = -1.0
 CLIP_CEILING_DB = -0.3  # soft-clip shaves the sharpest transient overshoots before the limiter does the rest

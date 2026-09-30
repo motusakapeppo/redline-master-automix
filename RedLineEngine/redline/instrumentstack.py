@@ -31,6 +31,7 @@ import numpy as np
 
 from .vocalstack import EqCut
 from .analysis.loudness import crest_factor, spectral_band_energies
+from .textmatch import contains_any
 
 STRINGS = "strings"
 GUITAR_ACOUSTIC = "guitar_acoustic"
@@ -524,11 +525,13 @@ RECIPES: dict[str, InstrumentRecipe] = {
 
 
 def _name_hint(name: str) -> str | None:
-    lowered = name.lower()
+    # Substring semantics (textmatch.contains_any), deliberately NOT
+    # word-boundary yet -- switching this to word mode is a later task;
+    # behavior here must stay identical for now.
     for instrument, hints in _NAME_HINTS.items():
-        if any(hint in lowered for hint in hints):
+        if contains_any(name, hints):
             return instrument
-    if any(hint in lowered for hint in _BARE_GUITAR_HINTS):
+    if contains_any(name, _BARE_GUITAR_HINTS):
         # "acoustic"/"acustic" can appear as its own token separated by an
         # underscore or space (e.g. "Guitar_Acoustic.wav") rather than only
         # as part of the exact phrase "acoustic guitar" already checked
@@ -536,7 +539,7 @@ def _name_hint(name: str) -> str | None:
         # list, so a file that says only "acoustic" with no guitar/gtr/
         # chitarra token at all still falls through to strings/generic
         # instead of being misread as a guitar.
-        if any(tok in lowered for tok in ("acoustic", "acustic", "acustica")):
+        if contains_any(name, ("acoustic", "acustic", "acustica")):
             return GUITAR_ACOUSTIC
         return GUITAR_ELECTRIC
     return None

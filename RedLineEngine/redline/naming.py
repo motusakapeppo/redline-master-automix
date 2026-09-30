@@ -11,6 +11,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .textmatch import contains_any as _tm_contains_any
+from .textmatch import contains_word as _tm_contains_word
+
 # Role hints — checked against the full relative path (folder name included),
 # because in real projects the *folder* often says "vocals stems" while the
 # individual take names (e.g. "Main (Rap) - Special.wav") don't mention
@@ -81,8 +84,9 @@ _L_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])(?:l|left)(?:[\s_./\\(){}\[\]-
 
 
 def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
-    lowered = text.lower()
-    return any(t in lowered for t in tokens)
+    """Thin wrapper over textmatch.contains_any (substring, case-insensitive)
+    -- kept as a named function so existing callers/imports don't break."""
+    return _tm_contains_any(text, tokens)
 
 
 def _contains_word(text: str, tokens: tuple[str, ...]) -> bool:
@@ -93,12 +97,11 @@ def _contains_word(text: str, tokens: tuple[str, ...]) -> bool:
     (Italian for a low vocal register, confirmed in a real session's file
     "Db. Bassa" -- a vocal double, misrouted to role=bass entirely because
     of this). Bass instrument filenames are always their own standalone
-    word in practice ("Bass DI.wav", "808.wav"), so this loses nothing."""
-    lowered = text.lower()
-    return any(
-        re.search(rf"(?:^|[\s_./\\(){{}}\[\]-]){re.escape(t)}(?:[\s_./\\(){{}}\[\]-]|$)", lowered)
-        for t in tokens
-    )
+    word in practice ("Bass DI.wav", "808.wav"), so this loses nothing.
+
+    Thin wrapper over textmatch.contains_word -- same boundary regex, same
+    case-insensitivity, same re.escape of each token."""
+    return _tm_contains_word(text, tokens)
 
 
 def _first_match(text: str, hint_groups: dict[str, tuple[str, ...]]) -> str | None:
