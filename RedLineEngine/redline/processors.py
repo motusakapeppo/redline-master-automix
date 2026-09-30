@@ -25,6 +25,7 @@ pure, easily-testable factory table.
 
 from __future__ import annotations
 
+import copy
 from typing import Callable
 
 # Each entry maps a stable public name to a factory taking a params dict and
@@ -137,5 +138,103 @@ def build_processor(name: str, params: dict | None = None):
         return None
     try:
         return factory(params or {})
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Human-facing metadata (additive introspection surface for the GUI)
+# ---------------------------------------------------------------------------
+#
+# Purely descriptive: this table is never read by the render path, so it can
+# never affect output. Defaults mirror the factories above exactly; min/max/
+# step are sensible UI ranges (not hard DSP limits) so a slider can present a
+# usable span. Only numeric params are listed -- ``ladder_filter``'s ``mode``
+# is an enum with no meaningful min/max/step, so it is intentionally omitted.
+PROCESSOR_META: dict[str, dict] = {
+    "distortion": {
+        "name": "distortion",
+        "label": "Distorsione",
+        "params": [
+            {"name": "drive_db", "label": "Drive", "default": 6.0, "min": 0.0, "max": 24.0, "step": 0.5, "unit": "dB"},
+        ],
+    },
+    "chorus": {
+        "name": "chorus",
+        "label": "Chorus",
+        "params": [
+            {"name": "rate_hz", "label": "Velocità", "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "unit": "Hz"},
+            {"name": "depth", "label": "Profondità", "default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "unit": ""},
+            {"name": "centre_delay_ms", "label": "Ritardo centrale", "default": 7.0, "min": 0.0, "max": 50.0, "step": 0.5, "unit": "ms"},
+            {"name": "feedback", "label": "Feedback", "default": 0.0, "min": -0.95, "max": 0.95, "step": 0.05, "unit": ""},
+            {"name": "mix", "label": "Mix", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "unit": ""},
+        ],
+    },
+    "phaser": {
+        "name": "phaser",
+        "label": "Phaser",
+        "params": [
+            {"name": "rate_hz", "label": "Velocità", "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "unit": "Hz"},
+            {"name": "depth", "label": "Profondità", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "unit": ""},
+            {"name": "centre_frequency_hz", "label": "Frequenza centrale", "default": 1300.0, "min": 20.0, "max": 20000.0, "step": 10.0, "unit": "Hz"},
+            {"name": "feedback", "label": "Feedback", "default": 0.0, "min": -0.95, "max": 0.95, "step": 0.05, "unit": ""},
+            {"name": "mix", "label": "Mix", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "unit": ""},
+        ],
+    },
+    "bitcrush": {
+        "name": "bitcrush",
+        "label": "Bitcrush",
+        "params": [
+            {"name": "bit_depth", "label": "Profondità di bit", "default": 8.0, "min": 1.0, "max": 16.0, "step": 1.0, "unit": "bit"},
+        ],
+    },
+    "clipping": {
+        "name": "clipping",
+        "label": "Clipping",
+        "params": [
+            {"name": "threshold_db", "label": "Soglia", "default": -6.0, "min": -60.0, "max": 0.0, "step": 0.5, "unit": "dB"},
+        ],
+    },
+    "noise_gate": {
+        "name": "noise_gate",
+        "label": "Noise Gate",
+        "params": [
+            {"name": "threshold_db", "label": "Soglia", "default": -100.0, "min": -100.0, "max": 0.0, "step": 1.0, "unit": "dB"},
+            {"name": "ratio", "label": "Rapporto", "default": 10.0, "min": 1.0, "max": 100.0, "step": 0.5, "unit": ""},
+            {"name": "attack_ms", "label": "Attacco", "default": 1.0, "min": 0.1, "max": 100.0, "step": 0.1, "unit": "ms"},
+            {"name": "release_ms", "label": "Rilascio", "default": 100.0, "min": 1.0, "max": 1000.0, "step": 1.0, "unit": "ms"},
+        ],
+    },
+    "ladder_filter": {
+        "name": "ladder_filter",
+        "label": "Filtro Ladder",
+        "params": [
+            {"name": "cutoff_hz", "label": "Cutoff", "default": 200.0, "min": 20.0, "max": 20000.0, "step": 10.0, "unit": "Hz"},
+            {"name": "resonance", "label": "Risonanza", "default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01, "unit": ""},
+            {"name": "drive", "label": "Drive", "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1, "unit": ""},
+        ],
+    },
+    "pitch_shift": {
+        "name": "pitch_shift",
+        "label": "Pitch Shift",
+        "params": [
+            {"name": "semitones", "label": "Semitoni", "default": 0.0, "min": -24.0, "max": 24.0, "step": 1.0, "unit": "st"},
+        ],
+    },
+}
+
+
+def describe_processor(name: str) -> dict | None:
+    """Human metadata for a known processor, or ``None`` for an unknown name.
+
+    Returns a *fresh deep copy* every call so a caller (e.g. the GUI bridge)
+    can freely mutate the result without corrupting the shared table. Never
+    raises -- any unexpected input simply yields ``None``.
+    """
+    try:
+        meta = PROCESSOR_META.get(name)
+        if meta is None:
+            return None
+        return copy.deepcopy(meta)
     except Exception:
         return None
