@@ -26,7 +26,7 @@ import sys
 import soundfile as sf
 
 from .input_loader import load_stems_dir, load_two_track, load_single_file, load_auto
-from .analyze import analyze
+from .analyze import analyze, apply_genre_override
 from .wizard import run_wizard
 from .mixengine import render_mix
 from .masterengine import render_master, render_master_reference
@@ -100,6 +100,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     prefs = run_wizard(analysis.genre.name, interactive=not args.non_interactive)
+
+    # The wizard runs after analyze() (it needs the measured genre as its
+    # default), so a genre the user picked there is applied to the already
+    # computed AnalysisResult here -- before any render consumes it.
+    apply_genre_override(analysis, prefs.genre_override)
+    if prefs.genre_override:
+        _narrate(f"Genere impostato dall'utente: {analysis.genre.name}")
 
     reference_audio, reference_sr = None, None
     if args.reference:

@@ -65,6 +65,7 @@ class BatchProcessor:
         platform: str = "auto",
         non_interactive: bool = True,
         reference: str | None = None,
+        genre_override: str | None = None,
     ) -> list[dict]:
         """Process all projects found in batch_dir.
 
@@ -74,6 +75,8 @@ class BatchProcessor:
             platform: Target platform for mastering.
             non_interactive: Skip wizard, use default preferences.
             reference: Optional reference track path (applied to ALL projects).
+            genre_override: Optional genre selection applied to every project
+                (overrides the measured genre; unknown names fall back).
 
         Returns:
             List of result dicts, one per project, with keys:
@@ -117,9 +120,9 @@ class BatchProcessor:
                     f"{', '.join(stems.names())} @ {stems.sample_rate}Hz"
                 )
 
-                # Step 2: Analyze
+                # Step 2: Analyze (genre_override known upfront in batch mode)
                 self.on_step("  Analizzo...")
-                analysis = analyze(stems)
+                analysis = analyze(stems, genre_override=genre_override)
                 self.on_step(
                     f"  BPM {analysis.bpm:.1f} | Tonalita {analysis.key_name} | "
                     f"Genere {analysis.genre.name} | {analysis.mix_lufs:.1f} LUFS"

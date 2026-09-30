@@ -5,6 +5,7 @@ target (window.evaluate_js instead of print())."""
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -20,7 +21,7 @@ import webview
 from redline import config
 from redline.director import DirectorGate
 from redline.input_loader import load_auto
-from redline.analyze import analyze
+from redline.analyze import analyze, apply_genre_override
 from redline.presets import PresetManager
 from redline.session_history import SessionHistory
 from redline.wizard import MixPreferences
@@ -118,6 +119,11 @@ class Api:
         self._last_master: np.ndarray | None = None
         self._last_sr: int | None = None
         self._last_analysis = None
+        # The genre detect_genre() actually measured, kept separately from
+        # _last_analysis.genre (which may have been replaced by a user
+        # override) so reprocess_mix can re-resolve a *different* override
+        # against the true measured genre instead of compounding overrides.
+        self._last_measured_genre = None
         self._last_platform: str = "auto"
         self._last_out_dir: str | None = None
         self._feedback_version: int = 1
@@ -507,6 +513,15 @@ class Api:
 
             mix_prefs = self._build_mix_prefs(prefs)
 
+            # A user/preset genre selection replaces the measured genre before
+            # any render consumes the analysis -- mixengine's bus EQ,
+            # masterengine's LUFS target, fxsends and qc all read
+            # analysis.genre, so this single swap makes them all follow it.
+            self._last_measured_genre = analysis.genre
+            apply_genre_override(analysis, mix_prefs.genre_override)
+            if mix_prefs.genre_override:
+                self._narrate(f"Genere impostato dall'utente: {analysis.genre.name}")
+
             self._narrate("Avvio il mix...")
             mixed = render_mix(
                 stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
@@ -646,8 +661,13 @@ class Api:
             return {"ok": False, "error": "Nessuno stem in cache da rielaborare."}
         try:
             stems = self._last_stems
-            analysis = self._last_analysis
             out_dir = self._last_out_dir
+
+            # Re-resolve the genre from the *measured* profile (not the
+            # possibly-already-overridden cached one) so switching to a
+            # different override -- or back to none -- doesn't compound.
+            analysis = copy.copy(self._last_analysis)
+            analysis.genre = self._last_measured_genre or self._last_analysis.genre
 
             if self._last_mix is not None:
                 self._mix_undo_stack.append({"mixed": self._last_mix, "mix_path": self._last_mix_path})
@@ -656,6 +676,9 @@ class Api:
                 self._mix_redo_stack.clear()
 
             mix_prefs = self._build_mix_prefs(prefs)
+            apply_genre_override(analysis, mix_prefs.genre_override)
+            if mix_prefs.genre_override:
+                self._narrate(f"Genere impostato dall'utente: {analysis.genre.name}")
             self._narrate("Rielaborazione del mix...")
             mixed = render_mix(
                 stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
@@ -674,6 +697,9 @@ class Api:
             self._last_mix = mixed
             self._last_master = None
             self._last_mix_path = mix_path
+            # Keep the cache in sync so continue_to_mastering/submit_feedback
+            # master against the genre this reprocess actually used.
+            self._last_analysis = analysis
 
             self._narrate("Fatto.")
             return _sanitize_for_json({

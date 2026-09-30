@@ -20,8 +20,13 @@ from .analysis import (
     detect_genre,
     GenreProfile,
 )
+from .analysis.genre import _PROFILES
 from .analysis.loudness import to_mono_downsampled
 from .analysis.transients import onset_density
+from .genres import resolve_genre_name
+from .logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 # A stem named "bass"/"basso" etc. with less than this fraction of its
 # energy below 150Hz almost certainly isn't actually carrying the low end
@@ -63,7 +68,33 @@ def has_sub_content(audio, sr: int) -> bool:
     return (bands["sub_bass"] + bands["bass"]) >= BASS_SUB_ENERGY_MIN
 
 
-def analyze(stems: Stems) -> AnalysisResult:
+def _profile_for_override(genre_override: str | None) -> GenreProfile | None:
+    """Resolves a user/preset genre selection to its GenreProfile, or None if
+    the override is absent/unrecognized. Case-insensitive via the canonical
+    registry; unknown names are an expected case (never raise)."""
+    canonical = resolve_genre_name(genre_override)
+    if canonical is None:
+        if genre_override is not None:
+            logger.warning("Unknown genre_override %r — keeping measured genre", genre_override)
+        return None
+    return GenreProfile(name=canonical, **_PROFILES[canonical])
+
+
+def apply_genre_override(analysis: AnalysisResult, genre_override: str | None) -> AnalysisResult:
+    """Replaces `analysis.genre` with the profile for `genre_override` when it
+    resolves to a known genre, mutating and returning `analysis`. A None or
+    unknown override leaves the measured genre untouched (never raises).
+
+    Exposed separately from analyze() so callers that only learn the override
+    after analysis (e.g. the CLI wizard runs after analyze) can still apply it
+    to the already-computed AnalysisResult before rendering."""
+    profile = _profile_for_override(genre_override)
+    if profile is not None:
+        analysis.genre = profile
+    return analysis
+
+
+def analyze(stems: Stems, genre_override: str | None = None) -> AnalysisResult:
     mix = stems.mixdown()
     sr = stems.sample_rate
 
@@ -82,6 +113,13 @@ def analyze(stems: Stems) -> AnalysisResult:
     density = onset_density(analysis_mono, analysis_sr)
 
     genre = detect_genre(mix_crest, mix_sub_bass, transient_density=density)
+    # A user/preset genre selection wins over the measured one: replacing the
+    # profile here means every downstream consumer (mixengine bus EQ,
+    # masterengine LUFS target, fxsends, qc) follows the override with no
+    # further changes.
+    override_profile = _profile_for_override(genre_override)
+    if override_profile is not None:
+        genre = override_profile
 
     # Cheap per-stem stats only (crest is nearly free). The expensive 6-band
     # spectral filtering used to also run per-stem here, but nothing
