@@ -1,6 +1,6 @@
 /**
- * three-avatar.js — Three.js 3D stylized skull avatar with reactive ring,
- * earrings, particles, bloom, and cinematic post-processing.
+ * three-avatar.js — Three.js 3D stylized skull avatar, reactive to the
+ * engine's narration/DSP events and interactive via pointer raycasting.
  *
  * ES module, loaded via importmap. Exposes window.avatarAPI.
  */
@@ -15,26 +15,23 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ─── Module state ───────────────────────────────────────────────────────────
 
 let scene, camera, renderer, composer;
-let skull, craniumMesh, eyeLeft, eyeRight, noseCavity;
-let ring, ringOriginalPositions = null;
-let ringGlowParticles = null;
-let earrings = [];
-let particles, particleVelocities, particlePhases;
+let skull, craniumMesh, eyeLeft, eyeRight;
+let rimLight = null;
 let animFrameId = null;
 let clock = new THREE.Clock();
 // DSP state variables (decay per frame)
 let compressionIntensity = 0;
+let compressionDecay = 0.92;
 let deesserFlash = 0;
 let bpmPhase = 0;
 let bpmInterval = 0.5;
-let listeningMode = false;
 let deepScanMode = false;
 let activityLevel = 0.5;
-let ringWaveDecay = 0.92;
-const ringColorTarget = new THREE.Color('#FF003F');
-const ringColorCurrent = new THREE.Color('#FF003F');
-let ringRotationSpeed = 0.003;
-let particleOrbitSpeed = 0.0008;
+// Accent color: the avatar's single reactive hue, lerped per frame and applied
+// to the eye lights + rim light. Replaces the old ring color channel (the ring
+// itself was removed) so every color-driven reaction still has a visible target.
+const accentTarget = new THREE.Color('#FF003F');
+const accentCurrent = new THREE.Color('#FF003F');
 const skullVibrateOffset = new THREE.Vector3();
 let systemReadyPulse = 0;
 let celebrationWave = 0;
@@ -53,6 +50,32 @@ let punchScale = 0;
 // repeated onDone cancels the previous sequence instead of letting two
 // independent timer chains clobber each other.
 let doneEyeTimer = null;
+
+// Narration-driven reaction state (onStep). `stepEyeBoost` decays per frame;
+// `lastStepIntent`/`lastStepReactTime` throttle the dozens of onStep calls a
+// real render fires per second so the avatar reacts to *changes* in intent
+// rather than re-triggering on every line.
+let stepEyeBoost = 0;
+let lastStepIntent = null;
+let lastStepReactTime = -1;
+let stepAccentTimer = null;
+let rejectAccentTimer = null;
+let clickAccentTimer = null;
+
+// Pointer interactivity (raycaster against the skull mesh).
+let raycaster = null;
+let pointerNDC = null;
+let hovering = false;
+let _wasHovering = false;
+let hoverGlow = 0;
+let contextLost = false;
+
+// Respect the OS-level reduced-motion preference: non-essential idle motion
+// (random glances, float, punch, hover glance) is damped or disabled, while
+// informative reactions (eye flashes, color) stay.
+const _reduceMotion = (typeof window !== 'undefined' && typeof window.matchMedia === 'function')
+  ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  : false;
 
 // The skull GLB ships as a fully rigged, animated character (baked clips:
 // Idle, Yes, No, Bite_Front, Bite_InPlace, Dance, HitRecieve, ...) --
@@ -74,16 +97,6 @@ let lookFromY = 0, lookFromX = 0;
 let lookTargetY = 0, lookTargetX = 0;
 let lookCurrentY = 0, lookCurrentX = 0;
 
-// ─── Constants ─────────────────────────────────────────────────────────────
-
-const RING_SEGMENTS = 72;
-const RING_RADIUS = 1.8;
-const RING_TUBE = 0.025;
-const PARTICLE_COUNT = 5000;
-const PARTICLE_INNER = 1.8;
-const PARTICLE_OUTER = 4.0;
-const GLOW_PARTICLE_COUNT = 120;
-
 // ─── Initialization ─────────────────────────────────────────────────────────
 
 function init(canvasId) {
@@ -102,11 +115,6 @@ function init(canvasId) {
     scene.fog = new THREE.Fog('#0A0A0A', 5, 8);
 
     camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 10);
-    // z must clear PARTICLE_OUTER (4.0) -- at 3.8 the camera sat *inside*
-    // the particle shell, with additive-blended particles between the lens
-    // and the skull (and behind it) washing the whole frame into a single
-    // blown-out bloom blob with no visible geometry. 4.8 clears the shell
-    // with margin while staying mostly ahead of the fog's near falloff (5).
     camera.position.set(0, 0.3, 4.8);
     camera.lookAt(0, 0, 0);
 
@@ -115,9 +123,6 @@ function init(canvasId) {
     renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // Was 1.2 + strong bloom -- blew every material out to solid white with
-    // no visible skull detail (eye sockets, teeth, jaw all disappeared into
-    // the glow). Pulled both way down.
     renderer.toneMappingExposure = 0.75;
 
     // Environment map
@@ -130,7 +135,7 @@ function init(canvasId) {
     const ambientLight = new THREE.AmbientLight(0x222244, 0.3);
     scene.add(ambientLight);
 
-    const rimLight = new THREE.DirectionalLight(0xFF003F, 0.6);
+    rimLight = new THREE.DirectionalLight(0xFF003F, 0.6);
     rimLight.position.set(-2, 1, -2);
     scene.add(rimLight);
 
@@ -142,30 +147,26 @@ function init(canvasId) {
     fillLight.position.set(0, -1, 2);
     scene.add(fillLight);
 
-    // Composer -- bloom + vignette dropped for now. UnrealBloomPass composites
-    // additively and reliably breaks canvas alpha transparency (the whole
-    // point of the transparent-background change above), and combined with
-    // 5000 additive-blended particles it was blowing every material out to
-    // solid white -- no skull detail (eye sockets, teeth, jaw) was visible,
-    // just a bright blob. Plain render+output keeps the actual geometry
-    // visible; bloom can come back later, tuned much lower, once alpha
-    // compositing through it is verified to actually work in this Three
-    // version.
+    // Composer -- plain render+output keeps the actual geometry visible and
+    // preserves canvas alpha transparency (additive bloom reliably breaks it).
     composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
     composer.addPass(new OutputPass());
 
-    // buildRing() dropped per direct feedback ("elimina quella linea rossa")
-    // -- every reference to `ring` elsewhere is already null-guarded, so
-    // simply never constructing it removes the ring cleanly with no
-    // further changes needed. buildRingGlowParticles() / buildParticles()
-    // were dropped earlier in the same pass (visual clutter, not
-    // atmosphere, once the background went transparent).
+    // Pointer interactivity: raycast against the skull mesh on the canvas.
+    raycaster = new THREE.Raycaster();
+    pointerNDC = new THREE.Vector2();
+    canvas.addEventListener('pointermove', _onPointerMove);
+    canvas.addEventListener('pointerleave', _onPointerLeave);
+    canvas.addEventListener('pointerdown', _onPointerDown);
+
+    // WebGL context loss: without preventDefault() the context is never
+    // restored and the canvas stays permanently black. On restore we rebuild
+    // the composer (its render targets are invalidated) and restart the loop.
+    canvas.addEventListener('webglcontextlost', _onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', _onContextRestored, false);
+
     buildSkull();
-    // buildEarrings() dropped per direct feedback ("evitiamo di metterli,
-    // davvero, non ci servono") -- every `for (const e of earrings)` loop
-    // elsewhere just iterates an empty array, so skipping this removes
-    // them cleanly with no other changes needed.
 
     clock = new THREE.Clock();
     animate();
@@ -261,8 +262,8 @@ function buildSkull(onReady) {
       // Normalize scale/position: the source asset's own units/origin are
       // arbitrary (typical for a downloaded asset) -- center it and scale
       // it to a consistent ~1.4-unit-tall footprint so the existing
-      // camera framing, earring placement, and reaction animations (which
-      // were all tuned against that scale) still line up.
+      // camera framing and reaction animations (which were all tuned
+      // against that scale) still line up.
       const box = new THREE.Box3().setFromObject(model);
       const size = new THREE.Vector3();
       box.getSize(size);
@@ -499,7 +500,10 @@ function updateNaturalLook(time) {
       lookPhaseEndTime = time + 0.6 + Math.random() * 0.5;
     } else {
       lookPhase = 'hold';
-      lookPhaseEndTime = time + 1.5 + Math.random() * 3.5;
+      // More activity -> shorter holds -> more frequent glances, so the
+      // avatar visibly "wakes up" while a render is running.
+      const holdScale = 1.2 - activityLevel * 0.6;
+      lookPhaseEndTime = time + (1.5 + Math.random() * 3.5) * holdScale;
     }
   }
 
@@ -515,6 +519,20 @@ function updateNaturalLook(time) {
 
   skull.rotation.y = lookCurrentY;
   skull.rotation.x = lookCurrentX;
+}
+
+// Forces an immediate 'turn' toward a target using the same easing as an
+// organic glance -- shared by onSaturation, onStep intents and hover.
+function _glanceTo(targetY, targetX, duration) {
+  if (!skull) return;
+  const time = clock.elapsedTime;
+  lookPhase = 'turn';
+  lookFromY = lookCurrentY;
+  lookFromX = lookCurrentX;
+  lookTargetY = targetY;
+  lookTargetX = targetX;
+  lookPhaseStartTime = time;
+  lookPhaseEndTime = time + duration;
 }
 
 // Crossfades to a named baked clip. `loop: true` keeps it running (Idle);
@@ -543,194 +561,100 @@ function playSkullAction(name, { loop = false, fadeSeconds = 0.3 } = {}) {
   }
 }
 
-// ─── Reactive Ring ──────────────────────────────────────────────────────────
+// ─── Pointer interactivity ──────────────────────────────────────────────────
 
-function buildRing() {
-  const geo = new THREE.TorusGeometry(RING_RADIUS, RING_TUBE, 8, RING_SEGMENTS);
-  const mat = new THREE.MeshStandardMaterial({
-    color: '#FF003F',
-    emissive: '#FF003F',
-    emissiveIntensity: 1.0,
-    metalness: 0.3,
-    roughness: 0.4,
-  });
-  ring = new THREE.Mesh(geo, mat);
-  ring.position.y = 0.3;
-  ring.rotation.x = Math.PI / 2;
-  scene.add(ring);
-
-  const pos = ring.geometry.attributes.position;
-  ringOriginalPositions = new Float32Array(pos.array);
+// All handlers no-op safely when WebGL failed or the skull mesh isn't loaded
+// yet -- app.js removes `pointer-events: none` from .fx-canvas, so these
+// receive real events, but a missing renderer/mesh must never throw.
+function _onPointerMove(e) {
+  if (!renderer || !craniumMesh || !raycaster || !camera) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  try {
+    raycaster.setFromCamera(pointerNDC, camera);
+    hovering = raycaster.intersectObject(craniumMesh, true).length > 0;
+  } catch (err) {
+    hovering = false;
+  }
 }
 
-function deformRing(amplitudes) {
-  if (!ring || !ringOriginalPositions) return;
-  const pos = ring.geometry.attributes.position;
-  const array = pos.array;
-  const segCount = RING_SEGMENTS;
+function _onPointerLeave() {
+  hovering = false;
+}
 
-  for (let i = 0; i < segCount; i++) {
-    const amp = amplitudes[i] || 0;
-    for (let j = 0; j < 8; j++) {
-      const idx = (i * 8 + j) * 3;
-      array[idx + 1] = ringOriginalPositions[idx + 1] + amp;
+function _onPointerDown(e) {
+  if (!renderer || !craniumMesh || !raycaster || !camera) return;
+  _onPointerMove(e);
+  if (!hovering) return;
+  _triggerClickReaction();
+}
+
+// A distinct "punch" reaction on click: squash impulse, eye flash, a white
+// accent pop and the skull's own HitRecieve clip.
+function _triggerClickReaction() {
+  punchScale = Math.max(punchScale, 0.6);
+  stepEyeBoost = Math.max(stepEyeBoost, 1.6);
+  accentTarget.set('#FFFFFF');
+  clearTimeout(clickAccentTimer);
+  clickAccentTimer = setTimeout(() => { accentTarget.set('#FF003F'); }, 180);
+  playSkullAction('HitRecieve');
+  if (!_reduceMotion) _glanceTo((Math.random() < 0.5 ? -1 : 1) * 0.2, 0.05, 0.3);
+}
+
+// ─── WebGL context loss ─────────────────────────────────────────────────────
+
+function _onContextLost(e) {
+  // Without preventDefault() the browser never fires webglcontextrestored
+  // and the canvas stays permanently black.
+  e.preventDefault();
+  contextLost = true;
+  if (animFrameId !== null) {
+    cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+  }
+}
+
+function _onContextRestored() {
+  contextLost = false;
+  try {
+    if (renderer && scene && camera) {
+      // The composer's render targets are invalidated by the context loss --
+      // rebuild it against the (now restored) renderer.
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      composer.addPass(new OutputPass());
+      const el = renderer.domElement;
+      composer.setSize(el.clientWidth || 1, el.clientHeight || 1);
     }
+  } catch (err) {
+    console.warn('[three-avatar] Context restore re-init failed:', err);
   }
-  pos.needsUpdate = true;
-  ring.geometry.computeVertexNormals();
-}
-
-// ─── Ring Glow Particles ────────────────────────────────────────────────────
-
-function buildRingGlowParticles() {
-  const positions = new Float32Array(GLOW_PARTICLE_COUNT * 3);
-  const colors = new Float32Array(GLOW_PARTICLE_COUNT * 3);
-  const sizes = new Float32Array(GLOW_PARTICLE_COUNT);
-
-  const color = new THREE.Color();
-
-  for (let i = 0; i < GLOW_PARTICLE_COUNT; i++) {
-    const angle = (i / GLOW_PARTICLE_COUNT) * Math.PI * 2;
-    const radius = RING_RADIUS + (Math.random() - 0.5) * 0.3;
-    const yOff = (Math.random() - 0.5) * 0.2;
-
-    positions[i * 3] = Math.cos(angle) * radius;
-    positions[i * 3 + 1] = 0.3 + yOff;
-    positions[i * 3 + 2] = Math.sin(angle) * radius;
-
-    color.setHSL(0.0, 1, 0.4 + Math.random() * 0.4);
-    colors[i * 3] = color.r;
-    colors[i * 3 + 1] = color.g;
-    colors[i * 3 + 2] = color.b;
-
-    sizes[i] = 0.015 + Math.random() * 0.025;
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-  const mat = new THREE.PointsMaterial({
-    size: 0.02,
-    vertexColors: true,
-    blending: THREE.AdditiveBlending,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.7,
-    depthWrite: false,
-  });
-
-  ringGlowParticles = new THREE.Points(geo, mat);
-  scene.add(ringGlowParticles);
-}
-
-// ─── Earrings ────────────────────────────────────────────────────────────────
-
-function buildEarrings() {
-  const earMat = new THREE.MeshStandardMaterial({
-    color: '#D4A017',
-    metalness: 0.95,
-    roughness: 0.1,
-    envMapIntensity: 1.5,
-  });
-
-  const earGeo = new THREE.TorusGeometry(0.09, 0.018, 10, 14);
-
-  // 3 on left side at different heights
-  const leftPositions = [
-    [-0.55, 0.5, 0.1],
-    [-0.55, 0.28, 0.1],
-    [-0.55, 0.06, 0.1],
-  ];
-  for (const pos of leftPositions) {
-    const mesh = new THREE.Mesh(earGeo.clone(), earMat);
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    mesh.userData.jingleIntensity = 0;
-    mesh.userData.jinglePhase = Math.random() * Math.PI * 2;
-    scene.add(mesh);
-    earrings.push(mesh);
-  }
-
-  // 1 on right side
-  const mesh = new THREE.Mesh(earGeo.clone(), earMat);
-  mesh.position.set(0.55, 0.28, 0.1);
-  mesh.userData.jingleIntensity = 0;
-  mesh.userData.jinglePhase = Math.random() * Math.PI * 2;
-  scene.add(mesh);
-  earrings.push(mesh);
-}
-
-// ─── Particle System ────────────────────────────────────────────────────────
-
-function buildParticles() {
-  const positions = new Float32Array(PARTICLE_COUNT * 3);
-  const colors = new Float32Array(PARTICLE_COUNT * 3);
-  const sizes = new Float32Array(PARTICLE_COUNT);
-  particleVelocities = new Float32Array(PARTICLE_COUNT);
-  particlePhases = new Float32Array(PARTICLE_COUNT);
-
-  const colorA = new THREE.Color('#1A0005');
-  const colorB = new THREE.Color('#FF003F');
-  const colorC = new THREE.Color('#FF6600');
-
-  for (let i = 0; i < PARTICLE_COUNT; i++) {
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(2 * Math.random() - 1);
-    const r = PARTICLE_INNER + Math.random() * (PARTICLE_OUTER - PARTICLE_INNER);
-
-    positions[i * 3] = Math.sin(phi) * Math.cos(theta) * r;
-    positions[i * 3 + 1] = Math.sin(phi) * Math.sin(theta) * r;
-    positions[i * 3 + 2] = Math.cos(phi) * r;
-
-    const t = Math.random();
-    const c = t < 0.7
-      ? colorA.clone().lerp(colorB, t * 1.4)
-      : colorB.clone().lerp(colorC, (t - 0.7) * 3.3);
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-
-    sizes[i] = 0.008 + Math.random() * 0.035;
-    particleVelocities[i] = 0.15 + Math.random() * 0.6;
-    particlePhases[i] = Math.random() * Math.PI * 2;
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-  const mat = new THREE.PointsMaterial({
-    size: 0.025,
-    vertexColors: true,
-    blending: THREE.AdditiveBlending,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.7,
-    depthWrite: false,
-  });
-
-  particles = new THREE.Points(geo, mat);
-  scene.add(particles);
+  if (animFrameId === null) animate();
 }
 
 // ─── Animation Loop ────────────────────────────────────────────────────────
 
 function animate() {
   animFrameId = requestAnimationFrame(animate);
+  if (!renderer || !composer || !skull || contextLost) return;
+
   const delta = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
 
   // Decay state variables
-  compressionIntensity *= ringWaveDecay;
+  compressionIntensity *= compressionDecay;
   deesserFlash *= 0.85;
+  stepEyeBoost *= 0.9;
   if (systemReadyPulse > 0) systemReadyPulse -= delta * 1.5;
   if (celebrationWave > 0) celebrationWave -= delta * 0.4;
 
-  // Idle floating
-  idleFloatPhase += delta * 0.5;
-  const floatY = Math.sin(idleFloatPhase) * 0.015;
+  // Idle floating -- amplitude and speed track the current activity level so
+  // the avatar visibly comes alive while a render runs and settles at rest.
+  idleFloatPhase += delta * (0.3 + activityLevel * 0.5);
+  const floatAmp = _reduceMotion ? 0.004 : (0.008 + activityLevel * 0.02);
+  const floatY = Math.sin(idleFloatPhase) * floatAmp;
 
   // Baked-clip playback (Idle/Yes/No/Bite_Front/Dance/...) drives the
   // actual body motion now -- this loop only adds the subtle vertical
@@ -742,6 +666,14 @@ function animate() {
   if (_props.vinyl && _props.vinyl.visible) {
     _props.vinyl.rotation.z -= delta * 2.2; // steady spin, independent of the skull's own motion
   }
+
+  // Hover glow: smooth toward the current hover state; a fresh hover also
+  // earns a subtle glance toward the pointer.
+  hoverGlow += ((hovering ? 1 : 0) - hoverGlow) * 0.1;
+  if (hovering && !_wasHovering && !_reduceMotion && pointerNDC) {
+    _glanceTo(pointerNDC.x * 0.3, -pointerNDC.y * 0.1, 0.4);
+  }
+  _wasHovering = hovering;
 
   // Skull vibration from compression -- amplitude bumped up (was 0.04) so
   // a hard-hitting glue/multiband moment actually reads as a visible shake
@@ -770,43 +702,15 @@ function animate() {
     skull.scale.set(1, 1, 1);
   }
 
-  // Ring deformation
-  updateRingDeformation(time, delta);
-
-  // Ring color lerp
-  ringColorCurrent.lerp(ringColorTarget, 0.05);
-  if (ring) {
-    ring.material.color.copy(ringColorCurrent);
-    ring.material.emissive.copy(ringColorCurrent);
-    ring.material.emissiveIntensity = 0.8 + compressionIntensity * 2 + deesserFlash * 1.5;
-  }
-
-  // Ring glow particles orbit
-  if (ringGlowParticles) {
-    const gp = ringGlowParticles.geometry.attributes.position;
-    const ga = gp.array;
-    const speed = ringRotationSpeed * 1.5;
-    for (let i = 0; i < GLOW_PARTICLE_COUNT; i++) {
-      const idx = i * 3;
-      const x = ga[idx];
-      const z = ga[idx + 2];
-      const theta = Math.atan2(z, x) + speed * delta * 20;
-      const r = Math.sqrt(x * x + z * z);
-      ga[idx] = Math.cos(theta) * r;
-      ga[idx + 2] = Math.sin(theta) * r;
-      ga[idx + 1] += Math.sin(time * 2 + i) * delta * 0.1;
-    }
-    gp.needsUpdate = true;
-  }
+  // Accent color lerp -- applied to the eye lights and rim light so every
+  // color-driven reaction (approve/reject/glitch/easter egg/...) stays visible.
+  accentCurrent.lerp(accentTarget, 0.08);
+  if (eyeLeft && eyeLeft.color) eyeLeft.color.copy(accentCurrent);
+  if (eyeRight && eyeRight.color) eyeRight.color.copy(accentCurrent);
+  if (rimLight) rimLight.color.copy(accentCurrent);
 
   // Eye socket glow
   updateEyes(time);
-
-  // Particles
-  updateParticles(delta, time);
-
-  // Earrings jingle
-  updateEarrings(delta, time);
 
   // Audition tilt
   if (Math.abs(auditionTilt) > 0.001) {
@@ -816,84 +720,15 @@ function animate() {
   composer.render();
 }
 
-function updateRingDeformation(time, delta) {
-  if (!ring) return;
-
-  const amplitudes = new Array(RING_SEGMENTS).fill(0);
-
-  // Compression wave
-  if (compressionIntensity > 0.01) {
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      amplitudes[i] += Math.sin(angle * 2 - time * 5) * compressionIntensity * 0.2;
-      amplitudes[i] += Math.sin(angle * 3 + time * 3) * compressionIntensity * 0.08;
-    }
-  }
-
-  // BPM pulse
-  if (bpmInterval > 0) {
-    bpmPhase += delta / bpmInterval;
-    const pulse = Math.max(0, Math.sin(bpmPhase * Math.PI * 2));
-    const pulseSharp = pulse * pulse * pulse;
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      amplitudes[i] += Math.sin(angle + time * 2) * pulseSharp * 0.2;
-      amplitudes[i] += Math.sin(angle * 4 - time * 4) * pulse * 0.05;
-    }
-  }
-
-  // De-esser flash ripple
-  if (deesserFlash > 0.01) {
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      const ripple = Math.sin(angle * 6 - time * 10) * deesserFlash * 0.12;
-      amplitudes[i] += ripple;
-    }
-  }
-
-  // Celebration wave
-  if (celebrationWave > 0) {
-    const wavePhase = (time * 4) % (Math.PI * 2);
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      amplitudes[i] += Math.sin(angle * 3 - wavePhase) * celebrationWave * 0.25;
-      amplitudes[i] += Math.sin(angle * 5 + wavePhase * 1.5) * celebrationWave * 0.1;
-    }
-  }
-
-  // System ready pulse
-  if (systemReadyPulse > 0) {
-    const pulse = Math.sin(time * 8) * systemReadyPulse;
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      amplitudes[i] += pulse * 0.12;
-      amplitudes[i] += Math.sin(angle * 2 + time * 6) * systemReadyPulse * 0.06;
-    }
-  }
-
-  // Activity level ambient motion
-  if (activityLevel > 0) {
-    for (let i = 0; i < RING_SEGMENTS; i++) {
-      const angle = (i / RING_SEGMENTS) * Math.PI * 2;
-      amplitudes[i] += Math.sin(angle * 3 + time * 1.2) * activityLevel * 0.025;
-      amplitudes[i] += Math.sin(angle * 7 + time * 2.5) * activityLevel * 0.01;
-    }
-  }
-
-  deformRing(amplitudes);
-}
-
 function updateEyes(time) {
   if (!eyeLeft || !eyeRight) return;
 
   // Near-zero at rest (was a permanent 0.6 baseline) -- a light source
   // sitting in the socket is visible as a distinct glowing shape no matter
   // how it's tuned, which read as "two red dots stuck on all the time"
-  // rather than a reactive cue. Keeping it almost off at idle and letting
-  // the additive bumps below do all the actual visible work means the red
-  // eyes only appear as a genuine reaction (de-esser hit, RedLine Mode,
-  // etc.), not a constant fixture.
-  let intensity = 0.05;
+  // rather than a reactive cue. A small activity-linked baseline keeps the
+  // eyes faintly alive while the engine is busy without becoming a fixture.
+  let intensity = 0.05 + activityLevel * 0.08;
 
   if (deesserFlash > 0.01) {
     intensity += deesserFlash * 2.5;
@@ -917,6 +752,10 @@ function updateEyes(time) {
     intensity += bpmPulse * 0.15;
   }
 
+  // Narration-intent and hover boosts (both decay/smooth per frame).
+  intensity += stepEyeBoost * 1.5;
+  intensity += hoverGlow * 0.8;
+
   // Capped at the same magnitude as the de-esser's proven-visible flash
   // (deesserFlash * 2.5, max ~2.5) rather than a bigger jump -- a much
   // higher boost pushes this saturated red material's rendered color
@@ -927,55 +766,6 @@ function updateEyes(time) {
 
   eyeLeft.intensity = intensity;
   eyeRight.intensity = intensity;
-}
-
-function updateParticles(delta, time) {
-  if (!particles) return;
-
-  const pos = particles.geometry.attributes.position;
-  const array = pos.array;
-
-  const speed = particleOrbitSpeed
-    * (listeningMode ? 0.2 : 1)
-    * (deepScanMode ? 3 : 1)
-    * (0.3 + activityLevel * 0.7);
-
-  for (let i = 0; i < PARTICLE_COUNT; i++) {
-    const idx = i * 3;
-    const x = array[idx];
-    const z = array[idx + 2];
-
-    const theta = Math.atan2(z, x) + speed * delta * particleVelocities[i];
-    const r = Math.sqrt(x * x + z * z);
-    array[idx] = Math.cos(theta) * r;
-    array[idx + 2] = Math.sin(theta) * r;
-
-    // Vertical oscillation with phase
-    array[idx + 1] += Math.sin(time * 0.5 + particlePhases[i]) * delta * 0.03;
-
-    // Radial breathing on compression
-    if (compressionIntensity > 0.05) {
-      const breathe = 1 + Math.sin(time * 3 + particlePhases[i]) * compressionIntensity * 0.02;
-      array[idx] *= breathe;
-      array[idx + 2] *= breathe;
-    }
-  }
-
-  pos.needsUpdate = true;
-}
-
-function updateEarrings(_delta, time) {
-  for (const e of earrings) {
-    let intensity = e.userData.jingleIntensity || 0;
-    intensity *= 0.93;
-    e.userData.jingleIntensity = intensity;
-
-    const phase = e.userData.jinglePhase || 0;
-    const swing = Math.sin(time * 3 + phase) * (0.015 + intensity * 0.1);
-    e.rotation.z = swing;
-    e.rotation.x = Math.sin(time * 2.5 + phase * 1.3) * (0.01 + intensity * 0.06);
-    e.rotation.y = Math.sin(time * 2 + phase * 0.7) * (0.005 + intensity * 0.04);
-  }
 }
 
 // ─── DSP Event Handlers ─────────────────────────────────────────────────────
@@ -989,20 +779,6 @@ function onSystemReady() {
     if (eyeLeft) eyeLeft.intensity = 0.05;
     if (eyeRight) eyeRight.intensity = 0.05;
   }, 1200);
-
-  // Particles burst
-  if (particles) {
-    const pos = particles.geometry.attributes.position;
-    const array = pos.array;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const idx = i * 3;
-      const burst = 1.6;
-      array[idx] *= burst;
-      array[idx + 1] *= burst;
-      array[idx + 2] *= burst;
-    }
-    pos.needsUpdate = true;
-  }
 }
 
 function onCompression(ratio, releaseMs) {
@@ -1011,12 +787,7 @@ function onCompression(ratio, releaseMs) {
   // moved the needle visually.
   const amplitude = Math.min(0.5, (ratio - 1) * 0.09);
   compressionIntensity = amplitude;
-  ringWaveDecay = Math.max(0.85, 1 - (releaseMs || 150) / 2000);
-
-  // Earrings jingle
-  for (const e of earrings) {
-    e.userData.jingleIntensity = Math.min(1, (e.userData.jingleIntensity || 0) + amplitude * 2);
-  }
+  compressionDecay = Math.max(0.85, 1 - (releaseMs || 150) / 2000);
 }
 
 function onGlueCompression(ratio) {
@@ -1027,13 +798,8 @@ function onGlueCompression(ratio) {
     punchScale = Math.min(1, amplitude * 1.5);
   }
 
-  ringColorTarget.set('#FF3366');
-  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 250);
-
-  // Strong earring jingle
-  for (const e of earrings) {
-    e.userData.jingleIntensity = Math.min(1, (e.userData.jingleIntensity || 0) + 0.5);
-  }
+  accentTarget.set('#FF3366');
+  setTimeout(() => { accentTarget.set('#FF003F'); }, 250);
 }
 
 function onDeesser() {
@@ -1057,7 +823,6 @@ function onBpm(bpm) {
 }
 
 function onListening(on) {
-  listeningMode = on;
   if (on) {
     _showProp('headphones');
   } else {
@@ -1092,32 +857,113 @@ function onInstrument(instrument) {
 
 function onDeepScan() {
   deepScanMode = true;
-  ringColorTarget.set('#FF0044');
+  accentTarget.set('#FF0044');
   playSkullAction('Bite_InPlace', { loop: true });
 }
 
 function onDeepScanDone() {
   deepScanMode = false;
-  ringColorTarget.set('#FF003F');
+  accentTarget.set('#FF003F');
   playSkullAction('Idle', { loop: true });
 }
 
-function onStep() {
+// Lightweight intent classifier over the engine's Italian narration text.
+// Returns a coarse intent tag (or null) -- deliberately cheap, no allocation
+// beyond the regex tests, since onStep fires dozens of times per second.
+function _classifyStep(text) {
+  if (!text) return null;
+  if (/errore|error|fallit|fail/.test(text)) return 'error';
+  if (/caric|load/.test(text)) return 'load';
+  if (/analiz|analys|bpm|tonalit|loudness/.test(text)) return 'analyze';
+  if (/master/.test(text)) return 'master';
+  if (/mix/.test(text)) return 'mix';
+  if (/controllo|\bqc\b|verific/.test(text)) return 'qc';
+  if (/fatto|complet|finit|done/.test(text)) return 'done';
+  return null;
+}
+
+// Distinct, cheap reaction per intent: an accent color, an eye-glow boost and
+// (unless reduced-motion) a small glance. Throttled by onStep so a burst of
+// same-intent lines doesn't retrigger the glance every frame.
+function _applyStepIntent(intent) {
+  stepEyeBoost = Math.max(stepEyeBoost, 0.6);
+  switch (intent) {
+    case 'load':
+      accentTarget.set('#FF003F');
+      if (!_reduceMotion) _glanceTo(-0.25, -0.08, 0.5);
+      break;
+    case 'analyze':
+      accentTarget.set('#FF6600');
+      stepEyeBoost = Math.max(stepEyeBoost, 0.9);
+      if (!_reduceMotion) _glanceTo((Math.random() < 0.5 ? -1 : 1) * 0.3, 0.05, 0.45);
+      break;
+    case 'mix':
+      accentTarget.set('#FF003F');
+      if (!_reduceMotion) _glanceTo(0.15, 0.06, 0.4);
+      break;
+    case 'master':
+      accentTarget.set('#FF3366');
+      stepEyeBoost = Math.max(stepEyeBoost, 1.0);
+      if (!_reduceMotion) _glanceTo(0, -0.1, 0.5);
+      break;
+    case 'qc':
+      accentTarget.set('#33FF88');
+      if (!_reduceMotion) _glanceTo(0.2, 0.04, 0.35);
+      break;
+    case 'done':
+      accentTarget.set('#33FF88');
+      stepEyeBoost = Math.max(stepEyeBoost, 1.2);
+      break;
+    case 'error':
+      accentTarget.set('#FF3300');
+      stepEyeBoost = Math.max(stepEyeBoost, 1.5);
+      if (!_reduceMotion) _glanceTo((Math.random() < 0.5 ? -1 : 1) * 0.35, 0.08, 0.3);
+      break;
+    default:
+      return;
+  }
+  clearTimeout(stepAccentTimer);
+  stepAccentTimer = setTimeout(() => { accentTarget.set('#FF003F'); }, 600);
+}
+
+function onStep(msg) {
+  // Keep the existing micro-pulse so every narration line still nudges the
+  // avatar, then layer the intent-driven reaction on top.
   compressionIntensity = Math.max(compressionIntensity, 0.04);
+
+  const text = typeof msg === 'string' ? msg.toLowerCase() : '';
+  const intent = _classifyStep(text);
+  if (!intent) return;
+
+  const time = clock.elapsedTime;
+  if (intent === lastStepIntent && time - lastStepReactTime < 0.4) return;
+  lastStepIntent = intent;
+  lastStepReactTime = time;
+  _applyStepIntent(intent);
 }
 
 function onApprove() {
   playSkullAction('Yes');
-  ringColorTarget.set('#33FF88');
-  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 500);
+  accentTarget.set('#33FF88');
+  setTimeout(() => { accentTarget.set('#FF003F'); }, 500);
   punchScale = Math.max(punchScale, 0.35);
 }
 
+// Dismissive reject reaction: the skull's own "No" head-shake clip plus a
+// short group-level side-to-side shake, an orange accent flash and a punch.
+// Exported for app.js to wire up (not called by the current app.js yet).
 function onReject() {
   playSkullAction('No');
-  ringColorTarget.set('#FF3300');
-  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 500);
+  accentTarget.set('#FF3300');
+  clearTimeout(rejectAccentTimer);
+  rejectAccentTimer = setTimeout(() => { accentTarget.set('#FF003F'); }, 500);
   punchScale = Math.max(punchScale, 0.35);
+  stepEyeBoost = Math.max(stepEyeBoost, 1.0);
+  if (!_reduceMotion) {
+    _glanceTo(0.4, 0.05, 0.18);
+    setTimeout(() => _glanceTo(-0.4, 0.05, 0.18), 180);
+    setTimeout(() => _glanceTo(0, 0, 0.2), 360);
+  }
 }
 
 function onDone() {
@@ -1142,18 +988,6 @@ function onDone() {
     }, 400);
   }, 600);
 
-  if (particles) {
-    const pos = particles.geometry.attributes.position;
-    const array = pos.array;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const idx = i * 3;
-      array[idx] *= 1.4;
-      array[idx + 1] *= 1.4;
-      array[idx + 2] *= 1.4;
-    }
-    pos.needsUpdate = true;
-  }
-
   // The vinyl is the "here's the finished record" beat -- shown briefly at
   // the end, not left up permanently (this function doesn't run again
   // until the next full render, so a plain timeout is enough here).
@@ -1164,15 +998,15 @@ function onDone() {
 function onAuditionState(state) {
   if (state === 'BEFORE') {
     auditionTilt = 0.06;
-    ringColorTarget.set('#FF6600');
+    accentTarget.set('#FF6600');
     _showProp('cassette');
   } else if (state === 'AFTER') {
     auditionTilt = -0.04;
-    ringColorTarget.set('#FF003F');
+    accentTarget.set('#FF003F');
     _showProp('cassette');
   } else {
     auditionTilt = 0;
-    ringColorTarget.set('#FF003F');
+    accentTarget.set('#FF003F');
     _hideAllProps();
   }
 }
@@ -1183,14 +1017,11 @@ function onAuditionState(state) {
 function onSaturation(drive) {
   if (!skull) return;
   const amount = Math.max(0, Math.min(1, (drive || 0) / 4));
-  const time = clock.elapsedTime;
-  lookPhase = 'turn';
-  lookFromY = lookCurrentY;
-  lookFromX = lookCurrentX;
-  lookTargetY = (Math.random() < 0.5 ? -1 : 1) * (0.35 + amount * 0.35);
-  lookTargetX = 0.05;
-  lookPhaseStartTime = time;
-  lookPhaseEndTime = time + 0.5 + amount * 0.3;
+  _glanceTo(
+    (Math.random() < 0.5 ? -1 : 1) * (0.35 + amount * 0.35),
+    0.05,
+    0.5 + amount * 0.3
+  );
   if (eyeLeft) eyeLeft.intensity = 3.0;
   if (eyeRight) eyeRight.intensity = 3.0;
   setTimeout(() => {
@@ -1204,17 +1035,17 @@ function onSaturation(drive) {
 // flash + tiny punch, no head movement (a glitch reads as sudden, not as
 // a considered glance).
 function onGlitch() {
-  ringColorTarget.set('#FFFFFF');
-  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 90);
+  accentTarget.set('#FFFFFF');
+  setTimeout(() => { accentTarget.set('#FF003F'); }, 90);
   punchScale = Math.max(punchScale, 0.25);
 }
 
 // Easter egg ("RedLine Mode"): secret key combo (Ctrl+Alt+R, see app.js
 // keydown listener) triggers a ~4.5s celebratory burst -- eyes burning red,
-// a particle burst, the skull's own Dance clip, a white-to-red ring flash,
-// and a fading "REDLINE MODE" label. No canvas overlay drawing (an earlier
-// version drew a Lissajous curve here; dropped per feedback -- read as
-// distracting neon circles rather than a clean reaction).
+// the skull's own Dance clip, a white-to-red accent flash, and a fading
+// "REDLINE MODE" label. No canvas overlay drawing (an earlier version drew a
+// Lissajous curve here; dropped per feedback -- read as distracting neon
+// circles rather than a clean reaction).
 function onEasterEgg() {
   const label = document.getElementById('easter-egg-label');
   const durationMs = 4500;
@@ -1227,44 +1058,29 @@ function onEasterEgg() {
     label.classList.add('playing');
   }
 
-  // Skull celebration: same Dance clip as a finished render, plus a punch
-  // and a particle burst (mirrors onDone's burst, scaled a bit larger).
+  // Skull celebration: same Dance clip as a finished render, plus a punch.
   playSkullAction('Dance');
   punchScale = 1.0;
 
   // Eyes burn bright red for the whole duration -- routed through
   // updateEyes()'s per-frame formula (raveEyeGlowUntil), not a direct
-  // assignment: updateEyes() overwrites emissiveIntensity every single
-  // frame from its own state flags, so a one-off direct set here would
-  // have been clobbered again within the next ~16ms and never actually
-  // seen.
+  // assignment: updateEyes() overwrites intensity every single frame from
+  // its own state flags, so a one-off direct set here would have been
+  // clobbered again within the next ~16ms and never actually seen.
   raveEyeGlowUntil = clock.elapsedTime + durationMs / 1000;
 
-  if (particles) {
-    const pos = particles.geometry.attributes.position;
-    const array = pos.array;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const idx = i * 3;
-      array[idx] *= 1.6;
-      array[idx + 1] *= 1.6;
-      array[idx + 2] *= 1.6;
-    }
-    pos.needsUpdate = true;
-  }
-
-  // Ring flashes to white-hot for an instant, then settles back to the
+  // Accent flashes to white-hot for an instant, then settles back to the
   // house accent color -- same beat as onGlueCompression's slam, just held
-  // a little longer to match the eyes/particle burst.
-  ringColorTarget.set('#FFFFFF');
-  setTimeout(() => { ringColorTarget.set('#FF003F'); }, 300);
+  // a little longer to match the eyes.
+  accentTarget.set('#FFFFFF');
+  setTimeout(() => { accentTarget.set('#FF003F'); }, 300);
 }
 
+// Called by app.js (startup + repeatedly during a render). The main loop
+// reads `activityLevel` every frame, so idle motion intensity tracks it
+// continuously instead of only reflecting the single startup value.
 function setActivity(level) {
   activityLevel = Math.max(0, Math.min(1, level));
-  if (!listeningMode && !deepScanMode) {
-    ringRotationSpeed = 0.001 + activityLevel * 0.004;
-    particleOrbitSpeed = 0.0002 + activityLevel * 0.0012;
-  }
 }
 
 // ─── Resize / Dispose ──────────────────────────────────────────────────────
@@ -1282,6 +1098,14 @@ function dispose() {
     cancelAnimationFrame(animFrameId);
     animFrameId = null;
   }
+  if (renderer && renderer.domElement) {
+    const canvas = renderer.domElement;
+    canvas.removeEventListener('pointermove', _onPointerMove);
+    canvas.removeEventListener('pointerleave', _onPointerLeave);
+    canvas.removeEventListener('pointerdown', _onPointerDown);
+    canvas.removeEventListener('webglcontextlost', _onContextLost);
+    canvas.removeEventListener('webglcontextrestored', _onContextRestored);
+  }
   if (renderer) renderer.dispose();
   if (composer) composer.dispose();
   if (scene) {
@@ -1296,15 +1120,21 @@ function dispose() {
       }
     });
   }
+  clearTimeout(doneEyeTimer);
+  clearTimeout(stepAccentTimer);
+  clearTimeout(rejectAccentTimer);
+  clearTimeout(clickAccentTimer);
   scene = null;
   camera = null;
   renderer = null;
   composer = null;
-  ring = null;
-  ringOriginalPositions = null;
-  ringGlowParticles = null;
-  particles = null;
-  earrings = [];
+  skull = null;
+  craniumMesh = null;
+  eyeLeft = null;
+  eyeRight = null;
+  rimLight = null;
+  raycaster = null;
+  pointerNDC = null;
   if (_instrumentCycleTimer !== null) {
     clearInterval(_instrumentCycleTimer);
     _instrumentCycleTimer = null;
