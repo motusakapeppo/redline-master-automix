@@ -1,0 +1,130 @@
+{"kind": "event", "payload": {"air_gain_db": 1.2, "air_shelf_hz": 9000.0, "mono_below_hz": 120.0, "type": "mid_side"}}
+{"kind": "event", "payload": {"amount_db": 3.5, "band_high_hz": 3200.0, "band_low_hz": 2000.0, "type": "spectral_duck"}}
+{"kind": "event", "payload": {"amount_db": 5.3, "type": "kick_bass_sidechain"}}
+{"kind": "event", "payload": {"attack_gain_db": 1.0, "sustain_gain_db": 0.5, "type": "transient_shaper"}}
+{"kind": "event", "payload": {"attack_ms": 0.8, "ratio": 8.0, "release_ms": 60.0, "stage": "peak_catcher", "stem": "vocals", "threshold_db": -12.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 10.0, "ratio": 3.0, "release_ms": 150.0, "stem": "bass", "threshold_db": -18.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 12.0, "ratio": 2.5, "release_ms": 130.0, "stem": "Guitar", "threshold_db": -18.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 30.0, "ratio": 2.0, "release_ms": 300.0, "stem": "Synth_Pad", "threshold_db": -22.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 30.0, "ratio": 2.0, "release_ms": 300.0, "stem": "other", "threshold_db": -22.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 30.0, "ratio": 3.0, "release_ms": 120.0, "stem": "Kick_In", "threshold_db": -16.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 30.0, "ratio": 3.0, "release_ms": 120.0, "stem": "Kick_Out", "threshold_db": -16.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 30.0, "ratio": 3.0, "release_ms": 120.0, "stem": "drums", "threshold_db": -16.0, "type": "compressor"}}
+{"kind": "event", "payload": {"attack_ms": 60.0, "ratio": 3.0, "release_ms": 250.0, "stage": "leveler", "stem": "vocals", "threshold_db": -20.0, "type": "compressor"}}
+{"kind": "event", "payload": {"bass_phase_shift_deg": 0.0, "corrections": ["sub_bass (40Hz) +3.0dB", "bass (90Hz) +3.0dB", "mid (700Hz) +1.7dB", "high_mid (2500Hz) +2.0dB", "air (12000Hz) -3.0dB", "loudness trim -3.0dB (post-EQ drift correction, iter 1)", "iter2: sub_bass (40Hz) +1.5dB", "iter2: bass (90Hz) +1.5dB", "iter2: air (12000Hz) -1.5dB", "loudness trim -3.0dB (post-EQ drift correction, iter 2)", "QC converged after 2 iterations", "pass 1: makeup loudness +1.75dB", "pass 1: compressione glue extra (crest 13.0dB oltre target)", "pass 1: larghezza stereo +0.78dB (canale Side)", "pass 2: compressione glue extra (crest 13.0dB oltre target)", "pass 2: larghezza stereo +0.77dB (canale Side)", "pass 3: compressione glue extra (crest 13.0dB oltre target)", "pass 3: larghezza stereo +0.77dB (canale Side)"], "lufs": -11.0, "mono_compat_floor": null, "mono_compatibility": 0.99, "passed": false, "true_peak_db": -3.390000104904175, "type": "qc_report"}}
+{"kind": "event", "payload": {"bpm": 92.28515625, "mix": 0.1, "type": "vocal_space"}}
+{"kind": "event", "payload": {"bus": "hall", "mix": 0.35, "stem": "Vocals_Double_Falsetto", "type": "reverb_send"}}
+{"kind": "event", "payload": {"buses": ["hall"], "type": "reverb_bus_render"}}
+{"kind": "event", "payload": {"ceiling_db": -0.3, "type": "soft_clip"}}
+{"kind": "event", "payload": {"ceiling_db": -1.0, "type": "limiter"}}
+{"kind": "event", "payload": {"centered": true, "stems": ["vocals"], "type": "vocal_main_bus"}}
+{"kind": "event", "payload": {"comp_ratio": 2.2, "register": "falsetto", "stem": "Vocals_Double_Falsetto", "type": "vocal_stack_register"}}
+{"kind": "event", "payload": {"crest_delta": -3.03, "crest_factor": 13.03, "lufs": -14.0, "lufs_delta": -0.0, "mono_compatibility": 0.996, "pass": 2, "type": "master_feedback_pass", "width_delta": -0.096}}
+{"kind": "event", "payload": {"crest_delta": -3.03, "crest_factor": 13.03, "lufs": -14.0, "lufs_delta": -0.0, "mono_compatibility": 0.996, "pass": 3, "type": "master_feedback_pass", "width_delta": -0.096}}
+{"kind": "event", "payload": {"crest_delta": -3.03, "crest_factor": 13.03, "lufs": -15.75, "lufs_delta": 1.75, "mono_compatibility": 0.997, "pass": 1, "type": "master_feedback_pass", "width_delta": -0.097}}
+{"kind": "event", "payload": {"current_lufs": -15.1, "gain_db": 1.1, "target_lufs": -14.0, "type": "loudness_gain"}}
+{"kind": "event", "payload": {"cutoff_hz": 150.0, "fundamental_hz": 440.0, "stem": "vocals", "type": "dynamic_hpf"}}
+{"kind": "event", "payload": {"depth": "background", "stem": "Guitar", "type": "depth_stage"}}
+{"kind": "event", "payload": {"depth": "background", "stem": "Synth_Pad", "type": "depth_stage"}}
+{"kind": "event", "payload": {"depth": "background", "stem": "other", "type": "depth_stage"}}
+{"kind": "event", "payload": {"drive": 0.3, "stem": "Guitar", "type": "saturation"}}
+{"kind": "event", "payload": {"drive": 0.35, "mix": 0.22, "stem": "Kick_In", "type": "saturation"}}
+{"kind": "event", "payload": {"drive": 0.35, "mix": 0.22, "stem": "Kick_Out", "type": "saturation"}}
+{"kind": "event", "payload": {"drive": 0.35, "mix": 0.22, "stem": "drums", "type": "saturation"}}
+{"kind": "event", "payload": {"drive": 0.8, "stem": "Vocals_Double_Falsetto", "type": "saturation"}}
+{"kind": "event", "payload": {"exciter_drive": 0.4, "split_hz": 120.0, "stem": "bass", "type": "bass_chain"}}
+{"kind": "event", "payload": {"freq_hz": 12000, "gain_db": 2.0, "kind": "high_shelf", "q": 0.7, "type": "bus_eq_band"}}
+{"kind": "event", "payload": {"freq_hz": 123.8, "gain_db": -4.0, "stem": "bass", "type": "resonance_cut"}}
+{"kind": "event", "payload": {"freq_hz": 220.7, "gain_db": -4.0, "stem": "Synth_Pad", "type": "resonance_cut"}}
+{"kind": "event", "payload": {"freq_hz": 220.7, "gain_db": -4.0, "stem": "other", "type": "resonance_cut"}}
+{"kind": "event", "payload": {"freq_hz": 250, "gain_db": -2.5, "kind": "peak", "q": 1.2, "type": "bus_eq_band"}}
+{"kind": "event", "payload": {"freq_hz": 3000.0, "gain_db": 1.5, "stem": "vocals", "type": "presence_boost"}}
+{"kind": "event", "payload": {"freq_hz": 328.4, "gain_db": -4.0, "stem": "Guitar", "type": "resonance_cut"}}
+{"kind": "event", "payload": {"freq_hz": 3500.0, "gain_db": 2.0, "kind": "peak", "stem": "Guitar", "type": "instrument_eq"}}
+{"kind": "event", "payload": {"freq_hz": 441.4, "gain_db": -4.0, "stem": "vocals", "type": "resonance_cut"}}
+{"kind": "event", "payload": {"freq_hz": 45, "gain_db": 4.0, "kind": "low_shelf", "q": 0.7, "type": "bus_eq_band"}}
+{"kind": "event", "payload": {"freq_hz": 500.0, "gain_db": -2.0, "kind": "peak", "stem": "Guitar", "type": "instrument_eq"}}
+{"kind": "event", "payload": {"freq_hz": 500.0, "gain_db": -3.5, "stem": "Guitar", "type": "midrange_masking_cut"}}
+{"kind": "event", "payload": {"freq_hz": 5000, "gain_db": 2.5, "kind": "peak", "q": 1.0, "type": "bus_eq_band"}}
+{"kind": "event", "payload": {"freq_hz": 6000.0, "gain_db": -2.0, "kind": "high_shelf", "stem": "Synth_Pad", "type": "instrument_eq"}}
+{"kind": "event", "payload": {"freq_hz": 6000.0, "gain_db": -2.0, "kind": "high_shelf", "stem": "other", "type": "instrument_eq"}}
+{"kind": "event", "payload": {"freq_hz": 7000.0, "gain_db": 1.5, "kind": "high_shelf", "stem": "Vocals_Double_Falsetto", "type": "instrument_eq"}}
+{"kind": "event", "payload": {"freq_hz": 800, "gain_db": -1.5, "kind": "peak", "q": 1.0, "type": "bus_eq_band"}}
+{"kind": "event", "payload": {"fundamental_hz": 880.0, "hf_ratio": 0.377, "register": "falsetto", "stem": "Vocals_Double_Falsetto", "type": "register_classified"}}
+{"kind": "event", "payload": {"high_hz": 10738.0, "low_hz": 7738.0, "register": "falsetto", "stem": "Vocals_Double_Falsetto", "type": "deesser"}}
+{"kind": "event", "payload": {"high_hz": 4000.0, "low_hz": 150.0, "recipes": {"high": {"attack_ms": 5.0, "ratio": 1.6, "release_ms": 80.0, "threshold_db": -14.0}, "low": {"attack_ms": 20.0, "ratio": 2.5, "release_ms": 180.0, "threshold_db": -18.0}, "mid": {"attack_ms": 10.0, "ratio": 1.8, "release_ms": 120.0, "threshold_db": -16.0}}, "type": "multiband_compressor"}}
+{"kind": "event", "payload": {"high_hz": 6087.0, "low_hz": 3087.0, "stem": "vocals", "type": "deesser"}}
+{"kind": "event", "payload": {"instrument": "bass", "stem": "bass", "type": "stem_instrument"}}
+{"kind": "event", "payload": {"instrument": "guitar", "stem": "Guitar", "type": "stem_instrument"}}
+{"kind": "event", "payload": {"instrument": "guitar_electric", "stem": "Guitar", "type": "instrument_chain"}}
+{"kind": "event", "payload": {"instrument": "synth_pad", "stem": "Synth_Pad", "type": "instrument_chain"}}
+{"kind": "event", "payload": {"instrument": "synth_pad", "stem": "other", "type": "instrument_chain"}}
+{"kind": "event", "payload": {"link_id": "kick", "members": ["Kick_In", "Kick_Out"], "resonance_freq_hz": null, "type": "link_group"}}
+{"kind": "event", "payload": {"mix": 0.2, "sources": ["vocal_main_bus", "drums", "Kick_In", "Kick_Out"], "type": "parallel_bus"}}
+{"kind": "event", "payload": {"pan_magnitude": 0.95, "register": "falsetto", "stem": "Vocals_Double_Falsetto", "type": "double_auto_split"}}
+{"kind": "event", "payload": {"ratio": 4.6, "threshold_db": -16.0, "type": "bus_compressor"}}
+{"kind": "event", "payload": {"registers": ["falsetto"], "type": "backing_vocals_bus"}}
+{"kind": "event", "payload": {"stage": "mix", "type": "done"}}
+{"kind": "event", "payload": {"stem": "Vocals_Double_Falsetto", "type": "denoise"}}
+{"kind": "event", "payload": {"stem": "Vocals_Double_Falsetto", "type": "elastic_align", "windows_skipped": 14, "windows_stretched": 6, "windows_total": 20}}
+{"kind": "event", "payload": {"stem": "vocals", "type": "denoise"}}
+{"kind": "event", "payload": {"type": "stereo_widen", "width": 0.3}}
+{"kind": "step", "payload": "  'Guitar': accumulo medio-basso con la voce a 500Hz, taglio -3.5dB"}
+{"kind": "step", "payload": "  'Guitar': risonanza rilevata a 328Hz, taglio -4.0dB"}
+{"kind": "step", "payload": "  'Guitar': sfondo (taglio sopra 6kHz, compressione 6:1, riverbero 45%)"}
+{"kind": "step", "payload": "  'Guitar': trattato come 'guitar_electric'"}
+{"kind": "step", "payload": "  'Synth_Pad': risonanza rilevata a 221Hz, taglio -4.0dB"}
+{"kind": "step", "payload": "  'Synth_Pad': sfondo (taglio sopra 6kHz, compressione 6:1, riverbero 45%)"}
+{"kind": "step", "payload": "  'Synth_Pad': trattato come 'synth_pad'"}
+{"kind": "step", "payload": "  'Vocals_Double_Falsetto': allineamento elastico sillabico (6<PATH> finestre corrette, 14 saltate per sicurezza)"}
+{"kind": "step", "payload": "  'Vocals_Double_Falsetto': fondamentale 880Hz, energia alte 38% -> registro 'falsetto'"}
+{"kind": "step", "payload": "  'Vocals_Double_Falsetto': riduzione rumore di fondo"}
+{"kind": "step", "payload": "  'Vocals_Double_Falsetto': unica doppia nel registro 'falsetto' senza indicazione L<PATH> -- sdoppiata automaticamente a L+R"}
+{"kind": "step", "payload": "  'bass': risonanza rilevata a 124Hz, taglio -4.0dB"}
+{"kind": "step", "payload": "  'other': risonanza rilevata a 221Hz, taglio -4.0dB"}
+{"kind": "step", "payload": "  'other': sfondo (taglio sopra 6kHz, compressione 6:1, riverbero 45%)"}
+{"kind": "step", "payload": "  'other': trattato come 'synth_pad'"}
+{"kind": "step", "payload": "  'vocals': riduzione rumore di fondo"}
+{"kind": "step", "payload": "  'vocals': risonanza rilevata a 441Hz, taglio -4.0dB"}
+{"kind": "step", "payload": "Applico EQ di bus per genere 'Trap' (tilt calore: +0.0)"}
+{"kind": "step", "payload": "Bilanciamento bed strumentale: 4 strati attivi -> -3.0dB"}
+{"kind": "step", "payload": "Bilanciamento strumenti 'other': 3 strati attivi (su 3 totali) -> -1.8dB"}
+{"kind": "step", "payload": "Bus Vocal_Doubles: volume ridotto al 50% della Main"}
+{"kind": "step", "payload": "Bus Vocal_Main: 1 tracce lead sommate, centrata al massimo (mono-lock)"}
+{"kind": "step", "payload": "Bus a +4.9dBFS prima della glue: applico headroom di sicurezza"}
+{"kind": "step", "payload": "Bus musicale Mid<PATH> lati +1.5dB sopra 6kHz (nessun buco vocale statico)"}
+{"kind": "step", "payload": "Bus parallelo (New York compression) su voce+batteria, mix 20%"}
+{"kind": "step", "payload": "Bus riverbero 'hall': renderizzato una sola volta (Abbey Road EQ sul ritorno)"}
+{"kind": "step", "payload": "Bus voci di supporto: 1 sub-bus per registro (falsetto), colla finale 2.0:1"}
+{"kind": "step", "payload": "Compressione glue sul bus: ratio 4.6:1 (aggressività 3<PATH>"}
+{"kind": "step", "payload": "Compressione multibanda: basso <150Hz (2.5:1), medio (1.8:1), alto >4000Hz (1.6:1)"}
+{"kind": "step", "payload": "Controllo qualità automatico: misuro il risultato e correggo se serve..."}
+{"kind": "step", "payload": "Ducking spettrale (2000-3200Hz): strumentale<PATH> si abbassano solo lì quando canta la voce"}
+{"kind": "step", "payload": "Elaborazione stem 'Guitar' (other)..."}
+{"kind": "step", "payload": "Elaborazione stem 'Kick_In' (drums)..."}
+{"kind": "step", "payload": "Elaborazione stem 'Kick_Out' (drums)..."}
+{"kind": "step", "payload": "Elaborazione stem 'Synth_Pad' (other)..."}
+{"kind": "step", "payload": "Elaborazione stem 'bass' (bass)..."}
+{"kind": "step", "payload": "Elaborazione stem 'drums' (drums)..."}
+{"kind": "step", "payload": "Elaborazione stem 'other' (other)..."}
+{"kind": "step", "payload": "Elaborazione stem 'vocals' (vocal<PATH>"}
+{"kind": "step", "payload": "Feedback iterativo mastering (pass 1<PATH> LUFS -15.7 (target -14.0), crest 13.0dB (target 10.0dB), mono compat 1.00 (target 0.90)"}
+{"kind": "step", "payload": "Feedback iterativo mastering (pass 2<PATH> LUFS -14.0 (target -14.0), crest 13.0dB (target 10.0dB), mono compat 1.00 (target 0.90)"}
+{"kind": "step", "payload": "Feedback iterativo mastering (pass 3<PATH> LUFS -14.0 (target -14.0), crest 13.0dB (target 10.0dB), mono compat 1.00 (target 0.90)"}
+{"kind": "step", "payload": "Feedback iterativo: confronto LUFS<PATH> stereo contro il profilo di riferimento del genere..."}
+{"kind": "step", "payload": "Limiting finale a -1.0dB true-peak ceiling"}
+{"kind": "step", "payload": "Loudness misurata: -15.1 LUFS -> target -14.0 LUFS (+1.1dB)"}
+{"kind": "step", "payload": "Mastering completato."}
+{"kind": "step", "payload": "Mid<PATH> basso mono sotto 120Hz, aria +1.2dB sopra 9kHz (solo canale Side)"}
+{"kind": "step", "payload": "Mix completato."}
+{"kind": "step", "payload": "Picco oltre -1dBFS: applico gain di sicurezza"}
+{"kind": "step", "payload": "QC: -11.0 LUFS, true peak -3.39dB, compatibilità mono 0.99 — entro i limiti ma non perfetto, vedi dettagli"}
+{"kind": "step", "payload": "QC: correzioni applicate — sub_bass (40Hz) +3.0dB; bass (90Hz) +3.0dB; mid (700Hz) +1.7dB; high_mid (2500Hz) +2.0dB; air (12000Hz) -3.0dB; loudness trim -3.0dB (post-EQ drift correction, iter 1); iter2: sub_bass (40Hz) +1.5dB; iter2: bass (90Hz) +1.5dB; iter2: air (12000Hz) -1.5dB; loudness trim -3.0dB (post-EQ drift correction, iter 2); QC converged after 2 iterations; pass 1: makeup loudness +1.75dB; pass 1: compressione glue extra (crest 13.0dB oltre target); pass 1: larghezza stereo +0.78dB (canale Side); pass 2: compressione glue extra (crest 13.0dB oltre target); pass 2: larghezza stereo +0.77dB (canale Side); pass 3: compressione glue extra (crest 13.0dB oltre target); pass 3: larghezza stereo +0.77dB (canale Side)"}
+{"kind": "step", "payload": "Regolazione presenza voce: +2.0dB"}
+{"kind": "step", "payload": "Sidechain kick<PATH> il basso si abbassa di 5.3dB ad ogni colpo di batteria"}
+{"kind": "step", "payload": "Soft clipper a -0.3dB (scarica i picchi estremi prima del limiter)"}
+{"kind": "step", "payload": "Spazio voce: riverbero + delay sincronizzato al BPM (92), base 10%"}
+{"kind": "step", "payload": "Stem riconosciuti: vocals -> vocal<PATH> bass -> bass, drums -> drums, other -> other, Vocals_Double_Falsetto -> vocal<PATH> Synth_Pad -> other, Guitar -> other, Kick_In -> drums, Kick_Out -> drums"}
+{"kind": "step", "payload": "Stereo widening: width=0.30"}
+{"kind": "step", "payload": "Transient shaper: attack=+1.0dB, sustain=+0.5dB"}
+{"kind": "step", "payload": "Voce principale: fondamentale misurata 440Hz — classifico le doppie per registro"}

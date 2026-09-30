@@ -1,0 +1,3 @@
+# QA fixture is byte-compared by tests/test_fixture_gen.py -- force LF on
+# checkout so git's autocrlf can't rewrite it to CRLF and break determinism.
+*.jsonl text eol=lf
