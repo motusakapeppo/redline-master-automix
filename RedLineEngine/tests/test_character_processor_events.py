@@ -126,3 +126,26 @@ def test_flag_off_with_spec_is_gated(monkeypatch, tmp_path):
         assert np.array_equal(baseline, mixed)
     finally:
         config.reload()
+
+
+def test_bad_plugin_path_is_failsafe(monkeypatch, tmp_path):
+    """(5) Unreadable/nonexistent plugin path -> no plugin_hosted event, no
+    crash, byte-identical output (even with the hosting flag ON)."""
+    monkeypatch.setattr(config, "_FLAGS_PATH", str(tmp_path / "nonexistent.flags.json"))
+    config.reload()
+    try:
+        stems = _stems()
+        analysis = analyze(stems)
+        prefs = MixPreferences()
+
+        baseline = render_mix(stems, analysis, prefs)
+
+        config.set_override("ENABLE_PLUGIN_HOSTING", True)
+        mixed, events = _render(
+            stems, analysis, prefs, plugin_path=str(tmp_path / "does_not_exist.vst3")
+        )
+
+        assert _plugin_events(events) == []
+        assert np.array_equal(baseline, mixed)
+    finally:
+        config.reload()

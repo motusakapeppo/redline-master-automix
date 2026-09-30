@@ -1586,26 +1586,36 @@ def render_mix(
         on_event({"type": "transient_shaper", "attack_gain_db": round(prefs.transient_attack, 1), "sustain_gain_db": round(prefs.transient_sustain, 1)})
         mix_bus = transient_shaper(mix_bus, sr, attack_gain_db=prefs.transient_attack, sustain_gain_db=prefs.transient_sustain)
 
-    # --- Wave 2 (Track F): external plugin hosting SEAM (deliberately NOT
-    # wired into the render flow in this task).
+    # --- Wave 2 (Track F): external plugin hosting SEAM.
     #
-    # The fail-safe loader lives in redline/plugins.py and is tested
-    # standalone (load_external_plugin / is_plugin_hosting_available /
-    # describe_plugin). It is intentionally NOT called here yet: there is no
-    # UI/config path that supplies a user plugin path, and a live hosted
-    # plugin can crash the interpreter with no catchable exception, so wiring
-    # one into the render before that path exists would be untested risk for
-    # zero user benefit. When a plugin-path source is added, the intended
-    # integration point is exactly here (mix bus, before bus EQ/glue):
-    #
-    #   if config.is_enabled("ENABLE_PLUGIN_HOSTING") and plugin_path:
-    #       from .plugins import load_external_plugin
-    #       plugin = load_external_plugin(plugin_path)  # None on any failure
-    #       if plugin is not None:
-    #           mix_bus = Pedalboard([plugin])(mix_bus.T, sr).T
-    #
-    # Gated by ENABLE_PLUGIN_HOSTING (OFF by default); with the flag off this
-    # block is inert and the render is bit-identical to before Track F.
+    # The fail-safe loader lives in redline/plugins.py (load_external_plugin /
+    # is_plugin_hosting_available / describe_plugin). It is only reached when
+    # the user has explicitly opted in: ENABLE_PLUGIN_HOSTING is ON *and* a
+    # plugin_path was supplied. A live hosted plugin can crash the interpreter
+    # with no catchable exception, so this is deliberately opt-in and every
+    # step degrades to a no-op on failure -- a bad path, a malformed bundle,
+    # or any exception during load/apply leaves mix_bus untouched and never
+    # aborts the render. Integration point is exactly here (mix bus, before
+    # bus EQ/glue). With the flag off (or no path) this block is inert and the
+    # render is bit-identical to before Track F.
+    if config.is_enabled("ENABLE_PLUGIN_HOSTING") and plugin_path:
+        from .plugins import load_external_plugin, describe_plugin
+
+        plugin = load_external_plugin(plugin_path)  # None on any failure
+        if plugin is not None:
+            info = describe_plugin(plugin)
+            if isinstance(info, dict):
+                on_event({
+                    "type": "plugin_hosted",
+                    "name": info.get("name"),
+                    "parameters": info.get("parameters", []),
+                })
+            try:
+                mix_bus = Pedalboard([plugin])(mix_bus.T, sr).T
+            except Exception:
+                # A plugin that fails to process must not abort the render --
+                # leave mix_bus exactly as it was.
+                pass
 
     # --- Pre-glue headroom: summing many buses can leave mix_bus several dB
     # over 0dBFS before the glue compressor even runs. A gentle glue ratio
