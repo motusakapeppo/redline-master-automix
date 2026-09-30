@@ -160,6 +160,7 @@ def assess_qc_pass(
     mono_compatibility: float,
     bass_phase_shift_deg: float,
     deviations: dict[str, float],
+    mono_compat_floor: float | None = None,
 ) -> bool:
     """Pure pass/fail decision for a QC measurement — the exact boolean logic
     run_qc uses to set QcReport.passed, extracted so callers that re-measure
@@ -173,11 +174,15 @@ def assess_qc_pass(
       - mono compatibility above 0.6
       - bass phase shift at or below DEFAULT_PHASE_THRESHOLD_DEG
       - every spectral deviation under DEVIATION_THRESHOLD * 2
-    """
+
+    `mono_compat_floor` (Wave 2 / E2): when not None, overrides the 0.6 mono
+    floor with the user's mono_compatibility_target. None (the default) keeps
+    today's 0.6 exactly."""
+    floor = 0.6 if mono_compat_floor is None else mono_compat_floor
     return (
         abs(lufs - target_lufs) < 1.0
         and true_peak_db <= ceiling_db + 0.1
-        and mono_compatibility > 0.6
+        and mono_compatibility > floor
         and bass_phase_shift_deg <= DEFAULT_PHASE_THRESHOLD_DEG
         and all(abs(d) < DEVIATION_THRESHOLD * 2 for d in deviations.values())
     )

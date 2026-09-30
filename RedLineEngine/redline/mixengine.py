@@ -219,6 +219,51 @@ _OTHER_COMP_MAKEUP_DB = 4.0
 _DOUBLE_COMP_MAKEUP_DB = 4.0
 _BV_GLUE_MAKEUP_DB = 3.0
 
+# --- Wave 2 (Track E2): user-parameter biases. Each helper is a strict no-op
+# at the neutral value (0.0), so a default MixPreferences renders bit-
+# identically to before these parameters existed. The `if amount == 0.0`
+# early-return is deliberate: it guarantees the exact same float reaches the
+# DSP (no multiply-by-1.0 rounding) and keeps the neutral path free of any
+# new arithmetic.
+_COMPRESSION_RATIO_MIN = 1.0
+_COMPRESSION_RATIO_MAX = 20.0
+_DEESS_MAX_REDUCTION_CAP_DB = 24.0
+_VOCAL_SPACE_MIX_CAP = 0.6
+
+
+def _compression_ratio_bias(ratio: float, amount: float) -> float:
+    """Global bias on a per-stem compressor ratio: amount=+1 -> 1.5x, -1 -> 0.5x,
+    clamped to a sane [1.0, 20.0]. amount=0.0 returns `ratio` untouched."""
+    if amount == 0.0:
+        return ratio
+    return float(np.clip(ratio * (1.0 + 0.5 * amount), _COMPRESSION_RATIO_MIN, _COMPRESSION_RATIO_MAX))
+
+
+def _saturation_drive_bias(drive: float, amount: float) -> float:
+    """Global bias on a saturation drive: amount=+1 -> 2x, -1 -> 0 (off),
+    clamped to [0.0, 1.0]. amount=0.0 returns `drive` untouched."""
+    if amount == 0.0:
+        return drive
+    return float(np.clip(drive * (1.0 + amount), 0.0, 1.0))
+
+
+def _deess_max_reduction_bias(max_reduction_db: float, amount: float) -> float:
+    """Global bias on a de-esser's max reduction: amount=+1 -> 2x, -1 -> 0
+    (de-esser effectively off), clamped to [0.0, 24.0]. amount=0.0 returns
+    `max_reduction_db` untouched."""
+    if amount == 0.0:
+        return max_reduction_db
+    return float(np.clip(max_reduction_db * (1.0 + amount), 0.0, _DEESS_MAX_REDUCTION_CAP_DB))
+
+
+def _vocal_space_mix_bias(space_mix: float, amount: float) -> float:
+    """Global bias on the vocal space (reverb+delay) send: amount=+1 -> 2x,
+    -1 -> 0 (dry), clamped to [0.0, 0.6]. amount=0.0 returns `space_mix`
+    untouched."""
+    if amount == 0.0:
+        return space_mix
+    return float(np.clip(space_mix * (1.0 + amount), 0.0, _VOCAL_SPACE_MIX_CAP))
+
 
 _SILENT_STEM_DBFS = -90.0  # same threshold PreFlightValidator uses to flag "silenzio totale"
 
@@ -331,6 +376,7 @@ def _process_stem(
     lead_fundamental_hint: float | None = None,
     genre_name: str = "",
     forced_resonance: object = _RESONANCE_UNSET,
+    prefs: MixPreferences | None = None,
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
@@ -348,6 +394,12 @@ def _process_stem(
     fundamental enough to matter for an HPF cutoff)."""
     role = descriptor.role
     is_lead_vocal = role == "vocal" and descriptor.layer == "primary"
+
+    # Wave 2 (E2): global user biases. None (the default) means "no prefs
+    # supplied" -> all biases neutral, identical to pre-E2 behaviour.
+    _comp_bias = prefs.compression_amount if prefs is not None else 0.0
+    _sat_bias = prefs.saturation_amount if prefs is not None else 0.0
+    _deess_bias = prefs.deess_amount if prefs is not None else 0.0
 
     instrument_recipe = None
     genre_makeup_delta = 0.0
@@ -432,6 +484,8 @@ def _process_stem(
         # sounding squashed the way a single aggressive compressor would.
         peak_catcher = dict(threshold_db=-12.0, ratio=8.0, attack_ms=0.8, release_ms=60.0)
         leveler = dict(threshold_db=-20.0, ratio=3.0, attack_ms=60.0, release_ms=250.0)
+        peak_catcher["ratio"] = _compression_ratio_bias(peak_catcher["ratio"], _comp_bias)
+        leveler["ratio"] = _compression_ratio_bias(leveler["ratio"], _comp_bias)
         on_event({"type": "compressor", "stem": name, "stage": "peak_catcher", **peak_catcher})
         on_event({"type": "compressor", "stem": name, "stage": "leveler", **leveler})
         board_fx.append(Compressor(**peak_catcher))
@@ -442,6 +496,7 @@ def _process_stem(
         # Bus-glue-style settings (slow attack lets the transient through,
         # gentle ratio) — the saturation/"dirt" happens after, post-board.
         drum_comp = dict(threshold_db=-16.0, ratio=3.0, attack_ms=30.0, release_ms=120.0)
+        drum_comp["ratio"] = _compression_ratio_bias(drum_comp["ratio"], _comp_bias)
         on_event({"type": "compressor", "stem": name, **drum_comp})
         board_fx.append(Compressor(**drum_comp))
         board_fx.append(Gain(gain_db=_DRUM_GLUE_MAKEUP_DB))
@@ -453,7 +508,7 @@ def _process_stem(
         # identical compressor.
         other_comp = dict(
             threshold_db=instrument_recipe.comp_threshold_db,
-            ratio=instrument_recipe.comp_ratio,
+            ratio=_compression_ratio_bias(instrument_recipe.comp_ratio, _comp_bias),
             attack_ms=instrument_recipe.comp_attack_ms,
             release_ms=instrument_recipe.comp_release_ms,
         )
@@ -466,6 +521,7 @@ def _process_stem(
             "bass": dict(threshold_db=-18.0, ratio=3.0, attack_ms=10.0, release_ms=150.0),
             "drums": dict(threshold_db=-16.0, ratio=2.5, attack_ms=5.0, release_ms=100.0),
         }[role]
+        role_comp["ratio"] = _compression_ratio_bias(role_comp["ratio"], _comp_bias)
         on_event({"type": "compressor", "stem": name, **role_comp})
         board_fx.append(Compressor(**role_comp))
         _role_makeup = {
@@ -479,26 +535,29 @@ def _process_stem(
     out = board(audio.T, sr).T
 
     if role == "other" and instrument_recipe.saturation_drive > 0.0:
-        out = saturate(out, instrument_recipe.saturation_drive)
-        on_event({"type": "saturation", "stem": name, "drive": instrument_recipe.saturation_drive})
+        _drive = _saturation_drive_bias(instrument_recipe.saturation_drive, _sat_bias)
+        if _drive > 0.0:
+            out = saturate(out, _drive)
+            on_event({"type": "saturation", "stem": name, "drive": _drive})
 
     if is_lead_vocal:
         band = detect_sibilance_band(out, sr)
         on_event({"type": "deesser", "stem": name, "low_hz": round(band.low_hz, 0), "high_hz": round(band.high_hz, 0)})
-        out = deess(out, sr, band=band)
+        out = deess(out, sr, band=band, max_reduction_db=_deess_max_reduction_bias(9.0, _deess_bias))
     elif role == "drums" and blueprint_chains:
         # Tape-style saturation blended in — adds even harmonics that read
         # as "bigger/dirtier" without moving the meter, standard on urban/
         # modern drum busses.
-        out = out * (1.0 - DRUM_SATURATION_MIX) + saturate(out, DRUM_SATURATION_DRIVE) * DRUM_SATURATION_MIX
-        on_event({"type": "saturation", "stem": name, "drive": DRUM_SATURATION_DRIVE, "mix": DRUM_SATURATION_MIX})
+        _drum_drive = _saturation_drive_bias(DRUM_SATURATION_DRIVE, _sat_bias)
+        out = out * (1.0 - DRUM_SATURATION_MIX) + saturate(out, _drum_drive) * DRUM_SATURATION_MIX
+        on_event({"type": "saturation", "stem": name, "drive": _drum_drive, "mix": DRUM_SATURATION_MIX})
     elif role == "bass" and blueprint_chains:
-        out = _bass_chain(out, sr, name, on_event)
+        out = _bass_chain(out, sr, name, on_event, _sat_bias)
 
     return out
 
 
-def _bass_chain(audio: np.ndarray, sr: int, name: str, on_event: EventCallback) -> np.ndarray:
+def _bass_chain(audio: np.ndarray, sr: int, name: str, on_event: EventCallback, saturation_bias: float = 0.0) -> np.ndarray:
     """2-band compression (sub stays tight/immobile, the upper band keeps
     its pluck/attack more free) plus a harmonic exciter: real distortion
     targeted at the bass's low-mid range generates artificial harmonics a
@@ -516,9 +575,10 @@ def _bass_chain(audio: np.ndarray, sr: int, name: str, on_event: EventCallback) 
     high = Pedalboard([Compressor(threshold_db=-18.0, ratio=2.0, attack_ms=15.0, release_ms=150.0)])(high.T, sr).T
 
     combined = low + high
-    excited = saturate(combined, BASS_EXCITER_DRIVE)
+    _exciter_drive = _saturation_drive_bias(BASS_EXCITER_DRIVE, saturation_bias)
+    excited = saturate(combined, _exciter_drive)
     out = combined * (1.0 - BASS_EXCITER_MIX) + excited * BASS_EXCITER_MIX
-    on_event({"type": "bass_chain", "stem": name, "split_hz": BASS_SPLIT_HZ, "exciter_drive": BASS_EXCITER_DRIVE})
+    on_event({"type": "bass_chain", "stem": name, "split_hz": BASS_SPLIT_HZ, "exciter_drive": _exciter_drive})
     return out
 
 
@@ -529,6 +589,7 @@ def _process_double_stem(
     register: str,
     on_step: StepCallback,
     on_event: EventCallback,
+    prefs: MixPreferences | None = None,
 ) -> np.ndarray:
     """Register-specific chain for a vocal double/harmony (see vocalstack.py
     for why each register needs genuinely different treatment, not one
@@ -539,20 +600,25 @@ def _process_double_stem(
 
     recipe = RECIPES[register]
 
+    _comp_bias = prefs.compression_amount if prefs is not None else 0.0
+    _sat_bias = prefs.saturation_amount if prefs is not None else 0.0
+    _deess_bias = prefs.deess_amount if prefs is not None else 0.0
+
     board_fx = [_eq_cut_plugin(cut) for cut in recipe.extra_eq]
     for cut in recipe.extra_eq:
         if cut.kind not in ("highpass", "lowpass"):
             on_event({"type": "instrument_eq", "stem": name, "freq_hz": cut.freq, "gain_db": round(cut.gain_db, 1), "kind": cut.kind})
+    _double_ratio = _compression_ratio_bias(recipe.comp_ratio, _comp_bias)
     board_fx.append(
         Compressor(
             threshold_db=recipe.comp_threshold_db,
-            ratio=recipe.comp_ratio,
+            ratio=_double_ratio,
             attack_ms=recipe.comp_attack_ms,
             release_ms=recipe.comp_release_ms,
         )
     )
     board_fx.append(Gain(gain_db=_DOUBLE_COMP_MAKEUP_DB))
-    on_event({"type": "vocal_stack_register", "stem": name, "register": register, "comp_ratio": recipe.comp_ratio})
+    on_event({"type": "vocal_stack_register", "stem": name, "register": register, "comp_ratio": _double_ratio})
 
     out = Pedalboard(board_fx)(audio.T, sr).T
 
@@ -560,11 +626,17 @@ def _process_double_stem(
     # a much heavier hand: several unaligned "S"s at once is a dead giveaway.
     band = detect_sibilance_band(out, sr)
     on_event({"type": "deesser", "stem": name, "low_hz": round(band.low_hz, 0), "high_hz": round(band.high_hz, 0), "register": register})
-    out = deess(out, sr, band=band, threshold_db=recipe.deess_threshold_db, max_reduction_db=recipe.deess_max_reduction_db)
+    out = deess(
+        out, sr, band=band,
+        threshold_db=recipe.deess_threshold_db,
+        max_reduction_db=_deess_max_reduction_bias(recipe.deess_max_reduction_db, _deess_bias),
+    )
 
     if recipe.saturation_drive > 0.0:
-        out = saturate(out, recipe.saturation_drive)
-        on_event({"type": "saturation", "stem": name, "drive": recipe.saturation_drive})
+        _drive = _saturation_drive_bias(recipe.saturation_drive, _sat_bias)
+        if _drive > 0.0:
+            out = saturate(out, _drive)
+            on_event({"type": "saturation", "stem": name, "drive": _drive})
 
     return out
 
@@ -863,6 +935,7 @@ def render_mix(
                 lead_fundamental if name in lead_names else None,
                 analysis.genre.name,
                 forced_resonance_by_name.get(name, _RESONANCE_UNSET),
+                prefs,
             )
             for name in solo_names
         }
@@ -1052,6 +1125,9 @@ def render_mix(
         section = descriptors[lead_names[0]].section if lead_names else None
         section_scale = 1.4 if section == "chorus" else (0.7 if section == "verse" else 1.0)
         space_mix = float(np.clip(base_space_mix * section_scale, 0.0, 0.45))
+        # Wave 2 (E2): global user bias on the vocal space send. Neutral at
+        # 0.0 (returns space_mix untouched), so default renders are unchanged.
+        space_mix = _vocal_space_mix_bias(space_mix, prefs.vocal_reverb_amount)
         vocal_main_bus = vocal_send(vocal_main_bus, sr, analysis.bpm, space_mix)
 
     drum_names_for_space = [n for n, r in roles.items() if r == "drums"]
@@ -1091,7 +1167,7 @@ def render_mix(
                 register = register_overrides[name]
             else:
                 register = classify_register(double_fundamental, lead_fundamental, hf_ratio=hf_ratio)
-            out = _process_double_stem(name, audio, sr, register, _guarded_step, _guarded_event)
+            out = _process_double_stem(name, audio, sr, register, _guarded_step, _guarded_event, prefs)
             return double_fundamental, hf_ratio, register, out
 
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(double_names)))) as pool:

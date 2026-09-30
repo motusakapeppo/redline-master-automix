@@ -19,6 +19,7 @@ from .platforms import PLATFORM_TARGETS  # canonical registry; re-exported here 
 from .qc import run_qc, _mono_compatibility, assess_qc_pass, resolve_target
 from .analysis.loudness import crest_factor, integrated_lufs, spectral_band_energies
 from .correlometer import measure_bass_phase_shift_deg_abs
+from .wizard import MixPreferences
 
 StepCallback = Callable[[str], None]
 EventCallback = Callable[[dict], None]
@@ -165,23 +166,33 @@ def _multiband_compress(
     return out.astype(np.float32)
 
 
-def _mid_side_polish(signal: np.ndarray, sr: int, on_step: StepCallback, on_event: EventCallback) -> np.ndarray:
+def _mid_side_polish(
+    signal: np.ndarray,
+    sr: int,
+    on_step: StepCallback,
+    on_event: EventCallback,
+    mono_below_hz: float = SIDE_MONO_HZ,
+) -> np.ndarray:
     """Mono-izes sub-bass (mono compatibility + translation on small speakers)
     and adds a touch of high-frequency width — both done on the side channel
     only, so the mono/mid content (where most of the track's weight lives)
-    is untouched."""
+    is untouched.
+
+    `mono_below_hz` (default SIDE_MONO_HZ) is the crossover below which side
+    content is removed; Wave 2 (E2) threads the user's bass_mono_below_hz
+    preference here. The default keeps today's behaviour exactly."""
     mid, side = to_mid_side(signal)
 
     board = Pedalboard(
         [
-            HighpassFilter(cutoff_frequency_hz=SIDE_MONO_HZ),
+            HighpassFilter(cutoff_frequency_hz=mono_below_hz),
             HighShelfFilter(cutoff_frequency_hz=SIDE_AIR_SHELF_HZ, gain_db=SIDE_AIR_GAIN_DB, q=0.7),
         ]
     )
     side_processed = board(side.reshape(1, -1), sr).reshape(-1).astype(np.float32)
 
-    on_step(f"Mid/Side: basso mono sotto {SIDE_MONO_HZ:.0f}Hz, aria {SIDE_AIR_GAIN_DB:+.1f}dB sopra {SIDE_AIR_SHELF_HZ / 1000:.0f}kHz (solo canale Side)")
-    on_event({"type": "mid_side", "mono_below_hz": SIDE_MONO_HZ, "air_shelf_hz": SIDE_AIR_SHELF_HZ, "air_gain_db": SIDE_AIR_GAIN_DB})
+    on_step(f"Mid/Side: basso mono sotto {mono_below_hz:.0f}Hz, aria {SIDE_AIR_GAIN_DB:+.1f}dB sopra {SIDE_AIR_SHELF_HZ / 1000:.0f}kHz (solo canale Side)")
+    on_event({"type": "mid_side", "mono_below_hz": mono_below_hz, "air_shelf_hz": SIDE_AIR_SHELF_HZ, "air_gain_db": SIDE_AIR_GAIN_DB})
 
     return from_mid_side(mid, side_processed)
 
@@ -218,6 +229,8 @@ def _apply_reference_correction(
     on_event: EventCallback,
     on_beep: BeepCallback = _noop_beep,
     platform: str = "auto",
+    lufs_target: float | None = None,
+    mono_compat_target: float | None = None,
 ) -> tuple[np.ndarray, list[str]]:
     """Bounded iterative feedback loop against reference_profiles.py's
     non-spectral targets (LUFS, crest factor, mono/stereo-width
@@ -233,12 +246,21 @@ def _apply_reference_correction(
     chosen platform target -- otherwise this loop would fight the
     platform-aware target render_master already computed and passed to
     run_qc. Crest-factor and mono/stereo-width targets stay genre-based
-    (they aren't platform-dependent)."""
+    (they aren't platform-dependent).
+
+    Wave 2 (E2): `lufs_target` (when not None) is a hard user override that
+    wins over both the platform and genre defaults; `mono_compat_target`
+    (when not None) overrides the genre's mono-compatibility target. Both
+    default to None -> today's behaviour exactly."""
     from .reference_profiles import resolve_perceptual_target
     from .director_safety import clamp_params
 
     target = resolve_perceptual_target(genre_name)
     target["target_lufs"] = _perceptual_lufs_target(genre_name, platform, target["target_lufs"])
+    if lufs_target is not None:
+        target["target_lufs"] = lufs_target
+    if mono_compat_target is not None:
+        target["mono_compatibility"] = mono_compat_target
     meter = pyln.Meter(sr)
     notes: list[str] = []
     corrected = mastered
@@ -343,7 +365,15 @@ def render_master(
     reference_sr: int | None = None,
     on_audition: AuditionCallback | None = None,
     on_beep: BeepCallback = _noop_beep,
+    prefs: MixPreferences | None = None,
 ) -> np.ndarray:
+    # Wave 2 (E2): optional user preferences. None (the default) reproduces
+    # today's behaviour exactly -- every override below is gated on a
+    # non-neutral value, so a default MixPreferences is a strict no-op.
+    _ref_lufs = prefs.reference_lufs_target if prefs is not None else 0.0
+    _bass_mono_hz = prefs.bass_mono_below_hz if prefs is not None else 0.0
+    _mono_target = prefs.mono_compatibility_target if prefs is not None else 0.0
+
     meter = pyln.Meter(sr)
     mono_ref = mixed.mean(axis=1) if mixed.ndim == 2 else mixed
     try:
@@ -352,6 +382,9 @@ def render_master(
         current_lufs = -70.0
 
     target_lufs = _target_lufs_for_genre(analysis.genre.name, platform)
+    # User LUFS override (⚠RENDER, only active when explicitly set < 0).
+    if _ref_lufs < 0.0:
+        target_lufs = _ref_lufs
     gain_db = target_lufs - current_lufs
     # Guardrails: never boost more than +12dB (would just raise noise floor) or
     # cut more than -12dB (source was already far louder than any sane target).
@@ -369,7 +402,10 @@ def render_master(
     on_beep()
     clipped = _soft_clip(glued, CLIP_CEILING_DB)
 
-    polished = _mid_side_polish(clipped, sr, on_step, on_event)
+    polished = _mid_side_polish(
+        clipped, sr, on_step, on_event,
+        mono_below_hz=_bass_mono_hz if _bass_mono_hz > 0.0 else SIDE_MONO_HZ,
+    )
     on_beep()
 
     if reference is not None and config.is_enabled("ENABLE_LTAS_MATCHING"):
@@ -417,7 +453,9 @@ def render_master(
     on_step("Feedback iterativo: confronto LUFS/crest/larghezza stereo contro il profilo di riferimento del genere...")
     on_beep()
     mastered, feedback_notes = _apply_reference_correction(
-        mastered, sr, analysis.genre.name, ceiling, on_step, on_event, on_beep, platform=platform
+        mastered, sr, analysis.genre.name, ceiling, on_step, on_event, on_beep, platform=platform,
+        lufs_target=_ref_lufs if _ref_lufs < 0.0 else None,
+        mono_compat_target=_mono_target if _mono_target > 0.0 else None,
     )
     if feedback_notes:
         report.corrections_applied = list(report.corrections_applied) + feedback_notes
@@ -444,6 +482,7 @@ def render_master(
         mono_compatibility=report.mono_compatibility,
         bass_phase_shift_deg=report.bass_phase_shift_deg,
         deviations=report.band_deviations,
+        mono_compat_floor=_mono_target if _mono_target > 0.0 else None,
     )
 
     on_event({
@@ -454,6 +493,7 @@ def render_master(
         "bass_phase_shift_deg": round(report.bass_phase_shift_deg, 1),
         "corrections": report.corrections_applied,
         "passed": report.passed,
+        "mono_compat_floor": _mono_target if _mono_target > 0.0 else None,
     })
     if report.corrections_applied:
         on_step("QC: correzioni applicate — " + "; ".join(report.corrections_applied))

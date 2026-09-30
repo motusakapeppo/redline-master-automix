@@ -148,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 mastered = render_master(
                     mixed, stems.sample_rate, analysis, platform=args.platform, on_step=_narrate,
                     reference=reference_audio, reference_sr=reference_sr,
+                    prefs=prefs,
                 )
                 master_path = os.path.join(args.out, "master.wav")
                 sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")

@@ -160,6 +160,7 @@ class BatchProcessor:
                             mixed, stems.sample_rate, analysis,
                             platform=platform,
                             on_step=lambda msg: self.on_step(f"    {msg}"),
+                            prefs=prefs,
                         )
                         master_path = os.path.join(project_out, "master.wav")
                         sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")

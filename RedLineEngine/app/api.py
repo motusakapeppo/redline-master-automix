@@ -125,6 +125,11 @@ class Api:
         # against the true measured genre instead of compounding overrides.
         self._last_measured_genre = None
         self._last_platform: str = "auto"
+        # Wave 2 (E2): the MixPreferences the last mix was rendered with, so
+        # the mastering stage (which runs later, from a separate call) can
+        # honour the user's LUFS/mono/bass-mono overrides. None until a mix
+        # has been rendered -> render_master falls back to today's behaviour.
+        self._last_mix_prefs: MixPreferences | None = None
         self._last_out_dir: str | None = None
         self._feedback_version: int = 1
         # Needed to re-run just the mix stage (DAW "Rielabora il mix") or
@@ -481,11 +486,17 @@ class Api:
         else:
             platform = prefs.get("platform", "auto")
             self._last_platform = platform
+            # Wave 2 (E2): reuse the MixPreferences the mix was rendered with
+            # (set by run_pipeline/reprocess_mix) so the user's LUFS/mono/
+            # bass-mono overrides reach the mastering stage too. Falls back to
+            # building from the raw dict if no mix prefs are cached yet.
+            mix_prefs = self._last_mix_prefs or self._build_mix_prefs(prefs)
             mastered = render_master(
                 mixed, stems.sample_rate, analysis, platform=platform,
                 on_step=self._narrate, on_event=self._emit,
                 on_audition=self._audition if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
                 on_beep=self._beep,
+                prefs=mix_prefs,
             )
             master_path = os.path.join(out_dir, "master.wav")
             sf.write(master_path, finalize_for_export(mastered), stems.sample_rate, subtype="PCM_24")
@@ -545,6 +556,7 @@ class Api:
             self._last_master = None
             self._last_sr = stems.sample_rate
             self._last_analysis = analysis
+            self._last_mix_prefs = mix_prefs
             self._last_out_dir = out_dir
             self._last_mix_path = mix_path
             self._last_stems = stems
@@ -700,6 +712,7 @@ class Api:
             # Keep the cache in sync so continue_to_mastering/submit_feedback
             # master against the genre this reprocess actually used.
             self._last_analysis = analysis
+            self._last_mix_prefs = mix_prefs
 
             self._narrate("Fatto.")
             return _sanitize_for_json({
@@ -876,6 +889,7 @@ class Api:
                 platform=self._last_platform,
                 on_step=self._narrate, on_event=self._emit,
                 on_audition=None, on_beep=self._beep,
+                prefs=self._last_mix_prefs,
             )
 
             # Lightweight, honest post-adjustment layer -- these do NOT
