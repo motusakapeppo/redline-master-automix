@@ -719,6 +719,8 @@ class Api:
                 stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
                 director_gate=self.director_gate,
                 on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+                character_spec=self._character_spec or None,
+                plugin_path=self._plugin_path or None,
             )
 
             mix_path = os.path.join(out_dir, "mix.wav")
@@ -889,6 +891,8 @@ class Api:
                 stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
                 director_gate=self.director_gate,
                 on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+                character_spec=self._character_spec or None,
+                plugin_path=self._plugin_path or None,
             )
 
             mix_path = os.path.join(out_dir, "mix.wav")

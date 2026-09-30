@@ -274,6 +274,7 @@ def _maybe_apply_character_processor(
     audio: np.ndarray,
     sr: int,
     spec: dict | None,
+    on_event: EventCallback | None = None,
 ) -> np.ndarray:
     """Wave 2 / Track F: optional per-stem "character" processor hook.
 
@@ -284,9 +285,12 @@ def _maybe_apply_character_processor(
     (unknown processor, bad params, DSP error) leaves the audio untouched --
     this hook can never abort a render.
 
-    With no spec (the only case reachable today -- there is no UI/config path
-    that supplies one yet) this is a strict no-op, so the default render is
-    bit-identical to before this hook existed.
+    When the effect is successfully built and about to be applied, a
+    ``character_processor`` event is emitted FIRST (so the GUI shows the
+    processor live, before the DSP runs). The emit is inside the same
+    fail-safe structure as the apply: a callback that raises is swallowed
+    exactly like a DSP error, so it can never abort a render either. With no
+    spec (or the flag off) this is a strict no-op and nothing is emitted.
     """
     if not spec:
         return audio
@@ -299,6 +303,13 @@ def _maybe_apply_character_processor(
     if effect is None:
         return audio
     try:
+        if on_event is not None:
+            on_event({
+                "type": "character_processor",
+                "stem": name,
+                "processor": proc_name,
+                "params": dict(spec.get("params") or {}),
+            })
         return Pedalboard([effect])(audio.T, sr).T
     except Exception:
         return audio
@@ -413,6 +424,7 @@ def _process_stem(
     genre_name: str = "",
     forced_resonance: object = _RESONANCE_UNSET,
     prefs: MixPreferences | None = None,
+    character_spec: dict | None = None,
 ) -> np.ndarray:
     """Lead vocal, bass, drums, other — doubles are handled separately by
     _process_double_stem, since their treatment depends on register, not
@@ -591,13 +603,16 @@ def _process_stem(
         out = _bass_chain(out, sr, name, on_event, _sat_bias)
 
     # --- Wave 2 (Track F): optional per-stem "character" processor. Gated by
-    # ENABLE_BUILTIN_PROCESSOR_VARIANTS (OFF by default). There is no UI/config
-    # path that supplies a spec yet, so `character_spec` is always None today
-    # and this call is a strict no-op -- the hook exists so a future caller can
-    # thread a spec through without touching the DSP chain above.
-    character_spec = None  # TODO(Track F): source from user config once a UI exists
+    # ENABLE_BUILTIN_PROCESSOR_VARIANTS (OFF by default). `character_spec` is
+    # a {stem_name: {"processor":..., "params":...}} map threaded down from
+    # render_mix; a "*" key is a wildcard meaning "every stem". With no spec
+    # (the default) this call is a strict no-op -- the hook exists so a caller
+    # can thread a spec through without touching the DSP chain above.
+    spec = character_spec.get(name) if character_spec else None
+    if spec is None and character_spec:
+        spec = character_spec.get("*")
     if config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS"):
-        out = _maybe_apply_character_processor(name, out, sr, character_spec)
+        out = _maybe_apply_character_processor(name, out, sr, spec, on_event)
 
     return out
 
@@ -697,6 +712,8 @@ def render_mix(
     director_gate=None,
     on_stem_audition=None,
     on_bus_ready: Callable[[str, np.ndarray], None] | None = None,
+    character_spec: dict | None = None,
+    plugin_path: str | None = None,
 ) -> np.ndarray:
     notify_bus = on_bus_ready or (lambda _name, _audio: None)
     sr = stems.sample_rate
@@ -981,6 +998,7 @@ def render_mix(
                 analysis.genre.name,
                 forced_resonance_by_name.get(name, _RESONANCE_UNSET),
                 prefs,
+                character_spec,
             )
             for name in solo_names
         }
