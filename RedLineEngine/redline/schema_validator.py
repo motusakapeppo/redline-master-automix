@@ -23,9 +23,19 @@ PRESET_SCHEMA = {
         "choices": list(PLATFORM_CHOICES),
         "default": "auto",
     },
-    "stereo_width": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},
-    "transient_attack": {"type": "float", "min": -10.0, "max": 10.0, "default": 0.0},
-    "transient_sustain": {"type": "float", "min": -10.0, "max": 10.0, "default": 0.0},
+    "stereo_width": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.0},
+    "transient_attack": {"type": "float", "min": -6.0, "max": 6.0, "default": 0.0},
+    "transient_sustain": {"type": "float", "min": -6.0, "max": 6.0, "default": 0.0},
+    # --- Wave 1 (Track E1) user-exposed parameters -------------------------
+    # Ranges MUST equal the MixPreferences.__post_init__ clamps (drift guard
+    # in tests/test_new_params.py::test_schema_ranges_match_clamps).
+    "mono_compatibility_target": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.0},
+    "bass_mono_below_hz": {"type": "float", "min": 0.0, "max": 300.0, "default": 0.0},
+    "reference_lufs_target": {"type": "float", "min": -30.0, "max": 0.0, "default": 0.0},
+    "saturation_amount": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},
+    "deess_amount": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},
+    "compression_amount": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},
+    "vocal_reverb_amount": {"type": "float", "min": -1.0, "max": 1.0, "default": 0.0},
 }
 
 

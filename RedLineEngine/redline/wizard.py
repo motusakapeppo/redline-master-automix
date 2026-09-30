@@ -22,6 +22,17 @@ class MixPreferences:
     stereo_width: float = 0.0    # 0=off, 0.1-1.0 range
     transient_attack: float = 0.0 # 0=off, -6..+6 range
     transient_sustain: float = 0.0 # 0=off, -6..+6 range
+    # --- Wave 1 (Track E1) user-exposed parameters -------------------------
+    # All default to 0.0 = engine default, no change. They are optional
+    # overrides consumed by the engine in Wave 2; the interactive wizard
+    # does not ask for them.
+    mono_compatibility_target: float = 0.0  # 0.0 = auto/genre default; 0.0..1.0 QC mono target
+    bass_mono_below_hz: float = 0.0         # 0.0 = engine default (120 Hz); 0.0..300.0
+    reference_lufs_target: float = 0.0      # 0.0 = use platform/genre target; -30.0..0.0
+    saturation_amount: float = 0.0          # 0.0 = engine default, no change; -1..+1 scales per-instrument/drum saturation
+    deess_amount: float = 0.0               # 0.0 = engine default, no change; -1..+1 scales de-esser intensity
+    compression_amount: float = 0.0         # 0.0 = engine default, no change; -1..+1 global bias on per-stem compressor ratios
+    vocal_reverb_amount: float = 0.0        # 0.0 = engine default, no change; -1..+1 bias on the vocal space send
 
     def __post_init__(self) -> None:
         # Defense in depth: the GUI's range inputs already constrain these
@@ -39,6 +50,13 @@ class MixPreferences:
         self.stereo_width = float(max(0.0, min(1.0, self.stereo_width)))
         self.transient_attack = float(max(-6.0, min(6.0, self.transient_attack)))
         self.transient_sustain = float(max(-6.0, min(6.0, self.transient_sustain)))
+        self.mono_compatibility_target = float(max(0.0, min(1.0, self.mono_compatibility_target)))
+        self.bass_mono_below_hz = float(max(0.0, min(300.0, self.bass_mono_below_hz)))
+        self.reference_lufs_target = float(max(-30.0, min(0.0, self.reference_lufs_target)))
+        self.saturation_amount = float(max(-1.0, min(1.0, self.saturation_amount)))
+        self.deess_amount = float(max(-1.0, min(1.0, self.deess_amount)))
+        self.compression_amount = float(max(-1.0, min(1.0, self.compression_amount)))
+        self.vocal_reverb_amount = float(max(-1.0, min(1.0, self.vocal_reverb_amount)))
         if self.platform not in PLATFORM_CHOICES:
             self.platform = "auto"
 
