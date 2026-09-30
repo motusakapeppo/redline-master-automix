@@ -396,59 +396,183 @@ function goToScreen(id) {
   showScreen(id);
 }
 
+// --- Busy-state wrappers: every async UI action goes through RedlineBusy
+// (busy.js) so its button disables for the duration and a double-click can
+// never fire the bridge twice.
+function _busyRun(el, fn) {
+  if (typeof RedlineBusy === "undefined") return fn();
+  return RedlineBusy.run(el, fn);
+}
+
 async function chooseInput() {
-  const path = await window.pywebview.api.pick_input_path();
-  if (path) {
-    selectedInput = path;
-    document.getElementById("input-path").textContent = path;
-    document.getElementById("btn-next").disabled = false;
-  }
+  return _busyRun(document.getElementById("btn-choose-input"), async () => {
+    const path = await window.pywebview.api.pick_input_path();
+    if (path) {
+      selectedInput = path;
+      const pathEl = document.getElementById("input-path");
+      pathEl.textContent = path;
+      pathEl.classList.remove("empty");
+      document.getElementById("btn-next").disabled = false;
+    }
+  });
 }
 
 async function chooseFile() {
-  const path = await window.pywebview.api.pick_input_file();
-  if (path) {
-    selectedInput = path;
-    document.getElementById("input-path").textContent = path;
-    document.getElementById("btn-next").disabled = false;
+  return _busyRun(document.getElementById("btn-choose-file"), async () => {
+    const path = await window.pywebview.api.pick_input_file();
+    if (path) {
+      selectedInput = path;
+      const pathEl = document.getElementById("input-path");
+      pathEl.textContent = path;
+      pathEl.classList.remove("empty");
+      document.getElementById("btn-next").disabled = false;
+    }
+  });
+}
+
+// --- Cooperative cancel: the Python side (api.cancel_run) sets a flag the
+// pipeline observes at its next cheap stage boundary -- a native DSP call
+// already in flight is not interrupted, so this is honest about what it can
+// do. Called defensively: an older bridge without cancel_run must not throw.
+async function cancelRun() {
+  const btn = document.getElementById("btn-cancel");
+  const spinner = document.getElementById("spinner");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Annullamento...";
+  }
+  if (spinner) spinner.classList.add("cancelling");
+  setAssistantLabel("annullamento...");
+  try {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.cancel_run === "function") {
+      await window.pywebview.api.cancel_run();
+    }
+  } catch (e) {
+    // Bridge without cancel_run (or a closing window): the button stays
+    // disabled and the run simply continues -- never a console error.
   }
 }
 
-async function startRun() {
-  selectedOutput = await window.pywebview.api.pick_output_dir();
-  if (!selectedOutput) return;
+// Restores the terminal's intentional idle state (used by startRun and
+// newProject so the log is never a blank rectangle between runs).
+function _renderLogIdleState() {
+  const log = document.getElementById("log");
+  if (!log) return;
+  log.innerHTML = `
+    <div class="log-idle" id="log-idle">
+      <div class="log-idle-line">&#9679; Terminale pronto.</div>
+      <div class="log-idle-line">In attesa di istruzioni &mdash; carica un progetto per iniziare.</div>
+      <div class="skeleton-bar"></div>
+    </div>`;
+}
 
-  showScreen("screen-progress");
-  document.getElementById("log").innerHTML = "";
-  document.getElementById("spinner").classList.remove("hidden");
-  document.getElementById("result").classList.add("hidden");
-  document.getElementById("result").innerHTML = "";
+// Restores the progress screen's controls after a cancel/error so the next
+// run starts from a clean state.
+function _resetCancelButton() {
+  const btn = document.getElementById("btn-cancel");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Annulla render";
+  }
+  const spinner = document.getElementById("spinner");
+  if (spinner) spinner.classList.remove("cancelling");
+}
+
+// "Nuovo progetto": resets the run state and returns to the input screen.
+function newProject() {
+  selectedInput = null;
+  selectedOutput = null;
+  lastRunResult = null;
+  stemRows.clear();
+  stemEventParams.clear();
   eqBands = {};
   busEqBands = {};
   _rackDisplayStem = null;
   _rackPinned = false;
-  redrawEq();
-  resetProgress();
-  resetPipelineRail();
-  stopQcCanvasLoop();
-  setAssistantLabel("al lavoro...");
+  const stemContainer = document.getElementById("stem-rows");
+  if (stemContainer) stemContainer.innerHTML = "";
+  const pathEl = document.getElementById("input-path");
+  if (pathEl) {
+    pathEl.textContent = "Nessun percorso selezionato — scegli una cartella o un file per iniziare.";
+    pathEl.classList.add("empty");
+  }
+  const next = document.getElementById("btn-next");
+  if (next) next.disabled = true;
+  const resultEl = document.getElementById("result");
+  if (resultEl) {
+    resultEl.classList.add("hidden");
+    resultEl.innerHTML = "";
+  }
+  resetRackModules();
+  renderPluginPanel();
+  _renderStemRowsEmptyState();
+  _renderLogIdleState();
+  goToScreen("screen-input");
+}
 
-  const prefs = {
-    creative_brief: document.getElementById("creative_brief").value,
-    aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
-    warmth: parseFloat(document.getElementById("warmth").value),
-    vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
-    stereo_width: parseFloat(document.getElementById("stereo_width").value),
-    transient_attack: parseFloat(document.getElementById("transient_attack").value),
-    transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
-    genre_override: document.getElementById("genre_override").value,
-    do_mastering: document.getElementById("do_mastering").checked,
-    platform: document.getElementById("platform").value,
-    stop_after_mix: document.getElementById("workflow_mode").value === "stop_at_mix",
-  };
+async function startRun() {
+  return _busyRun(document.getElementById("btn-start-run"), async () => {
+    selectedOutput = await window.pywebview.api.pick_output_dir();
+    if (!selectedOutput) return;
 
-  const result = await window.pywebview.api.run_pipeline(selectedInput, prefs, selectedOutput);
-  onDone(result);
+    showScreen("screen-progress");
+    document.getElementById("log").innerHTML = "";
+    document.getElementById("spinner").classList.remove("hidden");
+    document.getElementById("result").classList.add("hidden");
+    document.getElementById("result").innerHTML = "";
+    eqBands = {};
+    busEqBands = {};
+    _rackDisplayStem = null;
+    _rackPinned = false;
+    redrawEq();
+    resetProgress();
+    resetPipelineRail();
+    resetRackModules();
+    renderPluginPanel();
+    _resetCancelButton();
+    stemRows.clear();
+    stemEventParams.clear();
+    _renderStemRowsEmptyState();
+    stopQcCanvasLoop();
+    setAssistantLabel("al lavoro...");
+
+    const prefs = {
+      creative_brief: document.getElementById("creative_brief").value,
+      aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
+      warmth: parseFloat(document.getElementById("warmth").value),
+      vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
+      stereo_width: parseFloat(document.getElementById("stereo_width").value),
+      transient_attack: parseFloat(document.getElementById("transient_attack").value),
+      transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
+      genre_override: document.getElementById("genre_override").value,
+      do_mastering: document.getElementById("do_mastering").checked,
+      platform: document.getElementById("platform").value,
+      stop_after_mix: document.getElementById("workflow_mode").value === "stop_at_mix",
+    };
+
+    const result = await window.pywebview.api.run_pipeline(selectedInput, prefs, selectedOutput);
+    onDone(result);
+  });
+}
+
+// --- Slider readouts: every range input gets a live numeric value next to
+// its label. The 5 newer sliders carry their own inline oninput handler in
+// index.html; this keeps them all in sync when a preset loads (which sets
+// .value programmatically and therefore fires no input event).
+function _fmtSliderValue(id, value) {
+  const v = parseFloat(value);
+  if (!isFinite(v)) return String(value);
+  if (id === "stereo_width") return v.toFixed(2);
+  if (id === "aggressiveness") return String(Math.round(v));
+  return v.toFixed(1);
+}
+
+function updateSliderReadouts() {
+  for (const id of ["aggressiveness", "warmth", "vocal_prominence", "stereo_width", "transient_attack", "transient_sustain"]) {
+    const slider = document.getElementById(id);
+    const out = document.getElementById(id + "-val");
+    if (slider && out) out.textContent = _fmtSliderValue(id, slider.value);
+  }
 }
 
 // --- Preset system: load/save named MixPreferences configurations
@@ -478,53 +602,76 @@ async function loadPresets() {
 
 async function onPresetSelect(name) {
   if (!name || !window.pywebview) return;
-  const result = await window.pywebview.api.load_preset(name);
-  if (!result || !result.ok) {
-    addEventChip(`\u26A0\uFE0F Preset: ${result ? result.error : "errore sconosciuto"}`);
-    return;
+  return _busyRun(document.getElementById("preset-select"), async () => {
+    const result = await window.pywebview.api.load_preset(name);
+    if (!result || !result.ok) {
+      addEventChip(`\u26A0\uFE0F Preset: ${result ? result.error : "errore sconosciuto"}`);
+      return;
+    }
+    // Update all slider/input values
+    const agg = document.getElementById("aggressiveness");
+    const warm = document.getElementById("warmth");
+    const vocal = document.getElementById("vocal_prominence");
+    const sw = document.getElementById("stereo_width");
+    const ta = document.getElementById("transient_attack");
+    const ts = document.getElementById("transient_sustain");
+    const genre = document.getElementById("genre_override");
+    const master = document.getElementById("do_mastering");
+
+    if (agg) agg.value = result.aggressiveness;
+    if (warm) warm.value = result.warmth;
+    if (vocal) vocal.value = result.vocal_prominence;
+    if (sw) sw.value = result.stereo_width || 0;
+    if (ta) ta.value = result.transient_attack || 0;
+    if (ts) ts.value = result.transient_sustain || 0;
+    if (genre) genre.value = result.genre_override || "";
+    if (master) master.checked = result.do_mastering;
+    // Programmatic .value assignment fires no input event -- refresh every
+    // readout explicitly so the numbers match the loaded preset.
+    updateSliderReadouts();
+
+    addEventChip(`\u{1F4CB} Preset caricato: ${name}`);
+  });
+}
+
+// Deletes the currently selected preset (the Python side has had
+// delete_preset since the preset API landed; this is the missing UI wiring).
+async function deleteCurrentPreset() {
+  const sel = document.getElementById("preset-select");
+  const name = sel ? sel.value : "";
+  if (!name || !window.pywebview) return;
+  if (!confirm(`Eliminare il preset "${name}"?`)) return;
+  const result = await window.pywebview.api.delete_preset(name);
+  if (result && result.ok) {
+    addEventChip(`\u{1F5D1}\u{FE0F} Preset eliminato: ${name}`);
+    await loadPresets();
+  } else {
+    addEventChip(`\u26A0\uFE0F Errore eliminazione preset: ${result ? result.error : "sconosciuto"}`);
   }
-  // Update all slider/input values
-  const agg = document.getElementById("aggressiveness");
-  const warm = document.getElementById("warmth");
-  const vocal = document.getElementById("vocal_prominence");
-  const sw = document.getElementById("stereo_width");
-  const ta = document.getElementById("transient_attack");
-  const ts = document.getElementById("transient_sustain");
-  const genre = document.getElementById("genre_override");
-  const master = document.getElementById("do_mastering");
-
-  if (agg) { agg.value = result.aggressiveness; document.getElementById("aggressiveness-val").textContent = result.aggressiveness; }
-  if (warm) warm.value = result.warmth;
-  if (vocal) vocal.value = result.vocal_prominence;
-  if (sw) sw.value = result.stereo_width || 0;
-  if (ta) ta.value = result.transient_attack || 0;
-  if (ts) ts.value = result.transient_sustain || 0;
-  if (genre) genre.value = result.genre_override || "";
-  if (master) master.checked = result.do_mastering;
-
-  addEventChip(`\u{1F4CB} Preset caricato: ${name}`);
 }
 
 async function saveCurrentPreset() {
-  const name = prompt("Nome del preset:");
-  if (!name || !name.trim()) return;
-  const prefs = {
-    aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
-    warmth: parseFloat(document.getElementById("warmth").value),
-    vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
-    stereo_width: parseFloat(document.getElementById("stereo_width").value),
-    transient_attack: parseFloat(document.getElementById("transient_attack").value),
-    transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
-    genre_override: document.getElementById("genre_override").value,
-    do_mastering: document.getElementById("do_mastering").checked,
-  };
-  const result = await window.pywebview.api.save_preset(name.trim(), prefs);
-  if (result && result.ok) {
-    addEventChip(`\u{1F4BE} Preset salvato: ${name.trim()}`);
-    await loadPresets();
-  } else {
-    addEventChip(`\u26A0\uFE0F Errore salvataggio preset: ${result ? result.error : "sconosciuto"}`);
-  }
+  return _busyRun(document.getElementById("btn-save-preset"), async () => {
+    const name = prompt("Nome del preset:");
+    if (!name || !name.trim()) return;
+    const prefs = {
+      aggressiveness: parseInt(document.getElementById("aggressiveness").value, 10),
+      warmth: parseFloat(document.getElementById("warmth").value),
+      vocal_prominence: parseFloat(document.getElementById("vocal_prominence").value),
+      stereo_width: parseFloat(document.getElementById("stereo_width").value),
+      transient_attack: parseFloat(document.getElementById("transient_attack").value),
+      transient_sustain: parseFloat(document.getElementById("transient_sustain").value),
+      genre_override: document.getElementById("genre_override").value,
+      do_mastering: document.getElementById("do_mastering").checked,
+    };
+    const result = await window.pywebview.api.save_preset(name.trim(), prefs);
+    if (result && result.ok) {
+      addEventChip(`\u{1F4BE} Preset salvato: ${name.trim()}`);
+      await loadPresets();
+    } else {
+      addEventChip(`\u26A0\uFE0F Errore salvataggio preset: ${result ? result.error : "sconosciuto"}`);
+    }
+  });
 }
 
 // --- Speech bubble: a plain-language, non-technical narration of macro
@@ -641,6 +788,7 @@ function _evictLogLine(node) {
 function onStep(msg) {
   try {
     const log = document.getElementById("log");
+    document.getElementById("log-idle")?.remove();
     const line = document.createElement("div");
     // The engine's own narration convention already distinguishes macro
     // phases ("Elaborazione stem 'X'...", no leading spaces) from micro
@@ -662,6 +810,10 @@ function onStep(msg) {
       if (bubbleText) sayBubble(bubbleText);
       const stage = detectPipelineStage(msg);
       if (stage) setPipelineStage(stage);
+      // A new run's "load" phase resets ALL 9 rack modules (the old code
+      // only reset 4 of them, so stale values from a previous run could
+      // survive into the next one).
+      if (stage === "load") resetRackModules();
     }
     wireInteractiveLine(line, msg);
 
@@ -748,7 +900,9 @@ function setListening(on) {
 function toggleAudition() {
   const isChecked = document.getElementById("audition-switch").checked;
   if (window.pywebview) {
-    window.pywebview.api.toggle_neural_monitor(isChecked);
+    return _busyRun(document.getElementById("audition-switch"), async () => {
+      await window.pywebview.api.toggle_neural_monitor(isChecked);
+    });
   }
 }
 
@@ -932,7 +1086,20 @@ function triggerSuccessSweep() {
 function onDone(result) {
   document.getElementById("spinner").classList.add("hidden");
   document.getElementById("progress-wrap")?.classList.add("hidden");
+  _resetCancelButton();
   const resultEl = document.getElementById("result");
+
+  // Cooperative cancel: the pipeline stopped at a stage boundary. Return to
+  // the input screen safely instead of showing a half-finished result card.
+  if (result && result.cancelled) {
+    resultEl.classList.add("hidden");
+    resultEl.innerHTML = "";
+    setAssistantLabel("annullato");
+    addEventChip("\u{23F9}\u{FE0F} Render annullato.");
+    goToScreen("screen-input");
+    return;
+  }
+
   resultEl.classList.remove("hidden");
 
   playChime(result && result.ok ? "done" : "error");
@@ -957,15 +1124,16 @@ function onDone(result) {
         <div class="feedback-box">
           <label for="feedback-text">Cosa vorresti cambiare nel mix? (es. "voce pi&ugrave; avanti", "pi&ugrave; caldo")</label>
           <textarea id="feedback-text" rows="2" placeholder="Descrivi le modifiche, o lascia vuoto e clicca solo Rielabora"></textarea>
-          <button class="btn" onclick="reprocessMix()">Rielabora il mix</button>
-          <button class="btn" onclick="undoLastChange()" title="Ctrl+Z">Annulla</button>
-          <button class="btn" onclick="redoLastChange()" title="Ctrl+Shift+Z">Ripeti</button>
+          <button id="btn-reprocess" class="btn" onclick="reprocessMix()">Rielabora il mix</button>
+          <button id="btn-undo" class="btn" onclick="undoLastChange()" title="Ctrl+Z">Annulla</button>
+          <button id="btn-redo" class="btn" onclick="redoLastChange()" title="Ctrl+Shift+Z">Ripeti</button>
           <div id="feedback-status"></div>
         </div>
 
-        <button class="btn btn-accent" onclick="continueToMastering()">Procedi al mastering</button>
+        <button id="btn-continue-mastering" class="btn btn-accent" onclick="continueToMastering()">Procedi al mastering</button>
         <button class="btn" onclick="openOutput()">Apri cartella risultati</button>
-        <button class="btn" onclick="exportFinal('mix')">Esporta mix...</button>
+        <button id="btn-export" class="btn" onclick="exportFinal('mix')">Esporta mix...</button>
+        <button class="btn btn-new-project" onclick="newProject()">Nuovo progetto</button>
       </div>`;
     renderDawWaveforms();
     loadPreviewPlayer("mix");
@@ -980,14 +1148,14 @@ function onDone(result) {
         <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
         <div>Loudness: ${result.lufs.toFixed(1)} LUFS</div>
         <button class="btn btn-accent" onclick="openOutput()">Apri cartella risultati</button>
-        <button class="btn" onclick="exportFinal('auto')">Esporta...</button>
+        <button id="btn-export" class="btn" onclick="exportFinal('auto')">Esporta...</button>
 
         ${_previewPlayerHtml(!!result.master_path)}
 
         <div class="feedback-box">
           <label for="feedback-text">Feedback (es. "pi&ugrave; caldo", "pi&ugrave; forte", "pi&ugrave; brillante")</label>
           <textarea id="feedback-text" rows="2" placeholder="Cosa vorresti cambiare?"></textarea>
-          <button class="btn btn-accent" onclick="submitFeedback()" ${result.master_path ? "" : "disabled"}>Rielabora (veloce)</button>
+          <button id="btn-submit-feedback" class="btn btn-accent" onclick="submitFeedback()" ${result.master_path ? "" : "disabled"}>Rielabora (veloce)</button>
           <div id="feedback-status"></div>
         </div>
 
@@ -995,11 +1163,19 @@ function onDone(result) {
           <button class="btn" onclick="reopenDaw('mix')">MIX</button>
           <button class="btn" onclick="reopenDaw('master')" ${result.master_path ? "" : "disabled"}>MASTERING</button>
         </div>
+        <button class="btn btn-new-project" onclick="newProject()">Nuovo progetto</button>
       </div>`;
     loadPreviewPlayer(result.master_path ? "master" : "mix");
   } else {
     const errorMsg = result ? result.error : "errore sconosciuto";
     resultEl.innerHTML = `<div class="result-card error">Errore: ${errorMsg}</div>`;
+  }
+  // The result card is the one place a run can end without a "done" event
+  // (e.g. stop-after-mix) -- make sure the plugin panel never sits on a
+  // stale live state once the run is over.
+  if (result && result.ok) {
+    const panel = document.getElementById("plugin-panel");
+    if (panel) panel.classList.remove("pulse");
   }
 }
 
@@ -1016,42 +1192,44 @@ let lastRunResult = null;
 async function renderDawWaveforms() {
   const container = document.getElementById("daw-waveforms");
   if (!container || !window.pywebview) return;
-  const data = await window.pywebview.api.get_waveform_peaks(600);
-  if (!data || !data.ok) {
-    container.innerHTML = `<div class="daw-loading">Forme d'onda non disponibili.</div>`;
-    return;
-  }
-
-  const names = Object.keys(data.tracks).filter((n) => n !== "__MIX__");
-  const orderedNames = data.tracks["__MIX__"] ? ["__MIX__", ...names] : names;
-
-  container.innerHTML = "";
-  for (const name of orderedNames) {
-    const lane = document.createElement("div");
-    lane.className = "daw-track-lane" + (name === "__MIX__" ? " daw-track-lane-mix" : "");
-
-    const label = document.createElement("div");
-    label.className = "daw-track-label";
-    label.textContent = name === "__MIX__" ? "MIX (riferimento)" : name;
-    label.title = name;
-    lane.appendChild(label);
-
-    const canvas = document.createElement("canvas");
-    canvas.className = "daw-track-canvas";
-    canvas.width = 600;
-    canvas.height = 40;
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", `Forma d'onda: ${name === "__MIX__" ? "MIX (riferimento)" : name}`);
-    lane.appendChild(canvas);
-
-    _drawWaveform(canvas, data.tracks[name]);
-
-    if (name !== "__MIX__") {
-      lane.addEventListener("click", () => _toggleDawTrackDetail(name, lane));
+  return _busyRun(container, async () => {
+    const data = await window.pywebview.api.get_waveform_peaks(600);
+    if (!data || !data.ok) {
+      container.innerHTML = `<div class="daw-loading">Forme d'onda non disponibili.</div>`;
+      return;
     }
 
-    container.appendChild(lane);
-  }
+    const names = Object.keys(data.tracks).filter((n) => n !== "__MIX__");
+    const orderedNames = data.tracks["__MIX__"] ? ["__MIX__", ...names] : names;
+
+    container.innerHTML = "";
+    for (const name of orderedNames) {
+      const lane = document.createElement("div");
+      lane.className = "daw-track-lane" + (name === "__MIX__" ? " daw-track-lane-mix" : "");
+
+      const label = document.createElement("div");
+      label.className = "daw-track-label";
+      label.textContent = name === "__MIX__" ? "MIX (riferimento)" : name;
+      label.title = name;
+      lane.appendChild(label);
+
+      const canvas = document.createElement("canvas");
+      canvas.className = "daw-track-canvas";
+      canvas.width = 600;
+      canvas.height = 40;
+      canvas.setAttribute("role", "img");
+      canvas.setAttribute("aria-label", `Forma d'onda: ${name === "__MIX__" ? "MIX (riferimento)" : name}`);
+      lane.appendChild(canvas);
+
+      _drawWaveform(canvas, data.tracks[name]);
+
+      if (name !== "__MIX__") {
+        lane.addEventListener("click", () => _toggleDawTrackDetail(name, lane));
+      }
+
+      container.appendChild(lane);
+    }
+  });
 }
 
 function _drawWaveform(canvas, peaks) {
@@ -1098,44 +1276,52 @@ function _toggleDawTrackDetail(name, lane) {
 // matter how long the original "Rielabora il mix" took.
 async function undoLastChange() {
   if (!window.pywebview) return;
-  const res = await window.pywebview.api.undo_mix();
-  if (res && res.ok) {
-    addEventChip("↩️ Mix: annullato");
-    if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
-  } else if (res) {
-    addEventChip(`ℹ️ ${res.error}`);
-  }
+  return _busyRun(document.getElementById("btn-undo"), async () => {
+    const res = await window.pywebview.api.undo_mix();
+    if (res && res.ok) {
+      addEventChip("↩️ Mix: annullato");
+      if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
+    } else if (res) {
+      addEventChip(`ℹ️ ${res.error}`);
+    }
+  });
 }
 
 async function redoLastChange() {
   if (!window.pywebview) return;
-  const res = await window.pywebview.api.redo_mix();
-  if (res && res.ok) {
-    addEventChip("↪️ Mix: ripristinato");
-    if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
-  } else if (res) {
-    addEventChip(`ℹ️ ${res.error}`);
-  }
+  return _busyRun(document.getElementById("btn-redo"), async () => {
+    const res = await window.pywebview.api.redo_mix();
+    if (res && res.ok) {
+      addEventChip("↪️ Mix: ripristinato");
+      if (lastRunResult) onDone({ ...lastRunResult, stage: "mix" });
+    } else if (res) {
+      addEventChip(`ℹ️ ${res.error}`);
+    }
+  });
 }
 
 // "Rielabora il mix": re-runs only render_mix (stems/analysis already
 // cached server-side) with the edited feedback text, then re-shows the
 // mix DAW with the new result.
 async function reprocessMix() {
-  const status = document.getElementById("feedback-status");
-  const text = document.getElementById("feedback-text")?.value?.trim() || "";
-  if (status) status.textContent = "Rielaborazione in corso...";
-  const prefs = { creative_brief: text };
-  const result = await window.pywebview.api.reprocess_mix(prefs);
-  onDone(result);
+  return _busyRun(document.getElementById("btn-reprocess"), async () => {
+    const status = document.getElementById("feedback-status");
+    const text = document.getElementById("feedback-text")?.value?.trim() || "";
+    if (status) status.textContent = "Rielaborazione in corso...";
+    const prefs = { creative_brief: text };
+    const result = await window.pywebview.api.reprocess_mix(prefs);
+    onDone(result);
+  });
 }
 
 // "Procedi al mastering": resumes from the cached mix straight into the
 // mastering stage, then shows the normal final result screen.
 async function continueToMastering() {
-  const platform = document.getElementById("platform")?.value || "auto";
-  const result = await window.pywebview.api.continue_to_mastering({ platform });
-  onDone(result);
+  return _busyRun(document.getElementById("btn-continue-mastering"), async () => {
+    const platform = document.getElementById("platform")?.value || "auto";
+    const result = await window.pywebview.api.continue_to_mastering({ platform });
+    onDone(result);
+  });
 }
 
 // Final-screen "MIX"/"MASTERING" buttons: reopen the relevant DAW view at
@@ -1160,40 +1346,51 @@ async function openSessionHistory() {
   goToScreen("screen-history");
   const list = document.getElementById("session-history-list");
   if (!list || !window.pywebview) return;
-  list.innerHTML = `<div class="daw-loading">Carico la cronologia...</div>`;
-  const sessions = await window.pywebview.api.list_sessions();
-  if (!sessions || sessions.length === 0) {
-    list.innerHTML = `<div class="daw-loading">Nessuna sessione precedente.</div>`;
-    return;
-  }
-  list.innerHTML = sessions.map((s) => {
-    const date = new Date(s.timestamp * 1000).toLocaleString("it-IT");
-    const stageLabel = s.stage === "master" ? "Mix + Mastering" : "Solo mix";
-    return `
-      <div class="session-history-row">
-        <div class="session-history-main">
-          <div class="session-history-date">${date}</div>
-          <div>${s.genre || "?"} &middot; BPM ${s.bpm ? s.bpm.toFixed(1) : "?"} &middot; ${s.key || "?"} &middot; ${s.lufs ? s.lufs.toFixed(1) : "?"} LUFS &middot; ${stageLabel}</div>
-        </div>
-        <button class="btn" onclick="openSessionFolder('${s.id}')">Apri cartella</button>
-      </div>`;
-  }).join("");
+  return _busyRun(document.getElementById("btn-history"), async () => {
+    list.innerHTML = `<div class="daw-loading">Carico la cronologia...</div>`;
+    const sessions = await window.pywebview.api.list_sessions();
+    if (!sessions || sessions.length === 0) {
+      list.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">&#9203;</div>
+          <div class="empty-state-title">Nessuna sessione precedente</div>
+          <div class="empty-state-hint">I render completati compariranno qui, con data, genere e loudness.</div>
+        </div>`;
+      return;
+    }
+    list.innerHTML = sessions.map((s) => {
+      const date = new Date(s.timestamp * 1000).toLocaleString("it-IT");
+      const stageLabel = s.stage === "master" ? "Mix + Mastering" : "Solo mix";
+      return `
+        <div class="session-history-row">
+          <div class="session-history-main">
+            <div class="session-history-date">${date}</div>
+            <div>${s.genre || "?"} &middot; BPM ${s.bpm ? s.bpm.toFixed(1) : "?"} &middot; ${s.key || "?"} &middot; ${s.lufs ? s.lufs.toFixed(1) : "?"} LUFS &middot; ${stageLabel}</div>
+          </div>
+          <button class="btn" onclick="openSessionFolder('${s.id}')">Apri cartella</button>
+        </div>`;
+    }).join("");
+  });
 }
 
 async function openSessionFolder(id) {
   if (!window.pywebview) return;
-  const res = await window.pywebview.api.open_session_folder(id);
-  if (res && !res.ok) addEventChip(`⚠️ ${res.error}`);
+  return _busyRun(document.getElementById("btn-history"), async () => {
+    const res = await window.pywebview.api.open_session_folder(id);
+    if (res && !res.ok) addEventChip(`⚠️ ${res.error}`);
+  });
 }
 
 async function exportFinal(stage) {
   if (!window.pywebview) return;
-  const res = await window.pywebview.api.export_final(stage || "auto");
-  if (res && res.ok) {
-    addEventChip(`\u{1F4E6} Esportato: ${res.path}`);
-  } else if (res && res.error !== "Esportazione annullata.") {
-    addEventChip(`⚠️ Esportazione fallita: ${res.error}`);
-  }
+  return _busyRun(document.getElementById("btn-export"), async () => {
+    const res = await window.pywebview.api.export_final(stage || "auto");
+    if (res && res.ok) {
+      addEventChip(`\u{1F4E6} Esportato: ${res.path}`);
+    } else if (res && res.error !== "Esportazione annullata.") {
+      addEventChip(`⚠️ Esportazione fallita: ${res.error}`);
+    }
+  });
 }
 
 // --- Post-render preview player: a real <audio> element backed by actual
@@ -1227,26 +1424,28 @@ function _previewPlayerHtml(hasMaster) {
 // e.g. requesting "master" before mastering has run).
 async function loadPreviewPlayer(defaultVersion) {
   if (!window.pywebview) return;
-  const lm = document.getElementById("preview-lufs-switch")?.checked || false;
-  const data = await window.pywebview.api.get_preview_urls(lm);
-  const audio = document.getElementById("preview-audio");
-  if (!audio) return;
-  if (!data || !data.ok) {
-    addEventChip(`\u{26A0}\u{FE0F} Anteprima non disponibile: ${data ? data.error : "errore sconosciuto"}`);
-    return;
-  }
-  _previewUrls = data.urls;
-  const wasPlaying = !audio.paused;
-  const t = audio.currentTime || 0;
-  _previewVersion = _previewUrls[defaultVersion] ? defaultVersion : "mix";
-  const resume = () => {
-    audio.currentTime = t;
-    if (wasPlaying) audio.play();
-    audio.removeEventListener("loadedmetadata", resume);
-  };
-  audio.addEventListener("loadedmetadata", resume);
-  audio.src = _previewUrls[_previewVersion];
-  _markActivePreviewButton(_previewVersion);
+  return _busyRun(document.getElementById("preview-audio"), async () => {
+    const lm = document.getElementById("preview-lufs-switch")?.checked || false;
+    const data = await window.pywebview.api.get_preview_urls(lm);
+    const audio = document.getElementById("preview-audio");
+    if (!audio) return;
+    if (!data || !data.ok) {
+      addEventChip(`\u{26A0}\u{FE0F} Anteprima non disponibile: ${data ? data.error : "errore sconosciuto"}`);
+      return;
+    }
+    _previewUrls = data.urls;
+    const wasPlaying = !audio.paused;
+    const t = audio.currentTime || 0;
+    _previewVersion = _previewUrls[defaultVersion] ? defaultVersion : "mix";
+    const resume = () => {
+      audio.currentTime = t;
+      if (wasPlaying) audio.play();
+      audio.removeEventListener("loadedmetadata", resume);
+    };
+    audio.addEventListener("loadedmetadata", resume);
+    audio.src = _previewUrls[_previewVersion];
+    _markActivePreviewButton(_previewVersion);
+  });
 }
 
 // NO MIX / MIX / MASTERING toggle: swaps the <audio> source but keeps the
@@ -1279,14 +1478,16 @@ async function submitFeedback() {
   const status = document.getElementById("feedback-status");
   const text = input ? input.value.trim() : "";
   if (!text || !window.pywebview) return;
-  if (status) status.textContent = "Ricalibro...";
-  const res = await window.pywebview.api.submit_feedback(text);
-  if (status) {
-    status.textContent = res && res.ok
-      ? `Nuova versione salvata (v${res.version}): ${res.master_path}`
-      : `Errore: ${res ? res.error : "sconosciuto"}`;
-  }
-  if (res && res.ok) loadPreviewPlayer(_previewVersion);
+  return _busyRun(document.getElementById("btn-submit-feedback"), async () => {
+    if (status) status.textContent = "Ricalibro...";
+    const res = await window.pywebview.api.submit_feedback(text);
+    if (status) {
+      status.textContent = res && res.ok
+        ? `Nuova versione salvata (v${res.version}): ${res.master_path}`
+        : `Errore: ${res ? res.error : "sconosciuto"}`;
+    }
+    if (res && res.ok) loadPreviewPlayer(_previewVersion);
+  });
 }
 
 // --- Director Mode: the pipeline is genuinely paused on a Python thread
@@ -1476,7 +1677,10 @@ function updateVuMeter(lufs, label) {
   if (!fill) return;
   const pct = Math.max(0, Math.min(100, ((lufs + 30) / 30) * 100));
   fill.style.width = `${pct.toFixed(0)}%`;
-  if (detail) detail.textContent = label || `${lufs.toFixed(1)} LUFS`;
+  if (detail) {
+    detail.textContent = label || `${lufs.toFixed(1)} LUFS`;
+    _markModuleLive(detail);
+  }
 }
 
 function flashDetail(id, text) {
@@ -1491,6 +1695,138 @@ function flashDetail(id, text) {
     clearTimeout(module._activeTimer);
     module._activeTimer = setTimeout(() => module.classList.remove("module-active"), 500);
   }
+  _markModuleLive(el);
+}
+
+// --- Rack live-state helpers ---------------------------------------------
+// The 9 rack modules start in an ambient idle state (breathing border +
+// shimmer skeleton, see .module-idle in style.css) instead of a dead
+// "in attesa..." hole. RedlineRack (rack_state.js) is the single source of
+// truth for what each module should say; app.js only writes it into the DOM.
+const RACK_IDLE_TEXT = "In attesa di dati dal motore...";
+let _rackState = (typeof RedlineRack !== "undefined") ? RedlineRack.initialState() : [];
+
+// Flips one module from idle to live: drops the skeleton/breathing state and
+// lights the card up. Safe to call repeatedly.
+function _markModuleLive(detailEl) {
+  if (!detailEl) return;
+  const module = detailEl.closest(".module");
+  if (!module) return;
+  module.classList.remove("module-idle");
+  module.classList.add("live");
+}
+
+// Writes text into a module detail and syncs the card's idle/live state --
+// used by renderStemChannelStrip, where a stem that has no value yet for a
+// given module must show the ambient idle state again (not a stale live
+// reading from a different stem).
+function _setModuleDetailText(detailEl, text, isLive) {
+  if (!detailEl) return;
+  detailEl.textContent = text;
+  const module = detailEl.closest(".module");
+  if (!module) return;
+  if (isLive) {
+    module.classList.remove("module-idle");
+    module.classList.add("live");
+  } else {
+    module.classList.add("module-idle");
+    module.classList.remove("live");
+  }
+}
+
+// Resets ALL 9 module details (not just the 4 the old code touched) through
+// RedlineRack.resetAll(), so a new run never shows a previous run's values.
+function resetRackModules() {
+  if (typeof RedlineRack === "undefined") return;
+  _rackState = RedlineRack.resetAll();
+  for (const m of _rackState) {
+    const el = document.querySelector(m.detailId);
+    if (!el) continue;
+    el.textContent = RACK_IDLE_TEXT;
+    const module = el.closest(".module");
+    if (module) {
+      module.classList.add("module-idle");
+      module.classList.remove("live", "module-active");
+    }
+  }
+}
+
+// Folds one backend event into the rack state and updates the matching
+// module. A module that already received richer per-case text (e.g. the
+// stem name from flashDetail) keeps it -- the fold only fills modules that
+// would otherwise still be idle, and always flips them to the live state.
+function _foldRackEvent(evt) {
+  if (typeof RedlineRack === "undefined" || !evt) return;
+  _rackState = RedlineRack.reduce(_rackState, evt);
+  const d = RedlineRack.describe(evt);
+  if (!d) return;
+  const meta = RedlineRack.MODULES.find((m) => m.id === d.moduleId);
+  const el = meta ? document.querySelector(meta.detailId) : null;
+  if (!el) return;
+  const current = el.textContent.trim();
+  if (current === RACK_IDLE_TEXT || current === RedlineRack.IDLE_TEXT) {
+    el.textContent = d.text;
+  }
+  _markModuleLive(el);
+}
+
+// --- Plugin / Processore panel -------------------------------------------
+// Renders the view models built by RedlinePluginState (plugin_state.js) from
+// the real character_processor / plugin_hosted payloads -- real labels and
+// raw values, never a canned placeholder.
+function _escHtml(s) {
+  return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function renderPluginPanel(vm) {
+  const body = document.getElementById("plugin-panel-body");
+  const panel = document.getElementById("plugin-panel");
+  const liveDot = document.getElementById("plugin-panel-live");
+  if (!body) return;
+
+  const model = vm || (typeof RedlinePluginState !== "undefined"
+    ? RedlinePluginState.emptyState()
+    : { title: "Nessun plugin", subtitle: "In attesa di un processore o plugin...", rows: [], live: false });
+
+  const rows = (model.rows || [])
+    .map((r) => `<div class="plugin-row"><span class="plugin-row-label">${_escHtml(r.label)}</span><span class="plugin-row-value">${_escHtml(r.value)}</span></div>`)
+    .join("");
+
+  body.innerHTML = `
+    <div class="plugin-panel-title-line">${_escHtml(model.title)}</div>
+    <div class="plugin-panel-subtitle">${_escHtml(model.subtitle)}</div>
+    ${rows ? `<div class="plugin-rows">${rows}</div>` : `<div class="skeleton-bar"></div>`}`;
+
+  if (panel) {
+    panel.classList.toggle("live", !!model.live);
+    panel.classList.remove("pulse");
+    void panel.offsetWidth; // restart the one-shot landing pulse
+    panel.classList.add("pulse");
+  }
+  if (liveDot) liveDot.classList.toggle("on", !!model.live);
+}
+
+// Maps a built-in character processor name to the rack module it most
+// directly affects, so a character_processor event pulses the right card.
+const PROCESSOR_MODULE_MAP = {
+  distortion: "sat", clipping: "sat", bitcrush: "sat",
+  chorus: "reverb", phaser: "reverb",
+  noise_gate: "comp", ladder_filter: "eq", pitch_shift: "midside",
+};
+
+function _pulseModuleById(moduleId) {
+  if (typeof RedlineRack === "undefined") return;
+  const meta = RedlineRack.MODULES.find((m) => m.id === moduleId);
+  const el = meta ? document.querySelector(meta.detailId) : null;
+  const module = el ? el.closest(".module") : null;
+  if (!module) return;
+  module.classList.remove("module-active");
+  void module.offsetWidth;
+  module.classList.add("module-active");
+  clearTimeout(module._activeTimer);
+  module._activeTimer = setTimeout(() => module.classList.remove("module-active"), 500);
 }
 
 // --- Per-stem breakdown rows: one row per track for the whole render,
@@ -1513,10 +1849,25 @@ const STEM_STAGE_BADGES = [
 ];
 const stemRows = new Map(); // stem name -> { row, badges: {stageKey: el} }
 
+// The intentional empty state shown in #stem-rows before the first stem row
+// exists -- never a blank rectangle. Removed the moment a real row lands.
+function _renderStemRowsEmptyState() {
+  const container = document.getElementById("stem-rows");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="empty-state" id="stem-rows-empty">
+      <div class="empty-state-icon">&#9835;</div>
+      <div class="empty-state-title">Nessuna traccia in lavorazione</div>
+      <div class="empty-state-hint">Le tracce compariranno qui, una riga per stem, appena parte il render.</div>
+      <div class="skeleton-bar"></div>
+    </div>`;
+}
+
 function getOrCreateStemRow(name) {
   if (stemRows.has(name)) return stemRows.get(name);
   const container = document.getElementById("stem-rows");
   if (!container) return null;
+  document.getElementById("stem-rows-empty")?.remove();
 
   const row = document.createElement("div");
   row.className = "stem-row pop-in";
@@ -1665,6 +2016,7 @@ function markStemStage(name, stageKey) {
 // user had to cross-reference by eye.
 function addEventChip(text) {
   const log = document.getElementById("log");
+  document.getElementById("log-idle")?.remove();
   const chip = document.createElement("div");
   chip.className = "log-line log-chip";
   chip.textContent = text;
@@ -1773,24 +2125,32 @@ function renderStemChannelStrip(name) {
   const comp = params.compressor;
   if (fill) fill.style.width = comp ? `${Math.min(100, (comp.ratio - 1) * 14)}%` : "0%";
   const compDetail = document.getElementById("comp-detail");
-  if (compDetail) compDetail.textContent = comp ? `${name}: ${comp.ratio.toFixed(1)}:1 @ ${comp.threshold_db}dB` : "in attesa...";
+  if (compDetail) {
+    _setModuleDetailText(compDetail, comp ? `${name}: ${comp.ratio.toFixed(1)}:1 @ ${comp.threshold_db}dB` : RACK_IDLE_TEXT, !!comp);
+  }
   if (comp) animateCompressor("comp-canvas", comp.ratio, comp.threshold_db);
 
   const dial = document.getElementById("deess-dial");
   const deess = params.deesser;
   if (dial) dial.textContent = deess ? `${(((deess.low_hz + deess.high_hz) / 2) / 1000).toFixed(1)}kHz` : "—";
   const deessDetail = document.getElementById("deess-detail");
-  if (deessDetail) deessDetail.textContent = deess ? `${name}: banda ${deess.low_hz.toFixed(0)}-${deess.high_hz.toFixed(0)}Hz` : "in attesa...";
+  if (deessDetail) {
+    _setModuleDetailText(deessDetail, deess ? `${name}: banda ${deess.low_hz.toFixed(0)}-${deess.high_hz.toFixed(0)}Hz` : RACK_IDLE_TEXT, !!deess);
+  }
   if (deess) animateDeesser("deess-canvas");
 
   const satDetail = document.getElementById("saturation-detail");
   const sat = params.saturation;
-  if (satDetail) satDetail.textContent = sat ? `${name}: drive ${sat.drive}` : "in attesa...";
+  if (satDetail) {
+    _setModuleDetailText(satDetail, sat ? `${name}: drive ${sat.drive}` : RACK_IDLE_TEXT, !!sat);
+  }
   if (sat) animateSaturation("sat-canvas", sat.drive);
 
   const revDetail = document.getElementById("reverb-detail");
   const rev = params.reverb_send;
-  if (revDetail) revDetail.textContent = rev ? `${name}: send ${rev.bus} ${Math.round(rev.mix * 100)}%` : "in attesa...";
+  if (revDetail) {
+    _setModuleDetailText(revDetail, rev ? `${name}: send ${rev.bus} ${Math.round(rev.mix * 100)}%` : RACK_IDLE_TEXT, !!rev);
+  }
   if (rev) animateReverb("reverb-canvas", rev.mix * 100);
 }
 
@@ -2100,6 +2460,32 @@ function onEvent(evt) {
       flashDetail("comp-detail", `Transient: attack ${evt.attack_gain_db}dB / sustain ${evt.sustain_gain_db}dB`);
       break;
 
+    // --- Live plugin / processor panel (additive cases) ------------------
+    // character_processor: a built-in processor was applied to one stem
+    // (redline/processors.py via mixengine's character hook). The panel
+    // shows the real processor name, stem and every real param value.
+    case "character_processor": {
+      if (typeof RedlinePluginState !== "undefined") {
+        renderPluginPanel(RedlinePluginState.processorViewModel(evt));
+      }
+      const procName = evt.processor || "processore";
+      addEventChip(`\u{1F50C} ${evt.stem || "?"}: processore '${procName}'`);
+      _pulseModuleById(PROCESSOR_MODULE_MAP[procName] || "sat");
+      break;
+    }
+
+    // plugin_hosted: an external plugin was hosted at the seam
+    // (redline/plugins.py). The panel shows the real plugin name and the
+    // real parameter labels/raw values, not a generic placeholder.
+    case "plugin_hosted": {
+      if (typeof RedlinePluginState !== "undefined") {
+        renderPluginPanel(RedlinePluginState.pluginViewModel(evt));
+      }
+      addEventChip(`\u{1F50C} Plugin ospitato: ${evt.name || "?"}`);
+      _pulseModuleById("master");
+      break;
+    }
+
     default:
       // Every backend event is meant to be seen -- a silently dropped case
       // here is exactly why effects the engine actually uses (reverb,
@@ -2112,6 +2498,10 @@ function onEvent(evt) {
       }
       break;
   }
+  // Fold the event into the rack state model AFTER the per-case handling:
+  // every module that would otherwise still be idle gets its live text from
+  // RedlineRack.describe(), and the card flips out of the ambient idle state.
+  _foldRackEvent(evt);
   } catch (e) {
     // A malformed event payload must never break rendering of later events.
     console.error("RedLine onEvent error", e);

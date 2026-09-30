@@ -96,6 +96,11 @@
     { kind: "event", payload: { type: "reverb_send", stem: "vocals", bus: "vocal_plate", mix: 0.25 } },
     { kind: "event", payload: { type: "limiter", ceiling_db: -1.0 } },
     { kind: "event", payload: { type: "mid_side", mono_below_hz: 120, air_shelf_hz: 9000, air_gain_db: 1.2 } },
+    // Live plugin/processor panel: a built-in character processor applied to
+    // a stem, then an external plugin hosted at the seam -- both must render
+    // real labels/values into [data-qa="plugin-panel"].
+    { kind: "event", payload: { type: "character_processor", stem: "vocals", processor: "distortion", params: { drive_db: 6.0, tone: 0.4 } } },
+    { kind: "event", payload: { type: "plugin_hosted", name: "QA Test Plugin", parameters: [{ name: "gain", label: "Gain", raw_value: "3.5 dB" }, { name: "mix", label: "Mix", raw_value: "100%" }] } },
     { kind: "event", payload: { type: "qc_report", lufs: -14.0, true_peak_db: -1.0, mono_compatibility: "ok", passed: true } },
     { kind: "event", payload: { type: "done" } }
   ];
@@ -256,14 +261,19 @@
     // --- details_live_after_replay ---------------------------------------
     (function () {
       var details = qaAll(".module-detail");
-      var stale = details.filter(function (el) { return elText(el) === "in attesa..."; });
+      // "Live" means: not the legacy idle string, not the new richer idle
+      // label, and not empty -- i.e. a real value from the replayed events.
+      var stale = details.filter(function (el) {
+        var t = elText(el);
+        return !t || t === "in attesa..." || /^in attesa di dati/i.test(t);
+      });
       var pass = details.length > 0 && stale.length === 0;
       results.push({
         id: "details_live_after_replay",
         pass: pass,
         detail: pass
           ? details.length + " .module-detail, none stale"
-          : stale.length + "/" + details.length + " still \"in attesa...\": " +
+          : stale.length + "/" + details.length + " still idle/empty: " +
             stale.map(function (el) { return "#" + (el.id || "?") + "=\"" + elText(el) + "\""; }).join(", ")
       });
     })();
@@ -308,10 +318,20 @@
     // --- plugin_panel ----------------------------------------------------
     (function () {
       var el = document.querySelector('[data-qa="plugin-panel"]');
+      var body = document.getElementById("plugin-panel-body");
+      var text = body ? String(body.textContent || "").trim() : "";
+      // The panel must exist AND show live content after the replay (the
+      // fixture fires character_processor + plugin_hosted): the empty state
+      // text must be gone and the real plugin name must be visible.
+      var live = !!el && text.length > 0 && text.indexOf("QA Test Plugin") !== -1;
       results.push({
         id: "plugin_panel",
-        pass: !!el,
-        detail: el ? "found " + describe(el) : "no [data-qa=\"plugin-panel\"] in document"
+        pass: !!el && live,
+        detail: el
+          ? (live
+            ? "found " + describe(el) + ", live content: \"" + text.slice(0, 80) + "\""
+            : "found " + describe(el) + " but no live content after replay (body=\"" + text.slice(0, 80) + "\")")
+          : "no [data-qa=\"plugin-panel\"] in document"
       });
     })();
 
