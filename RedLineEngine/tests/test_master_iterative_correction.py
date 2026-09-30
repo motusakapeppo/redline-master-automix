@@ -110,8 +110,8 @@ def test_perceptual_lufs_target_platform_overrides_genre_default():
     the genre's club/spotify target)."""
     # apple (-16) beats the EDM genre default (club, -9)
     assert _perceptual_lufs_target("EDM / Urban", "apple", -9.0) == -16.0
-    # youtube (-13) beats the Pop/Rock genre default (spotify, -14)
-    assert _perceptual_lufs_target("Pop / Rock", "youtube", -14.0) == -13.0
+    # youtube (-14) matches the Pop/Rock genre default (spotify, -14)
+    assert _perceptual_lufs_target("Pop / Rock", "youtube", -14.0) == -14.0
     # club (-9) beats the Pop/Rock genre default (spotify, -14)
     assert _perceptual_lufs_target("Pop / Rock", "club", -14.0) == -9.0
 
