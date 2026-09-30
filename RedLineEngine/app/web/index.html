@@ -352,6 +352,24 @@ window.addEventListener('error', function(e) {
           <span class="plugin-panel-title">Plugin / Processore</span>
           <span id="plugin-panel-live" class="plugin-live-dot"></span>
         </div>
+        <!-- Live processor selector: pick a built-in character processor and
+             apply it to every stem, or clear it. The two toggles flip the
+             additive engine features (called defensively from app.js). -->
+        <div id="plugin-controls" class="plugin-controls">
+          <select id="processor-select" aria-label="Processore integrato">
+            <option value="">&mdash; Processore &mdash;</option>
+          </select>
+          <button id="processor-apply" class="btn plugin-ctl-btn" onclick="applyProcessorToAll()">Applica a tutti gli stem</button>
+          <button id="processor-clear" class="btn plugin-ctl-btn" onclick="clearProcessorSpec()">Rimuovi</button>
+          <label class="plugin-toggle" for="processor-enable">
+            <input type="checkbox" id="processor-enable" onchange="toggleProcessorVariants()">
+            Abilita processori
+          </label>
+          <label class="plugin-toggle" for="plugin-hosting-enable">
+            <input type="checkbox" id="plugin-hosting-enable" onchange="togglePluginHosting()">
+            Hosting plugin
+          </label>
+        </div>
         <div id="plugin-panel-body" class="plugin-panel-body">
           <div class="plugin-panel-empty">
             <div class="empty-state-title">Nessun plugin</div>

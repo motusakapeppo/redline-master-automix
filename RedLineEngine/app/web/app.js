@@ -1808,6 +1808,118 @@ function renderPluginPanel(vm) {
   if (liveDot) liveDot.classList.toggle("on", !!model.live);
 }
 
+// --- Live processor selector ---------------------------------------------
+// Picks a built-in character processor (list_builtin_processors) and applies
+// it to every stem via the additive set_character_spec bridge method. Every
+// bridge call goes through _bridgeCall, which silently no-ops when the method
+// is absent on an older bridge -- never a thrown TypeError, never a console
+// error. The two enable toggles flip additive engine features the same way.
+function _bridgeCall(name, ...args) {
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || typeof api[name] !== "function") return Promise.resolve(undefined);
+  try {
+    return Promise.resolve(api[name](...args)).catch(() => undefined);
+  } catch (e) {
+    return Promise.resolve(undefined);
+  }
+}
+
+function _hasBridgeMethod(name) {
+  const api = window.pywebview && window.pywebview.api;
+  return !!(api && typeof api[name] === "function");
+}
+
+let _builtinProcessors = [];
+
+async function loadBuiltinProcessors() {
+  const sel = document.getElementById("processor-select");
+  if (!sel) return;
+  try {
+    const data = await _bridgeCall("list_builtin_processors");
+    if (!data || !data.ok || !Array.isArray(data.processors)) return;
+    _builtinProcessors = data.processors;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">&mdash; Processore &mdash;</option>';
+    for (const p of _builtinProcessors) {
+      if (!p || !p.name) continue;
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.textContent = p.label || p.name;
+      sel.appendChild(opt);
+    }
+    if (current) sel.value = current;
+  } catch (e) {
+    // Bridge without list_builtin_processors: the picker just stays on its
+    // placeholder -- never a console error.
+  }
+}
+
+function _selectedProcessorMeta() {
+  const sel = document.getElementById("processor-select");
+  const name = sel ? sel.value : "";
+  if (!name) return null;
+  return _builtinProcessors.find((p) => p && p.name === name) || { name, label: name, params: [] };
+}
+
+async function applyProcessorToAll() {
+  return _busyRun(document.getElementById("processor-apply"), async () => {
+    const meta = _selectedProcessorMeta();
+    if (!meta) {
+      addEventChip("\u26A0\uFE0F Seleziona prima un processore.");
+      return;
+    }
+    const params = {};
+    for (const p of meta.params || []) {
+      if (p && p.name) params[p.name] = p.default;
+    }
+    const spec = { "*": { processor: meta.name, params } };
+    await _bridgeCall("enable_processor_variants", true);
+    const res = await _bridgeCall("set_character_spec", spec);
+    if (res && res.ok) {
+      if (typeof RedlinePluginState !== "undefined") {
+        renderPluginPanel(RedlinePluginState.processorViewModel({ processor: meta.name, params }));
+      }
+      addEventChip(`\u{1F50C} Processore '${meta.label || meta.name}' applicato a tutti gli stem`);
+    } else {
+      addEventChip(`\u26A0\uFE0F Processore non applicato: ${res ? res.error : "bridge non disponibile"}`);
+    }
+  });
+}
+
+async function clearProcessorSpec() {
+  return _busyRun(document.getElementById("processor-clear"), async () => {
+    const res = await _bridgeCall("set_character_spec", {});
+    if (typeof RedlinePluginState !== "undefined") {
+      renderPluginPanel(RedlinePluginState.emptyState());
+    }
+    if (res && res.ok) {
+      addEventChip("\u{1F9F9} Processori rimossi da tutti gli stem");
+    } else if (res) {
+      addEventChip(`\u26A0\uFE0F Rimozione non riuscita: ${res.error}`);
+    }
+  });
+}
+
+async function toggleProcessorVariants() {
+  const el = document.getElementById("processor-enable");
+  const checked = !!(el && el.checked);
+  if (!_hasBridgeMethod("enable_processor_variants")) return;
+  return _busyRun(el, async () => {
+    await _bridgeCall("enable_processor_variants", checked);
+    addEventChip(checked ? "\u{1F50C} Processori abilitati" : "\u{1F50C} Processori disabilitati");
+  });
+}
+
+async function togglePluginHosting() {
+  const el = document.getElementById("plugin-hosting-enable");
+  const checked = !!(el && el.checked);
+  if (!_hasBridgeMethod("enable_plugin_hosting")) return;
+  return _busyRun(el, async () => {
+    await _bridgeCall("enable_plugin_hosting", checked);
+    addEventChip(checked ? "\u{1F50C} Hosting plugin abilitato" : "\u{1F50C} Hosting plugin disabilitato");
+  });
+}
+
 // Maps a built-in character processor name to the rack module it most
 // directly affects, so a character_processor event pulses the right card.
 const PROCESSOR_MODULE_MAP = {
@@ -2514,10 +2626,12 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     initThreeAvatar();
     loadPresets();
+    loadBuiltinProcessors();
   });
 } else {
   initThreeAvatar();
   loadPresets();
+  loadBuiltinProcessors();
 }
 
 function initThreeAvatar() {

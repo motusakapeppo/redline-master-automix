@@ -94,6 +94,24 @@
     lufs: -14.0,
   };
 
+  // Built-in character processors for the live selector (mirrors the shape
+  // of api.list_builtin_processors: {ok, processors:[{name,label,params}]}).
+  var BUILTIN_PROCESSORS = {
+    ok: true,
+    processors: [
+      {
+        name: "distortion",
+        label: "Distortion",
+        params: [{ name: "drive_db", label: "Drive", default: 6.0, min: 0, max: 24, step: 0.5, unit: "dB" }],
+      },
+      {
+        name: "chorus",
+        label: "Chorus",
+        params: [{ name: "rate_hz", label: "Rate", default: 1.0, min: 0.1, max: 5, step: 0.1, unit: "Hz" }],
+      },
+    ],
+  };
+
   // --- Stub Api -------------------------------------------------------------
 
   var api = {
@@ -136,6 +154,13 @@
 
     // Neural Monitor
     toggle_neural_monitor: function () { return Promise.resolve(null); },
+
+    // Live processor selector (additive; the real bridge may not expose the
+    // two enable_* methods yet -- app.js calls them defensively).
+    list_builtin_processors: function () { return Promise.resolve(BUILTIN_PROCESSORS); },
+    set_character_spec: function () { return Promise.resolve({ ok: true, spec: {} }); },
+    enable_processor_variants: function () { return Promise.resolve({ ok: true }); },
+    enable_plugin_hosting: function () { return Promise.resolve({ ok: true }); },
 
     // System
     system_ready: function () { return Promise.resolve(null); },
