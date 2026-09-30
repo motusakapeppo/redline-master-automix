@@ -285,21 +285,21 @@ window.addEventListener('error', function(e) {
         </div>
 
         <div class="module module-idle" data-module="vu">
-          <div class="module-title"><span class="module-icon">▮</span>VU (a eventi LUFS)</div>
+          <div class="module-title"><span class="module-icon">▮</span>VU · LUFS</div>
           <div class="vu-meter"><div class="vu-fill" id="vu-fill"></div><div class="vu-zero-marker"></div></div>
           <div class="skeleton-bar"></div>
           <div class="module-detail" id="vu-detail">In attesa di dati dal motore...</div>
         </div>
 
         <div class="module module-qc module-idle" data-module="qc">
-          <div class="module-title"><span class="module-icon">◈</span>Ascolto / QC</div>
+          <div class="module-title"><span class="module-icon">◈</span>QC</div>
           <canvas id="qc-canvas" class="qc-canvas" width="220" height="40" role="img" aria-label="Forma d'onda QC"></canvas>
           <div class="skeleton-bar"></div>
           <div class="module-detail" id="qc-detail">In attesa di dati dal motore...</div>
         </div>
 
         <div class="module module-idle" data-module="reverb">
-          <div class="module-title"><span class="module-icon">〜</span>Riverbero / Spazio</div>
+          <div class="module-title"><span class="module-icon">〜</span>Riverbero</div>
           <canvas id="reverb-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione riverbero"></canvas>
           <div class="skeleton-bar"></div>
           <div class="module-detail" id="reverb-detail">In attesa di dati dal motore...</div>
@@ -313,7 +313,7 @@ window.addEventListener('error', function(e) {
         </div>
 
         <div class="module module-idle" data-module="master">
-          <div class="module-title"><span class="module-icon">◆</span>Master (Multiband/Limiter)</div>
+          <div class="module-title" title="Multiband + Limiter"><span class="module-icon">◆</span>Master</div>
           <canvas id="master-canvas" class="plugin-canvas" width="220" height="46" role="img" aria-label="Visualizzazione limiter"></canvas>
           <div class="skeleton-bar"></div>
           <div class="module-detail" id="master-detail">In attesa di dati dal motore...</div>

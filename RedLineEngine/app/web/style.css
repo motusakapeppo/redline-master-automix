@@ -943,7 +943,7 @@ select { width: auto; }
   margin: 18px 0 10px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 760px) {
   .rack { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -1013,6 +1013,11 @@ select { width: auto; }
   letter-spacing: 0.08em;
   color: var(--text-dim);
   margin-bottom: 10px;
+  line-height: 1.35;
+  /* Long single tokens ("MULTIBAND/LIMITER") can't break at a space and were
+     clipped by the card's overflow:hidden in the narrow 3-column layout at
+     880px; allow breaking anywhere so the whole title stays readable. */
+  overflow-wrap: anywhere;
 }
 
 .module-icon {
@@ -1023,6 +1028,7 @@ select { width: auto; }
   color: var(--accent);
   font-size: 12px;
   text-shadow: 0 0 6px rgba(255, 0, 63, 0.6);
+  flex: 0 0 auto;
 }
 
 .module-detail {
