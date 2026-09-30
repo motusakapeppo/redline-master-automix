@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "harness": "scripts/qa/run.js",
+  "runner": "scripts/qa/inpage.js",
+  "scenario": "smoke",
+  "note": "Machine-readable manifest of the DOM invariants asserted in-page by scripts/qa/inpage.js runAssertions(). The runner is the source of truth; keep this file in sync when assertions change.",
+  "assertions": [
+    {
+      "id": "rail_exists",
+      "description": "The progress screen exists and the pipeline rail rendered at least one node.",
+      "selector": "#screen-progress, .pipeline-node",
+      "expect": "present",
+      "rule": "#screen-progress is non-null AND document.querySelectorAll('.pipeline-node').length > 0",
+      "fails_when": "#screen-progress is missing or zero .pipeline-node elements are in the DOM"
+    },
+    {
+      "id": "modules_present",
+      "description": "Exactly nine processing modules are rendered in the progress rack.",
+      "selector": ".module",
+      "expect": "count == 9",
+      "rule": "document.querySelectorAll('.module').length === 9",
+      "fails_when": "the .module count is anything other than 9 (missing or duplicated module)"
+    },
+    {
+      "id": "details_live_after_replay",
+      "description": "Every module detail shows a real value after the fixture replay, not an idle placeholder.",
+      "selector": ".module-detail",
+      "expect": "count > 0 and none stale",
+      "rule": "at least one .module-detail exists AND no detail text is empty, 'in attesa...', or matches /^in attesa di dati/i",
+      "fails_when": "a .module-detail is empty or still shows an idle label after replay"
+    },
+    {
+      "id": "cancel_control",
+      "description": "A cancel control is reachable in the document.",
+      "selector": "[data-qa=\"cancel-run\"], #btn-cancel",
+      "expect": "present",
+      "rule": "document.querySelector('[data-qa=\"cancel-run\"]') || document.getElementById('btn-cancel') is non-null",
+      "fails_when": "neither [data-qa=\"cancel-run\"] nor #btn-cancel exists"
+    },
+    {
+      "id": "slider_readouts",
+      "description": "Each of the five mix sliders has a live value readout as a sibling inside its .field.",
+      "selector": "#warmth, #vocal_prominence, #stereo_width, #transient_attack, #transient_sustain",
+      "expect": "5/5 sliders have a #<id>-val sibling readout",
+      "rule": "for each id: #<id> exists AND #<id>-val exists AND slider.closest('.field') contains the readout",
+      "fails_when": "a slider is missing, its #<id>-val readout is missing, or the readout is outside the slider's .field"
+    },
+    {
+      "id": "plugin_panel",
+      "description": "The plugin panel exists and shows live content after the replay (character_processor + plugin_hosted).",
+      "selector": "[data-qa=\"plugin-panel\"], #plugin-panel-body",
+      "expect": "present and live",
+      "rule": "[data-qa=\"plugin-panel\"] exists AND #plugin-panel-body text is non-empty AND contains 'QA Test Plugin'",
+      "fails_when": "the panel is missing, its body is empty, or the hosted plugin name is not rendered"
+    },
+    {
+      "id": "no_console_errors",
+      "description": "No console.error or window.onerror fired during load and replay.",
+      "selector": "window.__QA_CONSOLE_ERRORS__",
+      "expect": "length == 0",
+      "rule": "(window.__QA_CONSOLE_ERRORS__ || []).length === 0",
+      "fails_when": "any console.error or uncaught window.onerror was captured"
+    }
+  ]
+}
