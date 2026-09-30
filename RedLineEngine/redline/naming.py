@@ -41,21 +41,26 @@ VOCAL_WORD_HINTS = ("vox", "voice", "voices", "canto", "voz", "voces", "voix", "
 BASS_ROLE_HINTS = ("bass", "sub", "basso", "808", "bajo", "basse")
 # Drum role hints. The whole tuple is word-boundary matched so "perc" stops
 # matching inside "percent"/"perception"; "drums" is listed explicitly
-# because word-boundary "drum" alone would not match the plural. Kit
-# elements (hat/crash/ride/tom/...) are substring matched (they're long
-# enough to be safe), while the dangerously short "oh"/"hh" are
-# word-boundary. "room"/"loop"/"break"/"beat"/"top"/"bottom" are
-# deliberately NOT role hints -- too ambiguous (they'd misfire on common
-# instrument names like "Room Ambience" or "Top Loop").
+# because word-boundary "drum" alone would not match the plural.
+#
+# Kit elements are split by how dangerous a bare substring is. Short tokens
+# ("hat", "tom", "rim", "ride", "clap", "crash") MUST be word-boundary: as
+# substrings they silently swallowed common unrelated names -- confirmed in
+# practice, "Custom Pad" contains "tom" and "Atom"/"Automatic"/"Phantom"/
+# "Bottom"/"That"/"Trim"/"Pride"/"Override" all matched, routing ordinary
+# instrument stems into the drum bus. Only genuinely unambiguous multi-char
+# tokens stay substring.
+# "room"/"loop"/"break"/"beat"/"top"/"bottom" are deliberately NOT role
+# hints -- too ambiguous (they'd misfire on "Room Ambience" / "Top Loop").
 DRUM_ROLE_HINTS = (
     "drum", "drums", "kick", "snare", "perc", "batteria", "cassa", "rullante",
     # ES / FR / DE
     "bateria", "bombo", "caja", "batterie", "caisse claire", "schlagzeug", "trommel",
 )
 DRUM_SUBSTR_HINTS = (
-    "hat", "hihat", "hi-hat", "cymbal", "crash", "ride", "tom", "clap", "rim", "overhead",
+    "hihat", "hi-hat", "cymbal", "overhead",
 )
-DRUM_WORD_HINTS = ("oh", "hh")
+DRUM_WORD_HINTS = ("oh", "hh", "hat", "tom", "rim", "ride", "clap", "crash")
 
 # Take-layer hints, meaningful for vocal stems: a "double"/harmony sits under
 # and beside the lead, not centered and not as loud.

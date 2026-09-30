@@ -172,6 +172,21 @@ def test_kit_elements_are_drums():
         assert parse_stem(name).role == "drums", name
 
 
+def test_short_kit_tokens_do_not_swallow_unrelated_names():
+    # Regression: the short kit tokens (tom/hat/rim/ride/...) were originally
+    # substring-matched, so ordinary instrument names that merely CONTAIN them
+    # were routed into the drum bus -- confirmed in practice, "Custom Pad" and
+    # "Automaton"/"Phantom"/"Bottom"/"That"/"Trim"/"Pride"/"Override" all
+    # matched. They must be word-boundary matched, so a bare substring match
+    # never decides a role.
+    for name in (
+        "Custom Pad", "Atom", "Automatic", "Phantom", "Bottom", "That", "What",
+        "Chat", "Trim", "Prim", "Grim", "Pride", "Stride", "Override", "Tomato",
+        "Stomach", "Symptom",
+    ):
+        assert parse_stem(name).role != "drums", name
+
+
 # --- A3: multilingual role hints -------------------------------------------
 
 
