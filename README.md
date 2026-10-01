@@ -146,6 +146,55 @@ Every experimental module is **off by default**. Flags are stored in `redline/co
 
 > Note: the stem-classification checkpoint (`redline/director.py`) is always active whenever a `director_gate` is supplied — which is always true in the desktop app. There is no separate on/off flag for it; a caller that wants a non-interactive render (tests, headless CLI) simply doesn't pass a gate.
 
+### Performance & Quality Feature Flags
+
+A later wave added a set of speed and quality/intelligence features. Every one is **off by default**, and with a flag off the render is **bit-identical** to the render before that feature existed (enforced by `tests/test_neutral_golden.py`). Enable them the same way as any other flag: `.flags.json` or `REDLINE_<FLAG>=1`.
+
+**Speed**
+
+| Flag | Default | What it unlocks |
+|---|---|---|
+| `ENABLE_FAST_ANALYSIS` | off | Cheaper BPM/pitch path (plain YIN instead of pYIN, on a shorter window). This is the one flag-gated **numerical tier**: ON trades a small musical tolerance for speed, so it is *not* bit-identical. OFF is bit-identical. |
+| `ENABLE_LLM_RESULT_CACHE` | off | Memoizes LLM advisory stem classification across renders, so the same ambiguous stem isn't re-inferred every run. OFF: nothing is read or written, behavior unchanged. |
+
+**Quality / intelligence**
+
+| Flag | Default | What it unlocks |
+|---|---|---|
+| `ENABLE_RECOGNITION_V2` | off | Expanded multilingual lexicon plus graduated confidence and name/audio fusion for stem/instrument/register recognition. |
+| `ENABLE_AUTO_PROCESSORS` | off | Automatically assigns the right character processor per stem from its role/instrument/register. GUI "AUTO" toggle plus a read-only per-stem plan via `get_auto_processor_plan`. |
+| `ENABLE_PROCESSOR_PRESETS` | off | Curated per-instrument character-processor presets (data only). OFF: nothing is ever auto-inserted. |
+| `ENABLE_DO_NO_HARM` | off | Crest-aware: skips bus glue when the mix is already dense, instead of compressing an already-compressed bed. |
+| `ENABLE_TWO_STAGE_BALANCE` | off | Two-stage balance: intra-group first, then inter-group. |
+| `ENABLE_MULTI_RESONANCE` | off | N-node content-driven corrective EQ (beyond the single adaptive resonance pass). |
+| `ENABLE_LTAS_V2` | off | Matchering-style reference matching: loudest-pieces selection, LOWESS log-smoothing, separate mid/side FIR. |
+| `ENABLE_QC_V2` | off | Extended QC measurements: true-peak ISP, LRA, DC offset, stereo correlation. |
+| `ENABLE_QC_REPORT_JSON` | off | Writes the QC report to `<out_dir>/qc_report.json` for an explainable, inspectable result. |
+
+**Presentational only**
+
+| Flag | Default | What it unlocks |
+|---|---|---|
+| `ENABLE_GAME_BREAK` | off | Themed mini-games (snake / maze / shooter) to pass the time during a render. Never touches audio. OFF: the panel is simply absent. |
+
+**Performance improvements (bit-identical when off)**
+
+- **Meter cache** (`analysis/loudness.py`): `spectral_band_energies()` can memoize per-signal results, so repeated band measurements on the same buffer aren't recomputed.
+- **Vectorized correlometer** (`correlometer.py`): the per-lag sub-bass phase search runs as a JIT-compiled parallel kernel. Every lag's score is still the same float64 dot product, so results are bit-identical (verified by `tests/test_correlometer_equiv.py`).
+- **Background warm-up** (`redline/warmup.py`, called from `app/main.py`): pays the heavy import and numba-JIT costs in a background thread while the UI comes up, instead of on the first render. Pure latency hiding; disable with `REDLINE_DISABLE_WARMUP=1`.
+- **GUI stage timings** (`app/api.py` `run_pipeline`): each stage is wrapped in `Metrics.stage`, narrates `[METRIC] <stage>: <s>s`, and returns a JSON-safe `timings` dict (`{stage: seconds}` + `total`).
+
+**Benchmark**
+
+`scripts/qa/perf_bench.py` times the three heavy stages on deterministic synthetic stems (fixed seed, same audio every run) and prints a table:
+
+```bash
+python scripts/qa/perf_bench.py --seconds 10
+python scripts/qa/perf_bench.py --seconds 20 --sr 44100 --json bench.json
+```
+
+Measured baseline on a 10s / 4-stem session with all flags off: `analyze` ~2.7s, `render_mix` ~2.9s, `render_master` ~0.9s, total ~6.5s. No wall-clock threshold is asserted (absolute timings are machine-dependent); the harness only makes them visible and comparable. See `docs/perf.md` for the full write-up.
+
 ### Creative Brief (free-text → LLM interpretation)
 
 The wizard screen has a free-text field at the top: "describe in plain, non-technical language what you'd like different about the mix" (e.g. *"I'd like it to sound warmer, almost like vinyl, and the vocal a bit more upfront"*). Left blank, it means exactly that — no special requests, use the sliders below as-is.
@@ -905,6 +954,55 @@ Ogni modulo sperimentale è **disabilitato di default**. I flag sono definiti in
 | `ENABLE_BUS_EXPORT` | off | Riservato per un futuro interruttore GUI; il CLI espone già l'export dei bus incondizionatamente via `--export-buses`, a prescindere da questo flag |
 
 > Nota: il checkpoint di classificazione stem (`redline/director.py`) è sempre attivo quando viene fornito un `director_gate` — cosa sempre vera nell'app desktop. Non esiste un flag on/off separato; un chiamante che vuole un render non interattivo (test, CLI headless) semplicemente non passa un gate.
+
+### Flag di Performance e Qualità
+
+Un'ondata successiva ha aggiunto un set di funzionalità di velocità e qualità/intelligenza. Ognuna è **disattivata di default**, e con il flag off il render è **bit-identico** al render precedente all'esistenza di quella funzionalità (garantito da `tests/test_neutral_golden.py`). Si attivano come qualsiasi altro flag: `.flags.json` oppure `REDLINE_<FLAG>=1`.
+
+**Velocità**
+
+| Flag | Default | Cosa sblocca |
+|---|---|---|
+| `ENABLE_FAST_ANALYSIS` | off | Percorso BPM/pitch più economico (YIN semplice invece di pYIN, su finestra più corta). È l'unico **tier numerico** dietro flag: ON scambia una piccola tolleranza musicale per velocità, quindi *non* è bit-identico. OFF è bit-identico. |
+| `ENABLE_LLM_RESULT_CACHE` | off | Memorizza la classificazione stem advisory dell'LLM tra render, così lo stesso stem ambiguo non viene re-inferito ogni volta. OFF: nulla viene letto o scritto, comportamento invariato. |
+
+**Qualità / intelligenza**
+
+| Flag | Default | Cosa sblocca |
+|---|---|---|
+| `ENABLE_RECOGNITION_V2` | off | Lessico multilingua ampliato più confidenza graduata e fusione nome/audio per il riconoscimento di stem/strumento/registro. |
+| `ENABLE_AUTO_PROCESSORS` | off | Assegna automaticamente il processore di carattere giusto per stem in base a ruolo/strumento/registro. Toggle "AUTO" nella GUI più un piano per-stem in sola lettura via `get_auto_processor_plan`. |
+| `ENABLE_PROCESSOR_PRESETS` | off | Preset curati di processori di carattere per strumento (solo dati). OFF: nulla viene mai auto-inserito. |
+| `ENABLE_DO_NO_HARM` | off | Crest-aware: salta la glue di bus quando il mix è già denso, invece di comprimere un letto già compresso. |
+| `ENABLE_TWO_STAGE_BALANCE` | off | Bilanciamento a due stadi: prima intra-gruppo, poi inter-gruppo. |
+| `ENABLE_MULTI_RESONANCE` | off | EQ correttiva content-driven a N nodi (oltre al singolo passaggio adattivo sulle risonanze). |
+| `ENABLE_LTAS_V2` | off | Matching di riferimento stile Matchering: selezione dei pezzi più forti, smoothing log LOWESS, FIR mid/side separati. |
+| `ENABLE_QC_V2` | off | Misure QC estese: true-peak ISP, LRA, DC offset, correlazione stereo. |
+| `ENABLE_QC_REPORT_JSON` | off | Scrive il report QC in `<out_dir>/qc_report.json` per un risultato spiegabile e ispezionabile. |
+
+**Solo presentazionale**
+
+| Flag | Default | Cosa sblocca |
+|---|---|---|
+| `ENABLE_GAME_BREAK` | off | Mini-giochi a tema (snake / labirinto / shooter) per passare il tempo durante un render. Non tocca mai l'audio. OFF: il pannello è semplicemente assente. |
+
+**Miglioramenti di performance (bit-identici quando off)**
+
+- **Cache del meter** (`analysis/loudness.py`): `spectral_band_energies()` può memorizzare i risultati per-segnale, così le misure di banda ripetute sullo stesso buffer non vengono ricalcolate.
+- **Correlometro vettorizzato** (`correlometer.py`): la ricerca di fase sub-bass per-lag gira come kernel parallelo compilato JIT. Il punteggio di ogni lag resta lo stesso prodotto scalare float64, quindi i risultati sono bit-identici (verificato da `tests/test_correlometer_equiv.py`).
+- **Warm-up in background** (`redline/warmup.py`, chiamato da `app/main.py`): paga i costi pesanti di import e JIT numba in un thread background mentre la UI si avvia, invece che al primo render. Puro nascondimento di latenza; disattivabile con `REDLINE_DISABLE_WARMUP=1`.
+- **Timing per stadio nella GUI** (`app/api.py` `run_pipeline`): ogni stadio è avvolto in `Metrics.stage`, narra `[METRIC] <stage>: <s>s`, e restituisce un dict `timings` JSON-safe (`{stage: secondi}` + `total`).
+
+**Benchmark**
+
+`scripts/qa/perf_bench.py` cronometra i tre stadi pesanti su stem sintetici deterministici (seed fisso, stesso audio a ogni run) e stampa una tabella:
+
+```bash
+python scripts/qa/perf_bench.py --seconds 10
+python scripts/qa/perf_bench.py --seconds 20 --sr 44100 --json bench.json
+```
+
+Baseline misurata su una sessione 10s / 4 stem con tutti i flag off: `analyze` ~2.7s, `render_mix` ~2.9s, `render_master` ~0.9s, totale ~6.5s. Nessuna soglia wall-clock è asserita (i tempi assoluti dipendono dalla macchina); l'harness li rende solo visibili e confrontabili. Vedi `docs/perf.md` per il resoconto completo.
 
 ### Note Libere (testo libero → interpretazione LLM)
 

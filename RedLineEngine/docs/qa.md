@@ -185,3 +185,26 @@ gain staging, Neural Monitor). It is not the GUI gate, and this harness does not
 replace it. It also has a known crash on Windows: it prints non-ASCII status
 text that can raise a `cp1252` encoding error when stdout isn't UTF-8. Don't
 treat it as the GUI check.
+
+## Note on the performance / quality test wave
+
+The speed and quality feature wave added its own engine tests, run by the same
+`python -m pytest tests` gate as everything else. They are not part of this GUI
+harness, but they exist and should be expected to pass:
+
+- Speed: `tests/test_loudness_cache.py` (meter cache),
+  `tests/test_correlometer_equiv.py` (vectorized correlometer is bit-exact),
+  `tests/test_warmup.py` (background warm-up), `tests/test_api_metrics.py`
+  (GUI stage timings), `tests/test_fast_analysis.py` (the flag-gated numerical
+  tier), `tests/test_llm_classifier_cache.py` (LLM result cache),
+  `tests/test_perf_bench.py` (benchmark harness contract).
+- Quality / intelligence: `tests/test_recognition_v2.py`,
+  `tests/test_auto_processors.py`, `tests/test_processor_presets.py`,
+  `tests/test_do_no_harm.py`, `tests/test_ltas_v2.py`, `tests/test_qc_v2.py`,
+  `tests/test_qc_report_json.py`.
+- Presentational: `tests/test_web_surface.py` covers the `ENABLE_GAME_BREAK`
+  panel surface.
+
+The bit-identical guarantee for the whole wave (with every flag off) is pinned
+by `tests/test_neutral_golden.py`. See `docs/perf.md` for the performance
+write-up and the benchmark command.
