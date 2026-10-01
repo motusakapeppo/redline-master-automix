@@ -122,6 +122,17 @@ def _run() -> None:
     # this lets it be diagnosed directly (console errors, failed resource
     # loads) instead of guessing blind from outside the process.
     debug = os.environ.get("REDLINE_DEBUG_GUI", "").strip() == "1"
+
+    # Hide the one-time heavy import + numba JIT cost (~13s measured) behind
+    # the window/browser startup: run it in a daemon thread so it can never
+    # block or outlive the UI. warm() is idempotent, swallows its own
+    # exceptions, and touches no engine state -- pure latency hiding.
+    import threading
+
+    from redline.warmup import warm
+
+    threading.Thread(target=warm, name="redline-warmup", daemon=True).start()
+
     webview.start(storage_path=storage_path, debug=debug)
 
 
