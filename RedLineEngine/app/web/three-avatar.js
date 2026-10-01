@@ -170,10 +170,24 @@ function init(canvasId) {
     canvas.addEventListener('webglcontextlost', _onContextLost, false);
     canvas.addEventListener('webglcontextrestored', _onContextRestored, false);
 
+    // Keep the renderer in step with the canvas' real layout size: the window
+    // can be resized (and the avatar panel reflows at the <=900px breakpoint)
+    // long after init, and without this the 3D view stayed at its init size.
+    window.addEventListener('resize', _onWindowResize);
+    if (typeof ResizeObserver === 'function') {
+      _resizeObserver = new ResizeObserver(_onWindowResize);
+      _resizeObserver.observe(canvas);
+    }
+
     buildSkull();
 
     clock = new THREE.Clock();
     animate();
+
+    // One post-init sync: the canvas may have been laid out differently
+    // between the initial setSize() above and this point (fonts, flex, the
+    // boot overlay), so re-read the real client size once everything is up.
+    _syncCanvasSize();
 
     console.log('[three-avatar] Initialized');
   } catch (err) {
@@ -1126,18 +1140,66 @@ function setActivity(level) {
 
 // ─── Resize / Dispose ──────────────────────────────────────────────────────
 
+// __AVATAR_SIZING_HELPER_START__
+// Pure sizing math, extracted so it can be unit-tested in Node without a DOM
+// or WebGL (see tests/js/avatar_sizing.test.mjs). Guards every degenerate
+// input (0, negative, NaN, non-numeric) to a 1px minimum so a hidden or
+// not-yet-laid-out canvas can never produce a division by zero / NaN aspect
+// that would blank the renderer.
+function computeAvatarSize(width, height) {
+  const w = Number(width);
+  const h = Number(height);
+  const safeW = Number.isFinite(w) && w > 0 ? w : 1;
+  const safeH = Number.isFinite(h) && h > 0 ? h : 1;
+  return { width: safeW, height: safeH, aspect: safeW / safeH };
+}
+// __AVATAR_SIZING_HELPER_END__
+
 function resize(width, height) {
   if (!camera || !renderer || !composer) return;
-  camera.aspect = width / height;
+  const size = computeAvatarSize(width, height);
+  camera.aspect = size.aspect;
   camera.updateProjectionMatrix();
-  renderer.setSize(width, height, false);
-  composer.setSize(width, height);
+  renderer.setSize(size.width, size.height, false);
+  composer.setSize(size.width, size.height);
 }
+
+// Reads the canvas' CURRENT layout size and applies it. resize() existed but
+// was never called, so the 3D view stayed frozen at its init-time size while
+// the window/panel around it changed -- this is the missing call site.
+function _syncCanvasSize() {
+  if (!renderer || !renderer.domElement) return;
+  const canvas = renderer.domElement;
+  const size = computeAvatarSize(canvas.clientWidth, canvas.clientHeight);
+  resize(size.width, size.height);
+}
+
+// Coalesces bursts of resize events (window drags fire dozens per second)
+// into one rAF-sized update instead of resizing the render targets per event.
+let _resizeRaf = null;
+function _onWindowResize() {
+  if (_resizeRaf !== null) return;
+  _resizeRaf = requestAnimationFrame(() => {
+    _resizeRaf = null;
+    _syncCanvasSize();
+  });
+}
+
+let _resizeObserver = null;
 
 function dispose() {
   if (animFrameId !== null) {
     cancelAnimationFrame(animFrameId);
     animFrameId = null;
+  }
+  if (_resizeRaf !== null) {
+    cancelAnimationFrame(_resizeRaf);
+    _resizeRaf = null;
+  }
+  window.removeEventListener('resize', _onWindowResize);
+  if (_resizeObserver) {
+    _resizeObserver.disconnect();
+    _resizeObserver = null;
   }
   if (renderer && renderer.domElement) {
     const canvas = renderer.domElement;

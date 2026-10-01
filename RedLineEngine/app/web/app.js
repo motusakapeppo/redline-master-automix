@@ -585,7 +585,10 @@ async function loadPresets() {
   try {
     presetNames = await window.pywebview.api.list_presets();
   } catch (e) {
+    // Was silent: a bridge failure left the dropdown mysteriously empty.
+    // Surface it in the log so the user knows why no presets appeared.
     presetNames = [];
+    addEventChip("\u26A0\uFE0F Preset non caricati: " + (e && e.message ? e.message : "errore bridge"));
   }
   const sel = document.getElementById("preset-select");
   if (!sel) return;
@@ -1114,7 +1117,7 @@ function onDone(result) {
     resultEl.innerHTML = `
       <div class="result-card daw-card">
         <div class="result-title">Mix pronto</div>
-        <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
+        <div>Genere: ${_escHtml(result.genre)} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${_escHtml(result.key)}</div>
 
         <div id="daw-waveforms" class="daw-waveforms"><div class="daw-loading">Carico le tracce...</div></div>
         <div id="daw-track-detail" class="stem-row-detail hidden"></div>
@@ -1145,7 +1148,7 @@ function onDone(result) {
     resultEl.innerHTML = `
       <div class="result-card">
         <div class="result-title">Fatto</div>
-        <div>Genere: ${result.genre} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${result.key}</div>
+        <div>Genere: ${_escHtml(result.genre)} &middot; BPM: ${result.bpm.toFixed(1)} &middot; Tonalit&agrave;: ${_escHtml(result.key)}</div>
         <div>Loudness: ${result.lufs.toFixed(1)} LUFS</div>
         <button class="btn btn-accent" onclick="openOutput()">Apri cartella risultati</button>
         <button id="btn-export" class="btn" onclick="exportFinal('auto')">Esporta...</button>
@@ -1168,7 +1171,7 @@ function onDone(result) {
     loadPreviewPlayer(result.master_path ? "master" : "mix");
   } else {
     const errorMsg = result ? result.error : "errore sconosciuto";
-    resultEl.innerHTML = `<div class="result-card error">Errore: ${errorMsg}</div>`;
+    resultEl.innerHTML = `<div class="result-card error">Errore: ${_escHtml(errorMsg)}</div>`;
   }
   // The result card is the one place a run can end without a "done" event
   // (e.g. stop-after-mix) -- make sure the plugin panel never sits on a
@@ -1801,9 +1804,14 @@ function renderPluginPanel(vm) {
 
   if (panel) {
     panel.classList.toggle("live", !!model.live);
+    // Only pulse when there is live content: re-triggering the landing
+    // animation on the empty/reset state made the panel twitch every time a
+    // run ended and the panel was cleared back to "Nessun plugin".
     panel.classList.remove("pulse");
-    void panel.offsetWidth; // restart the one-shot landing pulse
-    panel.classList.add("pulse");
+    if (model.live) {
+      void panel.offsetWidth; // restart the one-shot landing pulse
+      panel.classList.add("pulse");
+    }
   }
   if (liveDot) liveDot.classList.toggle("on", !!model.live);
 }
@@ -1836,7 +1844,12 @@ async function loadBuiltinProcessors() {
   if (!sel) return;
   try {
     const data = await _bridgeCall("list_builtin_processors");
-    if (!data || !data.ok || !Array.isArray(data.processors)) return;
+    if (!data || !data.ok || !Array.isArray(data.processors)) {
+      // Was silent: the picker just stayed on its placeholder with no hint
+      // that the bridge answered with nothing usable.
+      addEventChip("\u26A0\uFE0F Processori integrati non disponibili.");
+      return;
+    }
     _builtinProcessors = data.processors;
     const current = sel.value;
     sel.innerHTML = '<option value="">&mdash; Processore &mdash;</option>';
@@ -1850,7 +1863,8 @@ async function loadBuiltinProcessors() {
     if (current) sel.value = current;
   } catch (e) {
     // Bridge without list_builtin_processors: the picker just stays on its
-    // placeholder -- never a console error.
+    // placeholder -- never a console error, but no longer silent either.
+    addEventChip("\u26A0\uFE0F Processori integrati non disponibili: " + (e && e.message ? e.message : "errore bridge"));
   }
 }
 

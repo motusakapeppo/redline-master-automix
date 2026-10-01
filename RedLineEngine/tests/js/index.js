@@ -5,6 +5,7 @@
 // the real test file; glob invocations (`node --test "tests/js/*.test.mjs"`)
 // and bare `node --test` discovery are unaffected and do not match this file.
 require("./app_util.test.mjs");
+require("./avatar_sizing.test.mjs");
 require("./busy.test.mjs");
 require("./rack_state.test.mjs");
 require("./plugin_state.test.mjs");
