@@ -49,10 +49,14 @@ DEFAULTS = {
     "ENABLE_DO_NO_HARM": False,             # crest-aware: bypass dynamics when already dense
     "ENABLE_TWO_STAGE_BALANCE": False,      # intra-group then inter-group balance
     "ENABLE_MULTI_RESONANCE": False,        # N-node content-driven corrective EQ
+    "ENABLE_AUTO_PROCESSORS": False,        # auto-assign the RIGHT character processor per stem (role/instrument/register aware)
     # Mastering / QC
     "ENABLE_QC_V2": False,                  # true-peak ISP, LRA, DC offset, stereo correlation, tonal distance
     "ENABLE_LTAS_V2": False,                # loudest-pieces + LOWESS log-smooth + separate mid/side FIR
     "ENABLE_QC_REPORT_JSON": False,         # serialize the QC report to disk (explainable)
+    # Per-stem character-processor presets (additive; OFF => nothing is ever
+    # auto-inserted, render bit-identical)
+    "ENABLE_PROCESSOR_PRESETS": False,      # curated per-instrument processor presets (data only)
 }
 
 # Logging configuration (not feature flags — always available)
