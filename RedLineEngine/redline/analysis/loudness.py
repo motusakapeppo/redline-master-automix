@@ -39,9 +39,18 @@ def to_mono_downsampled(signal: np.ndarray, sr: int, target_sr: int = ANALYSIS_S
     return resampled, target_sr
 
 
+# Meters are deterministic per sample rate (the K-weighting filter
+# coefficients only depend on sr), so one instance per sr is reused across
+# calls instead of being rebuilt on every measurement.
+_METERS: dict[int, pyln.Meter] = {}
+
+
 def integrated_lufs(signal: np.ndarray, sr: int) -> float:
     """ITU-R BS.1770-4 integrated loudness via pyloudnorm."""
-    meter = pyln.Meter(sr)
+    meter = _METERS.get(sr)
+    if meter is None:
+        meter = pyln.Meter(sr)
+        _METERS[sr] = meter
     try:
         return float(meter.integrated_loudness(signal))
     except ValueError:
@@ -56,8 +65,18 @@ def crest_factor(signal: np.ndarray) -> float:
     return float(peak / rms)
 
 
-def spectral_band_energies(signal: np.ndarray, sr: int) -> dict[str, float]:
-    """Returns each band's share of total energy (sums to ~1.0)."""
+def spectral_band_energies(signal: np.ndarray, sr: int, *, cache: dict | None = None) -> dict[str, float]:
+    """Returns each band's share of total energy (sums to ~1.0).
+
+    When `cache` is a dict, results are memoized under a key combining sr,
+    signal shape and a cheap content fingerprint, guarding against in-place
+    mutation of the same array. `cache=None` (default) computes as before."""
+    if cache is not None:
+        key = (sr, signal.shape, id(signal), float(signal.sum()))
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+
     mono = to_mono(signal).astype(np.float64)
     nyquist = sr / 2.0
 
@@ -70,7 +89,11 @@ def spectral_band_energies(signal: np.ndarray, sr: int) -> dict[str, float]:
         energies[name] = float(np.sum(filtered**2))
 
     total = sum(energies.values()) + 1e-12
-    return {name: e / total for name, e in energies.items()}
+    result = {name: e / total for name, e in energies.items()}
+
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
 def sub_bass_ratio(band_energies: dict[str, float]) -> float:
