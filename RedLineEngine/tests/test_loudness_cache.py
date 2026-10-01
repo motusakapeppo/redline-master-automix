@@ -30,6 +30,12 @@ _RealMeter = pyln.Meter
 
 def test_integrated_lufs_reuses_meter_per_sample_rate(monkeypatch):
     """Two calls at the same sr must construct exactly one Meter."""
+    # The Meter cache is module-global and may already hold this sr from
+    # another test in the same session (full-suite run); start from empty so
+    # this test measures construction behaviour, not leftover cache state.
+    from redline.analysis import loudness as _loudness
+
+    _loudness._METERS.clear()
     monkeypatch.setattr(pyln, "Meter", _CountingMeterProxy)
     _CountingMeterProxy.constructions = 0
 
