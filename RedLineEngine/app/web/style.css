@@ -2447,6 +2447,20 @@ select { width: auto; }
   background: rgba(255, 0, 63, 0.12);
 }
 
+/* Header entry point: always reachable while the feature is on, so the games
+   are findable without waiting for a render to start. */
+.btn-game-break-top {
+  margin: 0 0 0 auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-color: rgba(255, 0, 63, 0.45);
+  color: var(--accent);
+}
+
+.btn-game-break-top:hover:not(:disabled) {
+  background: rgba(255, 0, 63, 0.12);
+}
+
 .game-break-overlay {
   position: fixed;
   inset: 0;

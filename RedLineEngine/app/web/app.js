@@ -2757,19 +2757,21 @@ function initProcessorPanel() {
 // bridge without the method leaves the button hidden). Nothing here touches
 // the render, the 9 rack modules, or any engine event.
 async function initGameBreak() {
-  const btn = document.getElementById("btn-game-break");
-  if (!btn) return;
+  const buttons = [
+    document.getElementById("btn-game-break"),
+    document.getElementById("btn-game-break-top"),
+  ].filter(Boolean);
+  if (!buttons.length) return;
   try {
     const res = await _bridgeCall("is_game_break_enabled");
-    if (res && res.enabled === true) {
-      btn.classList.remove("hidden");
-      btn.disabled = false;
-    } else {
-      btn.classList.add("hidden");
+    const on = !!(res && res.enabled === true);
+    for (const btn of buttons) {
+      btn.classList.toggle("hidden", !on);
+      btn.disabled = !on;
     }
   } catch (e) {
-    // Bridge without is_game_break_enabled: the button simply stays hidden.
-    btn.classList.add("hidden");
+    // Bridge without is_game_break_enabled: the buttons simply stay hidden.
+    for (const btn of buttons) btn.classList.add("hidden");
   }
 }
 
