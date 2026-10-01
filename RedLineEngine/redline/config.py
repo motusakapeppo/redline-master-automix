@@ -57,6 +57,9 @@ DEFAULTS = {
     # Per-stem character-processor presets (additive; OFF => nothing is ever
     # auto-inserted, render bit-identical)
     "ENABLE_PROCESSOR_PRESETS": False,      # curated per-instrument processor presets (data only)
+    # Purely presentational (never touches audio): games to pass the time
+    # while a render runs. OFF => the panel is simply absent.
+    "ENABLE_GAME_BREAK": False,
 }
 
 # Logging configuration (not feature flags — always available)
