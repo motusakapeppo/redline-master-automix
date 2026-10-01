@@ -2737,16 +2737,46 @@ function initProcessorPanel() {
   loadAutoProcessorPlan();
 }
 
+// --- "Pausa gioco": purely presentational mini-games (games.js) to pass the
+// time while a long render runs. The entry button is only revealed when the
+// ENABLE_GAME_BREAK flag is on (read-only bridge call, fail-safe: an older
+// bridge without the method leaves the button hidden). Nothing here touches
+// the render, the 9 rack modules, or any engine event.
+async function initGameBreak() {
+  const btn = document.getElementById("btn-game-break");
+  if (!btn) return;
+  try {
+    const res = await _bridgeCall("is_game_break_enabled");
+    if (res && res.enabled === true) {
+      btn.classList.remove("hidden");
+      btn.disabled = false;
+    } else {
+      btn.classList.add("hidden");
+    }
+  } catch (e) {
+    // Bridge without is_game_break_enabled: the button simply stays hidden.
+    btn.classList.add("hidden");
+  }
+}
+
+function openGameBreak() {
+  if (window.RedlineGames && typeof window.RedlineGames.open === "function") {
+    window.RedlineGames.open("snake");
+  }
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     initThreeAvatar();
     loadPresets();
     initProcessorPanel();
+    initGameBreak();
   });
 } else {
   initThreeAvatar();
   loadPresets();
   initProcessorPanel();
+  initGameBreak();
 }
 
 function initThreeAvatar() {

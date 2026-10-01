@@ -2384,6 +2384,200 @@ select { width: auto; }
   to { transform: translateX(100%); }
 }
 
+/* --- "Pausa gioco" overlay -------------------------------------------------
+   A dedicated full-screen panel (never a .module card) hosting the three
+   themed mini-games. Same red/black vocabulary as the rest of the app:
+   dark canvas, accent UI, monospace score. Purely presentational. */
+.btn-game-break {
+  margin: 0 8px 0 auto;
+  padding: 4px 12px;
+  font-size: 11.5px;
+  border-color: rgba(255, 0, 63, 0.45);
+  color: var(--accent);
+}
+
+.btn-game-break:hover:not(:disabled) {
+  background: rgba(255, 0, 63, 0.12);
+}
+
+.game-break-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.game-break-panel {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(255, 0, 63, 0.06), transparent 55%), var(--bg-panel);
+  box-shadow: 0 0 30px rgba(255, 0, 63, 0.25), 0 20px 50px rgba(0, 0, 0, 0.6);
+  animation: pop-in 0.35s var(--ease-pop) both;
+}
+
+.game-break-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.game-break-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  text-shadow: 0 0 10px rgba(255, 0, 63, 0.4);
+}
+
+.game-break-score-wrap {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.game-break-score {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  text-shadow: 0 0 8px rgba(255, 0, 63, 0.4);
+}
+
+.game-break-btn {
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  border-radius: 5px;
+}
+
+.game-break-close {
+  padding: 5px 11px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--accent);
+  border-color: rgba(255, 0, 63, 0.45);
+}
+
+.game-break-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.game-break-tab {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.game-break-tab:hover {
+  color: var(--text);
+  border-color: rgba(255, 0, 63, 0.4);
+}
+
+.game-break-tab.active {
+  color: #fff;
+  background: rgba(255, 0, 63, 0.16);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(255, 0, 63, 0.25);
+}
+
+.game-break-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.game-break-canvas {
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: inset 0 0 30px rgba(255, 0, 63, 0.06);
+}
+
+.game-break-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.game-break-pause {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  background: rgba(10, 10, 10, 0.72);
+  cursor: pointer;
+}
+
+.game-break-pause-title {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-shadow: 0 0 14px rgba(255, 0, 63, 0.5);
+}
+
+.game-break-pause-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.game-break-hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.game-break-foot {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(153, 153, 153, 0.7);
+  text-align: center;
+}
+
+/* Keyboard focus ring for the game controls (and the open button), matching
+   the accent used everywhere else. */
+.btn-game-break:focus-visible,
+.game-break-btn:focus-visible,
+.game-break-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* --- Reduced motion: kill every non-essential animation ------------------- */
 @media (prefers-reduced-motion: reduce) {
   .ambient-layer,

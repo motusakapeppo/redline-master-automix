@@ -62,6 +62,7 @@ _NEW_PUBLIC_METHODS = {
     "enable_plugin_hosting",
     "get_auto_processor_plan",
     "enable_auto_processors",
+    "is_game_break_enabled",
 }
 
 
@@ -305,3 +306,30 @@ def test_enable_auto_processors_toggles_flag(api):
 def test_enable_auto_processors_never_raises_on_garbage(api):
     assert api.enable_auto_processors("yes")["ok"] is True
     assert api.enable_auto_processors(None)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# is_game_break_enabled (read-only flag probe for the "Pausa gioco" panel)
+# ---------------------------------------------------------------------------
+
+def test_is_game_break_enabled_reflects_flag(api):
+    from redline import config
+
+    original = config.is_enabled("ENABLE_GAME_BREAK")
+    try:
+        config.set_override("ENABLE_GAME_BREAK", True)
+        assert api.is_game_break_enabled() == {"ok": True, "enabled": True}
+        config.set_override("ENABLE_GAME_BREAK", False)
+        assert api.is_game_break_enabled() == {"ok": True, "enabled": False}
+    finally:
+        config.set_override("ENABLE_GAME_BREAK", original)
+
+
+def test_is_game_break_enabled_fail_safe(api, monkeypatch):
+    def _boom(_flag):
+        raise RuntimeError("flags exploded")
+
+    monkeypatch.setattr(api_module.config, "is_enabled", _boom)
+    result = api.is_game_break_enabled()
+    assert result["ok"] is False
+    assert result["enabled"] is False

@@ -201,6 +201,11 @@ window.addEventListener('error', function(e) {
         </div>
         <div class="progress-meta">
           <span id="progress-eta">stima tempo rimanente: --</span>
+          <!-- "Pausa gioco": purely presentational mini-games to pass the time
+               while a long render runs. Hidden unless the ENABLE_GAME_BREAK
+               flag is on (see initGameBreak() in app.js). Never touches the
+               render, the 9 rack modules, or any engine event. -->
+          <button id="btn-game-break" class="btn btn-game-break hidden" data-qa="game-break-open" onclick="openGameBreak()" title="Gioca mentre il render è in corso">&#127918; Pausa gioco</button>
           <button id="btn-cancel" class="btn btn-cancel" data-qa="cancel-run" onclick="cancelRun()" title="Annulla il render al prossimo confine di fase">Annulla render</button>
         </div>
       </div>
@@ -457,10 +462,40 @@ window.addEventListener('error', function(e) {
 
 </div>
 
+<!-- "Pausa gioco" overlay: a dedicated full-screen panel (NOT a .module card)
+     hosting the three themed mini-games. Hidden by default; only reachable
+     when ENABLE_GAME_BREAK is on. Purely presentational -- no engine coupling. -->
+<div id="game-break-overlay" class="game-break-overlay hidden" role="dialog" aria-modal="true" aria-label="Pausa gioco">
+  <div class="game-break-panel">
+    <div class="game-break-head">
+      <span class="game-break-title">&#127918; Pausa gioco</span>
+      <span class="game-break-score-wrap">PUNTI <span id="game-break-score" class="game-break-score">0</span></span>
+      <button id="game-break-pause-btn" class="btn game-break-btn" type="button">Pausa</button>
+      <button id="game-break-restart" class="btn game-break-btn" type="button">Ricomincia</button>
+      <button id="game-break-close" class="btn game-break-btn game-break-close" type="button" aria-label="Chiudi">&times;</button>
+    </div>
+    <div class="game-break-tabs" role="tablist" aria-label="Scegli gioco">
+      <button class="game-break-tab active" data-game="snake" role="tab" aria-selected="true" type="button">Snake</button>
+      <button class="game-break-tab" data-game="pacman" role="tab" aria-selected="false" type="button">Pac-Man</button>
+      <button class="game-break-tab" data-game="galaga" role="tab" aria-selected="false" type="button">Galaga</button>
+    </div>
+    <div class="game-break-stage">
+      <canvas id="game-break-canvas" class="game-break-canvas" width="480" height="480" role="img" aria-label="Area di gioco"></canvas>
+      <div id="game-break-pause" class="game-break-pause hidden">
+        <div class="game-break-pause-title">IN PAUSA</div>
+        <div class="game-break-pause-hint">Premi P o clicca per riprendere</div>
+      </div>
+    </div>
+    <div id="game-break-hint" class="game-break-hint">Frecce o WASD per muoverti. Mangia i punti rossi senza toccare i bordi.</div>
+    <div class="game-break-foot">Esc per chiudere &middot; P pausa &middot; R ricomincia</div>
+  </div>
+</div>
+
 <script src="app_util.js"></script>
 <script src="busy.js"></script>
 <script src="rack_state.js"></script>
 <script src="plugin_state.js"></script>
+<script src="games.js"></script>
 <script src="app.js"></script>
 <script type="module" src="three-avatar.js"></script>
 </body>

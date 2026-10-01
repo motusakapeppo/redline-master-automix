@@ -8,3 +8,4 @@ require("./app_util.test.mjs");
 require("./busy.test.mjs");
 require("./rack_state.test.mjs");
 require("./plugin_state.test.mjs");
+require("./games.test.mjs");

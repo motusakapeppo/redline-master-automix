@@ -508,6 +508,18 @@ class Api:
             logging.getLogger(__name__).error("enable_plugin_hosting fallito: %s", exc)
             return {"ok": False, "error": str(exc)}
 
+    def is_game_break_enabled(self) -> dict:
+        """Read-only: whether the purely-presentational "Pausa gioco" mini-games
+        are available (ENABLE_GAME_BREAK). The GUI reveals its game button only
+        when this returns ``enabled: true``. Fail-safe: any error degrades to
+        ``{"ok": False, "enabled": False}`` instead of raising into the bridge,
+        so an unavailable flag can never break the UI."""
+        try:
+            return {"ok": True, "enabled": bool(config.is_enabled("ENABLE_GAME_BREAK"))}
+        except Exception as exc:
+            logging.getLogger(__name__).error("is_game_break_enabled fallito: %s", exc)
+            return {"ok": False, "enabled": False, "error": str(exc)}
+
     def _cancelled(self) -> bool:
         """True if a cancel was requested. Cheap, never raises."""
         try:
