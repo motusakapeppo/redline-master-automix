@@ -12,13 +12,15 @@ listening.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import dataclass, asdict
 
 import numpy as np
 from pedalboard import Pedalboard, PeakFilter, LowShelfFilter, HighShelfFilter
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt, resample_poly
 
-from .analysis.loudness import spectral_band_energies, SPECTRAL_BANDS
+from .analysis.loudness import integrated_lufs, spectral_band_energies, SPECTRAL_BANDS
 from .targets import load_measured_target
 from .correlometer import measure_bass_phase_shift_deg_abs, DEFAULT_PHASE_THRESHOLD_DEG, DEFAULT_BAND_HZ
 
@@ -81,6 +83,11 @@ class QcReport:
     band_deviations: dict[str, float]
     corrections_applied: list[str]
     passed: bool
+    # --- QC v2 (ENABLE_QC_V2, additive; None when the flag is OFF) ---------
+    true_peak_isp_db: float | None = None  # 4x-oversampled (inter-sample) true peak
+    lra: float | None = None               # loudness range, P95-P10 of 3s short-term blocks
+    dc_offset: float | None = None         # mean sample value (mono-summed)
+    stereo_correlation: float | None = None  # np.corrcoef of L/R, 1.0 = identical channels
 
 
 def _mono_compatibility(signal: np.ndarray) -> float:
@@ -188,22 +195,125 @@ def assess_qc_pass(
     )
 
 
+def _true_peak_isp_db(signal: np.ndarray) -> float:
+    """Inter-sample true peak: 4x oversampling (polyphase, linear-phase) then
+    peak detection — catches the peaks that hide between samples and would
+    clip a DAC even though the sample peak looks fine."""
+    if signal.ndim == 1:
+        upsampled = resample_poly(signal, up=4, down=1)
+    else:
+        upsampled = np.stack(
+            [resample_poly(signal[:, ch], up=4, down=1) for ch in range(signal.shape[1])],
+            axis=1,
+        )
+    return 20.0 * np.log10(np.max(np.abs(upsampled)) + 1e-12)
+
+
+def _lra(signal: np.ndarray, sr: int) -> float:
+    """Loudness range: P95 - P10 of the integrated loudness of 3s short-term
+    blocks (absolute gate -70 LUFS, relative gate -20 LU below the mean of
+    the gated blocks). Falls back to 0.0 when the signal is too short or too
+    quiet for any block to measure."""
+    from .analysis.loudness import to_mono
+
+    mono = to_mono(signal).astype(np.float64)
+    block = 3 * sr
+    if mono.size < block:
+        return 0.0
+    n_blocks = mono.size // block
+    blocks = mono[: n_blocks * block].reshape(n_blocks, block)
+    loudness = []
+    for values in blocks:
+        try:
+            value = float(integrated_lufs(values.reshape(-1, 1), sr))
+        except ValueError:
+            value = -70.0
+        if value > -70.0:
+            loudness.append(value)
+    if not loudness:
+        return 0.0
+    arr = np.asarray(loudness)
+    # Absolute gate (-70 LUFS) already applied above; relative gate keeps
+    # only blocks within -20 LU of the blocks' mean loudness.
+    gated = arr[arr >= arr.mean() - 20.0]
+    if gated.size == 0:
+        gated = arr
+    return float(np.percentile(gated, 95) - np.percentile(gated, 10))
+
+
+def _dc_offset(signal: np.ndarray) -> float:
+    mono = signal.mean(axis=1) if signal.ndim == 2 else signal
+    return float(np.mean(mono))
+
+
+def _stereo_correlation(signal: np.ndarray) -> float | None:
+    if signal.ndim != 2 or signal.shape[1] < 2:
+        return None
+    corr = np.corrcoef(signal[:, 0].astype(np.float64), signal[:, 1].astype(np.float64))[0, 1]
+    return float(corr) if np.isfinite(corr) else None
+
+
+def _write_qc_report_json(report: QcReport, out_dir: str, target_lufs: float, true_peak_ceiling_db: float) -> None:
+    """Serialize the final report to <out_dir>/qc_report.json (explainable:
+    resolved targets, measured values, per-band deviations and the list of
+    corrections applied). Best-effort: a write failure must never break the
+    render that produced the report."""
+    from app.api import _sanitize_for_json
+
+    payload = {
+        "targets": {
+            "target_lufs": target_lufs,
+            "true_peak_ceiling_db": true_peak_ceiling_db,
+        },
+        "measured": {
+            "lufs": report.lufs,
+            "true_peak_db": report.true_peak_db,
+            "mono_compatibility": report.mono_compatibility,
+            "bass_phase_shift_deg": report.bass_phase_shift_deg,
+            "true_peak_isp_db": report.true_peak_isp_db,
+            "lra": report.lra,
+            "dc_offset": report.dc_offset,
+            "stereo_correlation": report.stereo_correlation,
+        },
+        "band_deviations": report.band_deviations,
+        "corrections": [
+            {"reason": note, "measured": None, "target": None, "applied": note}
+            for note in report.corrections_applied
+        ],
+        "passed": report.passed,
+    }
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "qc_report.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_sanitize_for_json(payload), f, indent=2)
+    except Exception:
+        from .logging_setup import get_logger
+
+        get_logger(__name__).warning("qc_report.json write failed", exc_info=True)
+
+
 def run_qc(
     mastered: np.ndarray,
     sr: int,
     genre_name: str,
     target_lufs: float,
     true_peak_ceiling_db: float,
+    out_dir: str | None = None,
 ) -> tuple[np.ndarray, QcReport]:
     """Measures the mastered mix and applies one bounded corrective EQ pass
     if a band is clearly off the genre's approximate reference shape.
     Returns (possibly-corrected audio, report) — the report is always
     returned, including any deviation that couldn't be fully corrected, so
-    the result is never silently claimed to be "perfect" when it isn't."""
-    from . import analysis as _analysis_pkg  # local import avoids a cycle at module load
+    the result is never silently claimed to be "perfect" when it isn't.
+
+    `out_dir` (QC report JSON, ENABLE_QC_REPORT_JSON): when not None and the
+    flag is on, the final report is serialized to <out_dir>/qc_report.json.
+    None (the default) keeps today's behaviour exactly."""
+    from . import config as _config
 
     mono = mastered.mean(axis=1) if mastered.ndim == 2 else mastered
-    lufs = _analysis_pkg.integrated_lufs(mastered, sr)
+    lufs = integrated_lufs(mastered, sr)
     true_peak_db = 20.0 * np.log10(np.max(np.abs(mastered)) + 1e-12)
     mono_compat = _mono_compatibility(mastered)
     bass_phase_shift = measure_bass_phase_shift_deg_abs(mastered, sr)
@@ -211,8 +321,6 @@ def run_qc(
     bands = spectral_band_energies(mastered, sr)
     target = resolve_target(genre_name)
     deviations = {name: bands[name] - target[name] for name in target}
-
-    from . import analysis as _analysis_pkg2  # local import avoids a cycle at module load
 
     # Bounded feedback loop: measure -> correct -> re-measure, up to
     # MAX_QC_ITERATIONS passes. Most tracks converge (or hit the "nothing left
@@ -239,11 +347,11 @@ def run_qc(
         # gain back to the target instead of just reporting the drift.
         # Found in practice: without this, a genre with a sizeable spectral
         # correction could land 2+ LUFS off its own stated target.
-        final_lufs = _analysis_pkg2.integrated_lufs(corrected, sr)
+        final_lufs = integrated_lufs(corrected, sr)
         makeup_db = float(np.clip(target_lufs - final_lufs, -3.0, 3.0))
         if abs(makeup_db) > 0.1:
             corrected = corrected * (10.0 ** (makeup_db / 20.0))
-            final_lufs = _analysis_pkg2.integrated_lufs(corrected, sr)
+            final_lufs = integrated_lufs(corrected, sr)
             notes.append(f"loudness trim {makeup_db:+.1f}dB (post-EQ drift correction, iter {iteration + 1})")
 
         # Re-measure spectral deviations and true peak against the corrected,
@@ -265,6 +373,19 @@ def run_qc(
         notes.append(f"bass mono-fold below {DEFAULT_BAND_HZ[1]:.0f}Hz (phase shift was over {DEFAULT_PHASE_THRESHOLD_DEG:.0f}°)")
         true_peak_db = 20.0 * np.log10(np.max(np.abs(corrected)) + 1e-12)
 
+    # QC v2 (ENABLE_QC_V2): additive measurements on the final signal. With
+    # the flag off these stay None and the sample-peak true_peak_db above is
+    # used exactly as before.
+    true_peak_isp_db = None
+    lra = None
+    dc_offset = None
+    stereo_correlation = None
+    if _config.is_enabled("ENABLE_QC_V2"):
+        true_peak_isp_db = _true_peak_isp_db(corrected)
+        lra = _lra(corrected, sr)
+        dc_offset = _dc_offset(corrected)
+        stereo_correlation = _stereo_correlation(corrected)
+
     passed = assess_qc_pass(
         lufs=final_lufs,
         target_lufs=target_lufs,
@@ -283,5 +404,13 @@ def run_qc(
         band_deviations=deviations,
         corrections_applied=notes,
         passed=passed,
+        true_peak_isp_db=true_peak_isp_db,
+        lra=lra,
+        dc_offset=dc_offset,
+        stereo_correlation=stereo_correlation,
     )
+
+    if out_dir is not None and _config.is_enabled("ENABLE_QC_REPORT_JSON"):
+        _write_qc_report_json(report, out_dir, target_lufs, true_peak_ceiling_db)
+
     return corrected, report

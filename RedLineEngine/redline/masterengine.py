@@ -366,6 +366,7 @@ def render_master(
     on_audition: AuditionCallback | None = None,
     on_beep: BeepCallback = _noop_beep,
     prefs: MixPreferences | None = None,
+    out_dir: str | None = None,
 ) -> np.ndarray:
     # Wave 2 (E2): optional user preferences. None (the default) reproduces
     # today's behaviour exactly -- every override below is gated on a
@@ -433,7 +434,7 @@ def render_master(
 
     on_step("Controllo qualità automatico: misuro il risultato e correggo se serve...")
     on_beep()
-    mastered, report = run_qc(mastered, sr, analysis.genre.name, target_lufs, TRUE_PEAK_CEILING_DB)
+    mastered, report = run_qc(mastered, sr, analysis.genre.name, target_lufs, TRUE_PEAK_CEILING_DB, out_dir=out_dir)
     on_beep()
 
     # The QC correction pass can itself push a band back over the ceiling
@@ -484,6 +485,17 @@ def render_master(
         deviations=report.band_deviations,
         mono_compat_floor=_mono_target if _mono_target > 0.0 else None,
     )
+
+    # QC v2 (ENABLE_QC_V2): refresh the additive measurements against the
+    # final signal too, so the report never quotes a value the returned audio
+    # no longer has. With the flag off these stay None (no-op).
+    if config.is_enabled("ENABLE_QC_V2"):
+        from .qc import _true_peak_isp_db, _lra, _dc_offset, _stereo_correlation
+
+        report.true_peak_isp_db = _true_peak_isp_db(mastered)
+        report.lra = _lra(mastered, sr)
+        report.dc_offset = _dc_offset(mastered)
+        report.stereo_correlation = _stereo_correlation(mastered)
 
     on_event({
         "type": "qc_report",
