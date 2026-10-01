@@ -11,6 +11,15 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
+try:
+    from numba import njit, prange
+
+    _HAVE_NUMBA = True
+except ImportError:  # pragma: no cover
+    njit = None
+    prange = None
+    _HAVE_NUMBA = False
+
 DEFAULT_BAND_HZ = (20.0, 60.0)
 DEFAULT_PHASE_THRESHOLD_DEG = 5.0
 _MAX_LAG_SAMPLES = 64  # generous for sub-bass wavelengths at typical sample rates
@@ -22,6 +31,67 @@ def _bandpass(signal: np.ndarray, sr: int, low_hz: float, high_hz: float) -> np.
     high = min(high_hz / nyquist, 0.999)
     sos = butter(4, [low, high], btype="band", output="sos")
     return sosfiltfilt(sos, signal.astype(np.float64))
+
+
+if _HAVE_NUMBA:
+
+    @njit(cache=True, parallel=True)
+    def _best_lag_kernel(left: np.ndarray, right: np.ndarray, max_lag: int) -> int:
+        """JIT-compiled equivalent of the original per-lag np.dot search loop
+        (see the fallback below for the annotated original). Each candidate
+        lag's score is still one float64 np.dot over the same slices, so every
+        score is bit-identical to the original; the lags merely run in
+        parallel (independent dots, no shared float state), and the argmax is
+        re-scanned sequentially in lag order so tie-breaking is unchanged.
+        Verified bit-exact by tests/test_correlometer_equiv.py."""
+        n_left = left.shape[0]
+        n_right = right.shape[0]
+        n_lags = 2 * max_lag + 1
+        scores = np.full(n_lags, -np.inf)
+        for k in prange(n_lags):
+            lag = k - max_lag
+            if lag >= 0:
+                a = left[lag:]
+                b = right[: n_right - lag if lag > 0 else n_right]
+            else:
+                a = left[: n_left + lag]
+                b = right[-lag:]
+            n = min(a.shape[0], b.shape[0])
+            if n == 0:
+                continue
+            # ascontiguousarray is a no-op at runtime (the slices are already
+            # step-1 views of 1-D contiguous buffers) but gives numba a
+            # statically-C-contiguous type, so np.dot hits the same BLAS path
+            # numpy uses -- and skips its "faster on contiguous" warning.
+            scores[k] = np.dot(np.ascontiguousarray(a[:n]), np.ascontiguousarray(b[:n]))
+        best_lag = 0
+        best_score = -np.inf
+        for k in range(n_lags):
+            if scores[k] > best_score:
+                best_score = scores[k]
+                best_lag = k - max_lag
+        return best_lag
+
+else:
+
+    def _best_lag_kernel(left: np.ndarray, right: np.ndarray, max_lag: int) -> int:
+        """Pure-Python fallback used only when numba is unavailable -- the
+        original loop, unchanged."""
+        best_lag = 0
+        best_score = -np.inf
+        for lag in range(-max_lag, max_lag + 1):
+            if lag >= 0:
+                a, b = left[lag:], right[: len(right) - lag if lag > 0 else None]
+            else:
+                a, b = left[: len(left) + lag], right[-lag:]
+            n = min(len(a), len(b))
+            if n == 0:
+                continue
+            score = float(np.dot(a[:n], b[:n]))
+            if score > best_score:
+                best_score = score
+                best_lag = lag
+        return best_lag
 
 
 def measure_bass_phase_shift_deg(
@@ -45,20 +115,10 @@ def measure_bass_phase_shift_deg(
     # `np.correlate(..., mode="full")`, which is O(n^2) over the *entire*
     # signal length -- on a full mastered track that's tens of billions of
     # multiply-adds to answer a question that only needs ~129 of them.
-    best_lag = 0
-    best_score = -np.inf
-    for lag in range(-_MAX_LAG_SAMPLES, _MAX_LAG_SAMPLES + 1):
-        if lag >= 0:
-            a, b = left[lag:], right[: len(right) - lag if lag > 0 else None]
-        else:
-            a, b = left[: len(left) + lag], right[-lag:]
-        n = min(len(a), len(b))
-        if n == 0:
-            continue
-        score = float(np.dot(a[:n], b[:n]))
-        if score > best_score:
-            best_score = score
-            best_lag = lag
+    # The loop itself now runs as a numba-JIT kernel (bit-identical results,
+    # verified by tests/test_correlometer_equiv.py); the pure-Python body
+    # below is kept as the no-numba fallback.
+    best_lag = _best_lag_kernel(left, right, _MAX_LAG_SAMPLES)
     lag_samples = best_lag
 
     center_freq_hz = (band_hz[0] + band_hz[1]) / 2.0
