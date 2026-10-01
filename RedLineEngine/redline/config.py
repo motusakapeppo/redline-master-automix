@@ -32,6 +32,27 @@ DEFAULTS = {
     # user-supplied only and fail-safe (see redline/plugins.py).
     "ENABLE_PLUGIN_HOSTING": False,
     "ENABLE_BUILTIN_PROCESSOR_VARIANTS": False,
+    # ------------------------------------------------------------------
+    # Quality + intelligence + speed program (all OFF => bit-identical to
+    # the render before these features existed; see tests/test_neutral_golden.py).
+    # ------------------------------------------------------------------
+    # Analysis / speed (flag-gated numerical tiers)
+    "ENABLE_FAST_ANALYSIS": False,          # cheaper BPM/pitch path (musical tolerance, not bit-identical)
+    "ENABLE_LLM_RESULT_CACHE": False,       # memoize LLM advisory classification across renders
+    # Recognition: which stem / instrument / voice type is this
+    "ENABLE_STEM_PROFILE": False,           # one shared per-stem feature pass
+    "ENABLE_RECOGNITION_V2": False,         # expanded multilingual lexicon + confidence fusion
+    "ENABLE_AUDIO_CLASSIFIER": False,       # audio-based instrument classifier (PANNs), optional model
+    "ENABLE_VOCAL_ANALYSIS": False,         # singing-voice detection + absolute register
+    # Musical knowledge / adaptivity
+    "ENABLE_ADAPTIVE_TARGETS": False,       # measurement-scaled, confidence-weighted targets
+    "ENABLE_DO_NO_HARM": False,             # crest-aware: bypass dynamics when already dense
+    "ENABLE_TWO_STAGE_BALANCE": False,      # intra-group then inter-group balance
+    "ENABLE_MULTI_RESONANCE": False,        # N-node content-driven corrective EQ
+    # Mastering / QC
+    "ENABLE_QC_V2": False,                  # true-peak ISP, LRA, DC offset, stereo correlation, tonal distance
+    "ENABLE_LTAS_V2": False,                # loudest-pieces + LOWESS log-smooth + separate mid/side FIR
+    "ENABLE_QC_REPORT_JSON": False,         # serialize the QC report to disk (explainable)
 }
 
 # Logging configuration (not feature flags — always available)
