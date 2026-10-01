@@ -49,3 +49,46 @@ def find_resonance(signal: np.ndarray, sr: int) -> ResonanceCut | None:
 
     cut_db = -min(MAX_CUT_DB, prominence * 0.5)
     return ResonanceCut(freq=float(band_freqs[peak_idx]), gain_db=cut_db, q=3.5)
+
+
+def find_resonances(signal: np.ndarray, sr: int, max_nodes: int = 3) -> list[ResonanceCut]:
+    """Multi-node variant of find_resonance (flag-gated, see
+    ENABLE_MULTI_RESONANCE): returns up to max_nodes distinct mud-range
+    resonances, strongest first, reusing the exact same detection math and
+    MAX_CUT_DB clamp as the single-node path. Nodes are separated by at
+    least one Welch bin so the same accumulation is never reported twice
+    (a wide bump straddling two bins would otherwise produce two cuts at
+    nearly the same frequency, over-carving one spot)."""
+    if max_nodes <= 0:
+        return []
+    mono = signal.mean(axis=1) if signal.ndim == 2 else signal
+    mono = mono.astype(np.float64)
+    if mono.size < sr:
+        return []
+
+    freqs, psd = welch(mono, fs=sr, nperseg=min(8192, mono.size))
+    band_mask = (freqs >= MUD_LOW_HZ) & (freqs <= MUD_HIGH_HZ)
+    if not np.any(band_mask):
+        return []
+
+    band_freqs = freqs[band_mask]
+    band_psd_db = 10.0 * np.log10(psd[band_mask] + 1e-15)
+    median_db = float(np.median(band_psd_db))
+
+    # Greedy strongest-first selection: take the loudest bin, suppress its
+    # neighborhood, repeat -- so each node is a genuinely distinct peak.
+    order = np.argsort(band_psd_db)[::-1]
+    taken: list[ResonanceCut] = []
+    min_bin_gap = 1
+    for idx in order:
+        if len(taken) >= max_nodes:
+            break
+        freq = float(band_freqs[idx])
+        if any(abs(freq - t.freq) <= min_bin_gap * float(band_freqs[1] - band_freqs[0]) for t in taken):
+            continue
+        prominence = float(band_psd_db[idx]) - median_db
+        if prominence < PROMINENCE_THRESHOLD_DB:
+            break  # bins are sorted descending: everything after is weaker
+        cut_db = -min(MAX_CUT_DB, prominence * 0.5)
+        taken.append(ResonanceCut(freq=freq, gain_db=cut_db, q=3.5))
+    return taken

@@ -78,7 +78,7 @@ from .processors import build_processor, preset_for
 from .naming import parse_stem, StemDescriptor
 from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
-from .resonance import find_resonance
+from .resonance import find_resonance, find_resonances
 from .logging_setup import get_logger
 from .alignment import align_to_reference
 from .masking import find_masking_cut, find_midrange_masking_cut
@@ -334,6 +334,73 @@ def _is_silent_stem(audio: np.ndarray) -> bool:
     return 20.0 * np.log10(peak) < _SILENT_STEM_DBFS
 
 
+def _rms(audio: np.ndarray) -> float:
+    """RMS of a mono or stereo block, in float64 so long stems don't lose
+    precision in the mean-of-squares."""
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    return float(np.sqrt(np.mean(mono.astype(np.float64) ** 2))) if mono.size else 0.0
+
+
+def _two_stage_balance_gains(
+    groups: dict[str, list[np.ndarray]],
+    on_step: "StepCallback",
+) -> dict[str, list[float]]:
+    """Flag-gated two-stage balance (ENABLE_TWO_STAGE_BALANCE): replaces the
+    flat power-preserving 1/sqrt(N) summing gain with a measured, bounded
+    balance.
+
+    Stage 1 (intra-group): within each group, every member is normalized
+    toward the group's own measured RMS, so no single member dominates the
+    pile (a 0.9-amplitude pad next to a 0.02-amplitude texture used to sum
+    exactly as exported -- the loud one buried everything else).
+
+    Stage 2 (inter-group): each group bus is then brought toward the median
+    group level, clamped to +/-3dB so the correction can never run away on
+    an outlier group.
+
+    Returns per-group member gains (linear). Any measurement error raises;
+    the caller catches and falls back to today's flat gain (fail-safe).
+    """
+    member_gains: dict[str, list[float]] = {}
+    group_rms: dict[str, float] = {}
+    for gname, members in groups.items():
+        active = [m for m in members if not _is_silent_stem(m)]
+        if not active:
+            # Every member silent: gains of 1.0 keep the sum exactly as-is
+            # (all zeros) without dividing by an RMS of 0.
+            member_gains[gname] = [1.0] * len(members)
+            group_rms[gname] = 0.0
+            continue
+        group_rms_val = float(np.mean([_rms(m) for m in active])) + 1e-9
+        group_rms[gname] = group_rms_val
+        gains: list[float] = []
+        for m in members:
+            if _is_silent_stem(m):
+                gains.append(1.0)  # silent member: nothing to balance
+                continue
+            member_rms = _rms(m) + 1e-9
+            gains.append(float(np.clip(group_rms_val / member_rms, 0.0, 4.0)))
+        member_gains[gname] = gains
+
+    # Stage 2: inter-group, toward the median group level, clamped +/-3dB.
+    active_group_levels = [v for v in group_rms.values() if v > 0.0]
+    if active_group_levels:
+        median_level = float(np.median(active_group_levels)) + 1e-9
+        for gname, members in groups.items():
+            level = group_rms[gname]
+            if level <= 0.0:
+                continue  # silent group: leave untouched
+            correction_db = 20.0 * np.log10(median_level / level)
+            correction_db = float(np.clip(correction_db, -3.0, 3.0))
+            correction = db_to_gain(correction_db)
+            member_gains[gname] = [g * correction for g in member_gains[gname]]
+            on_step(
+                f"Bilanciamento due stadi: gruppo '{gname}' corretto di {correction_db:+.1f}dB "
+                f"(verso il livello mediano dei gruppi, limitato a ±3dB)"
+            )
+    return member_gains
+
+
 def _crest_factor_db(signal: np.ndarray) -> float:
     """crest_factor() (analysis/loudness.py) returns a linear peak/rms ratio;
     the genre crest targets (reference_profiles.CREST_FACTOR_TARGETS) are in
@@ -523,6 +590,21 @@ def _process_stem(
         on_step(f"  '{name}': risonanza rilevata a {resonance.freq:.0f}Hz, taglio {resonance.gain_db:.1f}dB")
         on_event({"type": "resonance_cut", "stem": name, "freq_hz": round(resonance.freq, 1), "gain_db": round(resonance.gain_db, 1)})
         board_fx.append(PeakFilter(cutoff_frequency_hz=resonance.freq, gain_db=resonance.gain_db, q=resonance.q))
+
+    # Flag-gated multi-resonance: up to 3 distinct mud-range nodes per stem,
+    # reusing the same detection math and MAX_CUT_DB clamp. The single-node
+    # cut above stays in place (the multi list starts with the same strongest
+    # node), so the OFF path is untouched and the ON path only ever adds
+    # nodes 2..3. Fail-safe: any error -> single-node behavior as today.
+    if forced_resonance is _RESONANCE_UNSET and config.is_enabled("ENABLE_MULTI_RESONANCE"):
+        try:
+            multi_nodes = find_resonances(audio, sr, max_nodes=3)
+            for extra in multi_nodes[1:]:
+                on_step(f"  '{name}': risonanza multipla a {extra.freq:.0f}Hz, taglio {extra.gain_db:.1f}dB")
+                on_event({"type": "resonance_cut_multi", "stem": name, "freq_hz": round(extra.freq, 1), "gain_db": round(extra.gain_db, 1)})
+                board_fx.append(PeakFilter(cutoff_frequency_hz=extra.freq, gain_db=extra.gain_db, q=extra.q))
+        except Exception:
+            on_step("  Risonanza multipla non disponibile, uso il taglio singolo")
 
     if is_lead_vocal:
         # The lead is the star: give it presence instead of just carving cuts.
@@ -1486,9 +1568,31 @@ def render_mix(
         other_gain = 1.0 if active_other_count <= 2 else float(np.sqrt(2.0 / active_other_count))
         if active_other_count > 2:
             on_step(f"Bilanciamento strumenti 'other': {active_other_count} strati attivi (su {len(other_names)} totali) -> {20 * np.log10(other_gain):+.1f}dB")
+        # Flag-gated two-stage balance: replaces the flat other_gain above
+        # with intra-group member normalization + a bounded (+/-3dB)
+        # inter-group correction. Any error falls back to the flat gain
+        # (fail-safe, same philosophy as the plugin-hosting block below).
+        other_member_gains: list[float] | None = None
+        if config.is_enabled("ENABLE_TWO_STAGE_BALANCE"):
+            try:
+                _ts_groups = {"music": [processed[name] for name in other_names]}
+                _ts_gains = _two_stage_balance_gains(_ts_groups, on_step)
+                other_member_gains = _ts_gains["music"]
+                on_step(
+                    f"Bilanciamento due stadi attivo sul bus musicale: {len(other_names)} strati "
+                    f"normalizzati verso l'RMS misurato del gruppo (al posto del flat {20 * np.log10(other_gain):+.1f}dB)"
+                )
+                on_event({"type": "two_stage_balance", "group": "music", "stems": other_names})
+            except Exception:
+                other_member_gains = None  # fail-safe: flat gain as today
+                on_step("Bilanciamento due stadi non disponibile, uso il guadagno flat")
         music_bus = np.zeros((n, 2), dtype=np.float32)
-        for name in other_names:
-            music_bus += processed[name] * other_gain
+        if other_member_gains is not None:
+            for name, mgain in zip(other_names, other_member_gains):
+                music_bus += processed[name] * mgain
+        else:
+            for name in other_names:
+                music_bus += processed[name] * other_gain
         mid = (music_bus[:, 0] + music_bus[:, 1]) * 0.5
         side = (music_bus[:, 0] - music_bus[:, 1]) * 0.5
         if MUSIC_BUS_MID_DIP_DB < 0.0:
@@ -1588,6 +1692,30 @@ def render_mix(
     if instrumental_layers > 2:
         on_step(f"Bilanciamento bed strumentale: {instrumental_layers} strati attivi -> {20 * np.log10(instrumental_gain):+.1f}dB")
 
+    # Flag-gated two-stage balance, stage 2 across the top-level groups
+    # (drums / bass / each remaining instrumental stem): same bounded
+    # median-correction as the music bus, fail-safe to the flat gain.
+    group_member_gains: dict[str, list[float]] | None = None
+    if config.is_enabled("ENABLE_TWO_STAGE_BALANCE"):
+        try:
+            _ts_groups: dict[str, list[np.ndarray]] = {
+                "drums": [processed[name] for name in drum_names],
+                "bass": [processed[name] for name in bass_names],
+            }
+            for name in non_vocal_names:
+                if name in drum_names or name in bass_names:
+                    continue
+                _ts_groups[f"stem:{name}"] = [processed[name]]
+            group_member_gains = _two_stage_balance_gains(_ts_groups, on_step)
+            on_step(
+                "Bilanciamento due stadi attivo sui gruppi del mix: batteria, basso e strumentali "
+                "portati verso il livello mediano (correzione limitata a ±3dB)"
+            )
+            on_event({"type": "two_stage_balance", "group": "mix_bus", "groups": list(_ts_groups.keys())})
+        except Exception:
+            group_member_gains = None  # fail-safe: flat gain as today
+            on_step("Bilanciamento due stadi non disponibile sui gruppi, uso il guadagno flat")
+
     if vocal_main_bus is not None:
         notify_bus("vocal_main", vocal_main_bus)
     if vocal_doubles_bus is not None:
@@ -1598,12 +1726,21 @@ def render_mix(
         notify_bus("parallel", parallel_bus)
 
     mix_bus = np.zeros((n, 2), dtype=np.float32)
-    for name, audio in processed.items():
-        if name in other_names:
-            continue  # folded into the Mid/Side-processed music_bus instead
-        if name in lead_names:
-            continue  # folded into vocal_main_bus instead
-        mix_bus += audio * instrumental_gain
+    if group_member_gains is not None:
+        for gname, members in (("drums", drum_names), ("bass", bass_names)):
+            for name, mgain in zip(members, group_member_gains[gname]):
+                mix_bus += processed[name] * mgain
+        for name in non_vocal_names:
+            if name in drum_names or name in bass_names:
+                continue
+            mix_bus += processed[name] * group_member_gains[f"stem:{name}"][0]
+    else:
+        for name, audio in processed.items():
+            if name in other_names:
+                continue  # folded into the Mid/Side-processed music_bus instead
+            if name in lead_names:
+                continue  # folded into vocal_main_bus instead
+            mix_bus += audio * instrumental_gain
     if music_bus is not None:
         mix_bus += music_bus  # already power-preserving-scaled internally, see above
     if vocal_main_bus is not None:
