@@ -33,6 +33,7 @@ import numpy as np
 import librosa
 from scipy.signal import butter, sosfiltfilt
 
+from redline import config
 from redline.logging_setup import get_logger
 from .loudness import to_mono
 
@@ -42,6 +43,14 @@ _PITCH_SR = 22050  # vocal fundamentals sit well under this; keeps pYIN fast
 _MAX_ANALYSIS_SECONDS = 25.0  # a stable median f0 doesn't need the whole song
 _VAD_TOP_DB = 40.0  # librosa.effects.split threshold below peak
 _PITCH_BAND_HZ = (80.0, 1000.0)  # analysis-only band-pass: human voice fundamental range
+
+# Fast path (ENABLE_FAST_ANALYSIS): plain YIN instead of pYIN, on a shorter
+# slice. YIN is ~50-80x cheaper but is the octave-error-prone estimator pYIN
+# was chosen to replace — so it's only used when the spectral cross-check says
+# the take is *not* bright (a genuine falsetto/high take is exactly where YIN
+# mis-reads), and the robust pYIN path is kept as the fallback.
+_FAST_MAX_ANALYSIS_SECONDS = 12.0  # a median f0 stabilizes well before this
+_FAST_HF_RATIO_MAX = 0.35  # above this the take is bright -> keep pYIN
 
 
 def _isolate_voiced_segments(mono: np.ndarray, sr: int, top_db: float = _VAD_TOP_DB) -> np.ndarray:
@@ -75,7 +84,7 @@ def _band_limit(mono: np.ndarray, sr: int, band_hz: tuple[float, float]) -> np.n
     return sosfiltfilt(sos, mono.astype(np.float64)).astype(np.float32)
 
 
-def _prep_mono(signal: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
+def _prep_mono(signal: np.ndarray, sr: int, max_seconds: float = _MAX_ANALYSIS_SECONDS) -> tuple[np.ndarray, int]:
     mono = to_mono(signal).astype(np.float32)
     if sr > _PITCH_SR:
         mono = librosa.resample(mono, orig_sr=sr, target_sr=_PITCH_SR)
@@ -85,7 +94,7 @@ def _prep_mono(signal: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
 
     # A stable median f0 doesn't need more than ~25s of concentrated,
     # already-silence-free signal — cap it for speed on long takes.
-    max_samples = int(_MAX_ANALYSIS_SECONDS * sr)
+    max_samples = int(max_seconds * sr)
     if mono.size > max_samples:
         mono = mono[:max_samples]
 
@@ -93,12 +102,15 @@ def _prep_mono(signal: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
     return mono, sr
 
 
-def estimate_fundamental(signal: np.ndarray, sr: int, fmin: float = 55.0, fmax: float = 900.0) -> float:
-    """Median voiced f0 in Hz via pYIN, or a sane default (110Hz) if nothing
-    voiced is detected (silence, pure noise/percussive content)."""
-    mono, work_sr = _prep_mono(signal, sr)
-    if mono.size < work_sr // 4:
+def _median_voiced(f0: np.ndarray, voiced_flag: np.ndarray | None) -> float:
+    voiced = f0[np.isfinite(f0) & (voiced_flag if voiced_flag is not None else np.isfinite(f0))]
+    voiced = voiced[voiced > 0]
+    if voiced.size == 0:
         return 110.0
+    return float(np.median(voiced))
+
+
+def _estimate_fundamental_pyin(mono: np.ndarray, work_sr: int, fmin: float, fmax: float) -> float:
     try:
         f0, voiced_flag, _voiced_prob = librosa.pyin(
             mono, fmin=fmin, fmax=fmax, sr=work_sr,
@@ -114,12 +126,45 @@ def estimate_fundamental(signal: np.ndarray, sr: int, fmin: float = 55.0, fmax: 
         except Exception:
             logger.warning("Plain YIN also failed — returning default 110 Hz", exc_info=True)
             return 110.0
+    return _median_voiced(f0, voiced_flag)
 
-    voiced = f0[np.isfinite(f0) & (voiced_flag if voiced_flag is not None else np.isfinite(f0))]
-    voiced = voiced[voiced > 0]
-    if voiced.size == 0:
+
+def _estimate_fundamental_fast(mono: np.ndarray, work_sr: int, fmin: float, fmax: float) -> float:
+    """Plain YIN on the already-prepared (band-limited, VAD-isolated, capped)
+    mono. Only reached when the spectral cross-check says the take isn't bright
+    enough for YIN's octave errors to matter."""
+    try:
+        f0 = librosa.yin(mono, fmin=fmin, fmax=fmax, sr=work_sr, frame_length=2048)
+    except Exception:
+        logger.warning("Fast YIN failed — falling back to pYIN", exc_info=True)
+        return _estimate_fundamental_pyin(mono, work_sr, fmin, fmax)
+    return _median_voiced(f0, None)
+
+
+def estimate_fundamental(signal: np.ndarray, sr: int, fmin: float = 55.0, fmax: float = 900.0) -> float:
+    """Median voiced f0 in Hz via pYIN, or a sane default (110Hz) if nothing
+    voiced is detected (silence, pure noise/percussive content).
+
+    With ENABLE_FAST_ANALYSIS on, a cheaper plain-YIN path is used when the
+    spectral cross-check (high_frequency_ratio on the *original* signal) says
+    the take is not bright — i.e. not the falsetto/high case where YIN's
+    octave errors would bite. Bright takes keep the robust pYIN path."""
+    fast = config.is_enabled("ENABLE_FAST_ANALYSIS")
+    if fast:
+        # Decide on the original signal's harmonic content, before band-limiting.
+        bright = high_frequency_ratio(signal, sr) > _FAST_HF_RATIO_MAX
+        max_seconds = _MAX_ANALYSIS_SECONDS if bright else _FAST_MAX_ANALYSIS_SECONDS
+    else:
+        bright = False
+        max_seconds = _MAX_ANALYSIS_SECONDS
+
+    mono, work_sr = _prep_mono(signal, sr, max_seconds=max_seconds)
+    if mono.size < work_sr // 4:
         return 110.0
-    return float(np.median(voiced))
+
+    if fast and not bright:
+        return _estimate_fundamental_fast(mono, work_sr, fmin, fmax)
+    return _estimate_fundamental_pyin(mono, work_sr, fmin, fmax)
 
 
 def high_frequency_ratio(signal: np.ndarray, sr: int, cutoff_hz: float = 3500.0) -> float:
