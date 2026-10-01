@@ -334,6 +334,15 @@ def _is_silent_stem(audio: np.ndarray) -> bool:
     return 20.0 * np.log10(peak) < _SILENT_STEM_DBFS
 
 
+def _crest_factor_db(signal: np.ndarray) -> float:
+    """crest_factor() (analysis/loudness.py) returns a linear peak/rms ratio;
+    the genre crest targets (reference_profiles.CREST_FACTOR_TARGETS) are in
+    dB, so convert before comparing. Same convention as masterengine's own
+    _crest_factor_db (duplicated here rather than imported to avoid pulling
+    the mastering chain into the mix engine)."""
+    return 20.0 * float(np.log10(crest_factor(signal)))
+
+
 def _describe(d: StemDescriptor) -> str:
     bits = [d.role]
     if d.role == "vocal":
@@ -1699,19 +1708,46 @@ def render_mix(
         on_event({"type": "bus_eq_band", "freq_hz": b.freq, "gain_db": round(b.gain_db, 1), "q": b.q, "kind": b.kind})
 
     # Bus glue compression, scaled by aggressiveness (1..5 -> ratio multiplier 0.7x..1.6x)
+    # Do-no-harm (flag-gated): if the mix bus is already at/below the genre's
+    # crest target the material is already dense -- compressing it again only
+    # flattens it further, so the glue stage is skipped entirely. Any error in
+    # the measurement path degrades to the normal glue (fail-safe).
     ratio_scale = 0.7 + (prefs.aggressiveness - 1) * 0.225
     glue_ratio = max(1.1, analysis.genre.ratio * ratio_scale)
-    on_step(f"Compressione glue sul bus: ratio {glue_ratio:.1f}:1 (aggressività {prefs.aggressiveness}/5)")
-    on_event({"type": "bus_compressor", "ratio": round(glue_ratio, 2), "threshold_db": analysis.genre.threshold_db})
-    bus_fx.append(
-        Compressor(
-            threshold_db=analysis.genre.threshold_db,
-            ratio=glue_ratio,
-            attack_ms=analysis.genre.attack_ms,
-            release_ms=analysis.genre.release_ms,
+    _skip_glue = False
+    if config.is_enabled("ENABLE_DO_NO_HARM"):
+        try:
+            from .reference_profiles import resolve_perceptual_target
+
+            crest_db = _crest_factor_db(mix_bus)
+            crest_target_db = resolve_perceptual_target(analysis.genre.name)["crest_factor"]
+            if crest_db <= crest_target_db:
+                _skip_glue = True
+                on_step(
+                    f"Do no harm: crest del bus {crest_db:.1f}dB già sotto il target di genere "
+                    f"({crest_target_db:.1f}dB) — salto la compressione glue per non appiattire ulteriormente"
+                )
+                on_event({
+                    "type": "do_no_harm_glue_skip",
+                    "crest_db": round(crest_db, 2),
+                    "crest_target_db": round(crest_target_db, 2),
+                })
+        except Exception:
+            _skip_glue = False  # fail-safe: any measurement error -> glue as today
+    if _skip_glue:
+        bus_fx.append(Gain(gain_db=1.0))
+    else:
+        on_step(f"Compressione glue sul bus: ratio {glue_ratio:.1f}:1 (aggressività {prefs.aggressiveness}/5)")
+        on_event({"type": "bus_compressor", "ratio": round(glue_ratio, 2), "threshold_db": analysis.genre.threshold_db})
+        bus_fx.append(
+            Compressor(
+                threshold_db=analysis.genre.threshold_db,
+                ratio=glue_ratio,
+                attack_ms=analysis.genre.attack_ms,
+                release_ms=analysis.genre.release_ms,
+            )
         )
-    )
-    bus_fx.append(Gain(gain_db=1.0))
+        bus_fx.append(Gain(gain_db=1.0))
 
     bus_board = Pedalboard(bus_fx)
     mixed = bus_board(mix_bus.T, sr).T
