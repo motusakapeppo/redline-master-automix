@@ -16,10 +16,12 @@ explicit requirement.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 
+from redline import config
 from redline.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -32,6 +34,25 @@ BUS_CATEGORIES = ("Drum Bus", "Bass Bus", "Music Bus", "Main Vox", "Backing Vox"
 
 _model = None
 _load_failed = False
+
+# Flag-gated memo for classify_ambiguous_stems, keyed by a stable hash of the
+# prompt inputs (stem names + hints). Purely an optimization: with
+# ENABLE_LLM_RESULT_CACHE off this is never read or written, so behavior is
+# exactly as before. Advisory-only semantics are unchanged -- a cached dict is
+# the same suggestion the model would have produced for identical inputs.
+_result_cache: dict[str, dict[str, str]] = {}
+
+
+def _cache_key(stem_infos: list[dict]) -> str:
+    """Stable hash of the inputs that actually shape the prompt. Only the
+    fields the prompt reads (name/spectral_hint/transient_hint) are included,
+    in order, so an identical call maps to the same key and any change to a
+    name or hint is a miss."""
+    payload = [
+        (s.get("name"), s.get("spectral_hint", "?"), s.get("transient_hint", "?"))
+        for s in stem_infos
+    ]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def _get_model():
@@ -72,6 +93,20 @@ def classify_ambiguous_stems(stem_infos: list[dict], on_token=None) -> dict[str,
     if model is None or not stem_infos:
         return {}
 
+    # Flag-gated memo: identical inputs (same names + hints, same order) skip
+    # the decode entirely. Fail-safe -- any error here just falls through to
+    # the normal uncached path, never raises.
+    cache_key = None
+    try:
+        if config.is_enabled("ENABLE_LLM_RESULT_CACHE"):
+            cache_key = _cache_key(stem_infos)
+            cached = _result_cache.get(cache_key)
+            if cached is not None:
+                return dict(cached)
+    except Exception:
+        cache_key = None
+        logger.warning("LLM result cache lookup failed — proceeding uncached", exc_info=True)
+
     listing = "\n".join(
         f"- \"{s['name']}\": spettro={s.get('spectral_hint', '?')}, transiente={s.get('transient_hint', '?')}"
         for s in stem_infos
@@ -110,7 +145,13 @@ def classify_ambiguous_stems(stem_infos: list[dict], on_token=None) -> dict[str,
         if not match:
             return {}
         parsed = json.loads(match.group(0))
-        return {name: category for name, category in parsed.items() if category in BUS_CATEGORIES}
+        result = {name: category for name, category in parsed.items() if category in BUS_CATEGORIES}
+        if cache_key is not None:
+            try:
+                _result_cache[cache_key] = dict(result)
+            except Exception:
+                logger.warning("LLM result cache store failed — result still returned", exc_info=True)
+        return result
     except Exception:
         logger.warning("LLM stem classification failed — returning empty", exc_info=True)
         return {}
