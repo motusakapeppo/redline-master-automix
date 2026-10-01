@@ -28,6 +28,7 @@ from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
 from redline.dsp_utils import finalize_for_export
+from redline.metrics import Metrics
 from redline.processors import available_processors, describe_processor, preset_for
 from redline.naming import parse_stem
 from redline.instrumentstack import classify_instrument
@@ -787,16 +788,18 @@ class Api:
             # at each cheap stage boundary below (never mid-DSP).
             self._cancel_event.clear()
             os.makedirs(out_dir, exist_ok=True)
+            metrics = Metrics()
 
             cancelled = self._check_cancelled()
             if cancelled is not None:
                 return cancelled
 
             self._narrate("Carico l'audio...")
-            stems = self._with_heartbeat(
-                lambda: load_auto(input_path, work_dir=os.path.join(out_dir, "_demucs"), on_step=self._narrate),
-                kind="separating",
-            )
+            with metrics.stage("load_auto", on_step=self._narrate):
+                stems = self._with_heartbeat(
+                    lambda: load_auto(input_path, work_dir=os.path.join(out_dir, "_demucs"), on_step=self._narrate),
+                    kind="separating",
+                )
             self._narrate(f"Caricati {len(stems.names())} stem: {', '.join(stems.names())} @ {stems.sample_rate}Hz")
 
             cancelled = self._check_cancelled()
@@ -804,7 +807,8 @@ class Api:
                 return cancelled
 
             self._narrate("Analizzo bpm, tonalità, genere, loudness e bilanciamento spettrale...")
-            analysis = self._with_heartbeat(lambda: analyze(stems), kind="analyzing")
+            with metrics.stage("analyze", on_step=self._narrate):
+                analysis = self._with_heartbeat(lambda: analyze(stems), kind="analyzing")
             self._narrate(
                 f"BPM {analysis.bpm:.1f}  |  Tonalità {analysis.key_name}  |  Genere {analysis.genre.name}  |  "
                 f"{analysis.mix_lufs:.1f} LUFS  |  Crest {analysis.mix_crest:.1f}"
@@ -826,13 +830,14 @@ class Api:
                 return cancelled
 
             self._narrate("Avvio il mix...")
-            mixed = render_mix(
-                stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
-                director_gate=self.director_gate,
-                on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
-                character_spec=self._character_spec or None,
-                plugin_path=self._plugin_path or None,
-            )
+            with metrics.stage("render_mix", on_step=self._narrate):
+                mixed = render_mix(
+                    stems, analysis, mix_prefs, on_step=self._narrate, on_event=self._emit,
+                    director_gate=self.director_gate,
+                    on_stem_audition=self._audition_mix_stem if config.is_enabled("ENABLE_LIVE_AUDITION") else None,
+                    character_spec=self._character_spec or None,
+                    plugin_path=self._plugin_path or None,
+                )
 
             mix_path = os.path.join(out_dir, "mix.wav")
             sf.write(mix_path, finalize_for_export(mixed), stems.sample_rate, subtype="PCM_24")
@@ -880,13 +885,15 @@ class Api:
                     "key": analysis.key_name,
                     "genre": analysis.genre.name,
                     "lufs": analysis.mix_lufs,
+                    "timings": {**metrics.as_dict(), "total": metrics.total_seconds()},
                 })
 
             cancelled = self._check_cancelled()
             if cancelled is not None:
                 return cancelled
 
-            master_path = self._do_mastering(mixed, stems, analysis, out_dir, prefs)
+            with metrics.stage("mastering", on_step=self._narrate):
+                master_path = self._do_mastering(mixed, stems, analysis, out_dir, prefs)
 
             self._narrate("Fatto.")
             SessionHistory.add({
@@ -904,6 +911,7 @@ class Api:
                 "key": analysis.key_name,
                 "genre": analysis.genre.name,
                 "lufs": analysis.mix_lufs,
+                "timings": {**metrics.as_dict(), "total": metrics.total_seconds()},
             })
         except Exception as exc:
             traceback.print_exc()
