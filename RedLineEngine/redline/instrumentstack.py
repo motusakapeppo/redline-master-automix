@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import config
 from .vocalstack import EqCut
 from .analysis.loudness import crest_factor, spectral_band_energies
 from .textmatch import contains_any, contains_word
@@ -311,6 +312,220 @@ _WORD_HINTS: frozenset[str] = frozenset({
     "mmh", "ooh", "aahs", "wash", "drone", "swell", "clav", "clavi",
     "b3", "oud", "ney", "uke", "lead",
 })
+
+# ---------------------------------------------------------------------------
+# Recognition V2 lexicon (ENABLE_RECOGNITION_V2, OFF by default).
+#
+# Additive to _NAME_HINTS: the OFF table is checked first, then these, so a
+# token that already worked keeps working and only genuinely new vocabulary
+# is added. Every token here is matched word-boundary (contains_word) -- the
+# V2 additions are mostly short/ambiguous producer slang ("pad", "sub",
+# "stab", "chord", "drone") that would false-positive as bare substrings.
+# ---------------------------------------------------------------------------
+_NAME_HINTS_V2: dict[str, tuple[str, ...]] = {
+    KEYS: (
+        "rhodes", "wurli", "wurlitzer", "clav", "clavinet", "pianet",
+        "teclado", "teclados", "clavier", "klavier", "piano elettrico",
+        "electric piano", "epiano", "e-piano", "cp70", "cp-70", "dx7",
+        "tastiera", "tastiere", "pianoforte", "piano a coda", "grand piano",
+        "upright piano", "felt piano", "stage piano", "toy piano",
+    ),
+    STRINGS: (
+        "cuerdas", "cordes", "streicher", "cordas", "archi", "arco",
+        "violino", "viola", "cello", "violoncello", "contrabbasso",
+        "string", "strings", "violin", "vln", "fiddle", "quartet",
+        "quartetto", "orchestra", "orchestral", "sinfonia", "harp", "arpa",
+    ),
+    BRASS: (
+        "metales", "cuivres", "bläser", "blaser", "metais", "ottoni",
+        "ottone", "tromba", "trumpet", "trombone", "tuba", "corno",
+        "flicorno", "flugelhorn", "flugel", "euphonium", "brass", "fanfare",
+        "fanfara", "horn", "horns", "french horn",
+    ),
+    WOODWINDS: (
+        "vientos", "vientos madera", "bois", "holzbläser", "holzblaser",
+        "madeiras", "fiati", "legni", "legno", "flauto", "flute", "flt",
+        "piccolo", "picc", "ottavino", "clarinet", "clarinetto", "oboe",
+        "english horn", "corno inglese", "bassoon", "fagotto", "sax",
+        "saxophone", "sassofono", "woodwind", "woodwinds",
+    ),
+    GUITAR_ACOUSTIC: (
+        "violão", "violao", "acoustic guitar", "acoustic gtr", "acustica",
+        "chitarra acustica", "nylon", "classical guitar", "12 string",
+        "steel string", "dreadnought", "fingerpick", "fingerstyle",
+    ),
+    GUITAR_ELECTRIC: (
+        "gitarre", "guitarra", "chitarra", "guitar", "gtr", "electric guitar",
+        "electric gtr", "chitarra elettrica", "elettrica", "distortion",
+        "overdrive", "power chord", "telecaster", "stratocaster", "les paul",
+        "humbucker", "lead guitar", "rhythm guitar",
+    ),
+    SYNTH_PAD: (
+        "pad", "pads", "atmos", "atmosphere", "ambience", "ambient", "drone",
+        "texture", "wash", "swell", "soundscape", "tappeto", "ambiente",
+        "synth pad", "warm pad", "soft pad", "lush pad", "string pad",
+        "analog pad", "poly pad", "evolving pad", "dark pad", "bright pad",
+    ),
+    SYNTH_LEAD: (
+        "reese", "supersaw", "super saw", "hypersaw", "hoover", "acid",
+        "tb303", "tb-303", "saw lead", "square lead", "trance lead",
+        "detune lead", "unison lead", "mono lead", "poly lead", "lead synth",
+        "synth lead", "melody synth", "hook synth", "main synth", "theremin",
+        "lead",
+    ),
+    PLUCK: (
+        "pluck", "plucks", "arp", "arps", "arpeggio", "arpeggiator",
+        "arpeggiated", "stab", "stabs", "chord stab", "synth stab",
+        "house stab", "mallet synth", "plucked synth", "poly pluck",
+        "edm pluck", "koto", "shamisen", "sitar", "guzheng", "blip",
+    ),
+    FX: (
+        "riser", "uplifter", "upsweep", "downlifter", "downsweep", "whoosh",
+        "woosh", "swoosh", "sweep", "impact", "braam", "braaam", "bwaa",
+        "backspin", "spinback", "tape stop", "glitch", "zap", "laser",
+        "siren", "transition", "buildup", "noise sweep", "reverse cymbal",
+        "reverse crash", "effetto", "effetti", "transizione", "salita",
+        "discesa", "impatto", "spazzata",
+    ),
+    ORGAN: (
+        "organ", "organo", "hammond", "b3", "b-3", "leslie", "drawbar",
+        "farfisa", "harmonium", "armonium", "church organ", "pipe organ",
+        "combo organ", "gospel organ",
+    ),
+    BELL: (
+        "bell", "bells", "campana", "campane", "chime", "chimes", "carillon",
+        "glockenspiel", "glock", "celesta", "celeste", "marimba",
+        "vibraphone", "vibrafono", "vibes", "xylophone", "xylo", "xilofono",
+        "kalimba", "mbira", "music box", "tubular bells", "hand bells",
+        "sleigh bells", "crotales", "steel drum", "handpan",
+    ),
+    CHOIR: (
+        "choir", "choirs", "coro", "cori", "aahs", "oohs", "ooh", "mmh",
+        "humming", "vox pad", "vocal pad", "voice pad", "vocal texture",
+        "vocal drone", "gregorian", "chant", "church choir", "gospel choir",
+        "vocal ensemble", "ensemble vocale", "wordless choir",
+    ),
+    VOCAL_CHOP: (
+        "vox chop", "vocal chop", "chopped vocal", "chopped vox", "vox stab",
+        "vocal stab", "vox stutter", "vocal stutter", "vox loop",
+        "vocal sample", "vox sample", "vocal one shot", "topline chop",
+        "hook vox", "voce campionata", "campione vocale", "chop vocale",
+    ),
+    ACCORDION: (
+        "accordion", "fisarmonica", "harmonica", "armonica", "melodica",
+        "bandoneon", "bandoneón", "concertina", "musette", "garmon",
+    ),
+    HARPSICHORD: (
+        "harpsichord", "clavicembalo", "cembalo", "clavichord", "spinet",
+        "virginal", "clavecin",
+    ),
+    FOLK_PLUCK: (
+        "banjo", "mandolin", "mandolino", "ukulele", "uke", "lap steel",
+        "pedal steel", "dobro", "resonator guitar", "dulcimer", "cavaquinho",
+        "autoharp", "zither",
+    ),
+    WORLD_STRINGS: (
+        "erhu", "oud", "bouzouki", "balalaika", "kora", "ngoni", "sarangi",
+        "sarod", "pipa", "santoor", "morin khuur", "kamancheh", "rebab",
+        "veena",
+    ),
+    WORLD_WINDS: (
+        "duduk", "shakuhachi", "bansuri", "ney", "ocarina", "tin whistle",
+        "low whistle", "irish flute", "pan flute", "panflute", "quena",
+        "zampoña", "bagpipes", "cornamusa", "zampogna", "uilleann", "gaita",
+        "hulusi", "bawu", "suona", "dizi", "xiao",
+    ),
+    PERCUSSION: (
+        "shaker", "tambourine", "tamburello", "tamb", "conga", "congas",
+        "bongo", "bongos", "cajon", "cajón", "djembe", "darbuka", "doumbek",
+        "cabasa", "guiro", "güiro", "claves", "clave", "woodblock",
+        "cowbell", "campanaccio", "agogo", "triangle", "triangolo",
+        "castanet", "castagnette", "nacchere", "vibraslap", "ratchet",
+        "tabla", "dholak", "dhol", "udu", "frame drum", "bodhran", "surdo",
+        "timbale", "timbales", "tumba", "shekere", "cuica", "pandeiro",
+        "tamborim", "repique", "berimbau", "sabar", "talking drum",
+        "percussioni", "perc",
+    ),
+}
+
+# V2 tokens that must be word-boundary matched (short/ambiguous producer
+# slang). Everything else in _NAME_HINTS_V2 is matched as a substring.
+_WORD_HINTS_V2: frozenset[str] = frozenset({
+    "pad", "pads", "drone", "wash", "swell", "atmos", "texture", "lead",
+    "reese", "acid", "stab", "stabs", "arp", "arps", "pluck", "plucks",
+    "bell", "bells", "chime", "chimes", "organ", "harp", "keys", "clav",
+    "sub", "chord", "riser", "sweep", "impact", "whoosh", "woosh", "swoosh",
+    "zap", "laser", "siren", "glitch", "b3", "oud", "ney", "uke", "coro",
+    "cori", "mmh", "ooh", "aahs", "chant", "perc", "horn", "horns",
+    "guitar", "gtr", "bass", "cello", "viola", "violin", "flute", "sax",
+    "oboe", "tuba", "banjo", "sitar", "koto", "erhu", "duduk", "ney",
+})
+
+
+def _v2_enabled() -> bool:
+    """True when ENABLE_RECOGNITION_V2 is on. Wrapped so a config failure can
+    never break classification -- an exception degrades to the frozen path."""
+    try:
+        return config.is_enabled("ENABLE_RECOGNITION_V2")
+    except Exception:
+        return False
+
+
+def _name_hint_v2(name: str) -> str | None:
+    """V2 name-hint pass: the OFF table first (so existing behavior is a
+    strict subset), then the additive V2 table. Returns the instrument kind
+    or None when no hint matched."""
+    hinted = _name_hint(name)
+    if hinted is not None:
+        return hinted
+    for instrument, hints in _NAME_HINTS_V2.items():
+        word_hints = tuple(h for h in hints if h in _WORD_HINTS_V2)
+        substr_hints = tuple(h for h in hints if h not in _WORD_HINTS_V2)
+        if word_hints and contains_word(name, word_hints):
+            return instrument
+        if substr_hints and contains_any(name, substr_hints):
+            return instrument
+    return None
+
+
+def _name_hint_scored(name: str) -> tuple[str | None, float]:
+    """V2 name-hint with a graduated confidence in [0, 1].
+
+    Confidence reflects how many independent agreeing tokens matched and how
+    specific they are: a multi-word phrase ("electric guitar") is stronger
+    evidence than a bare 3-letter abbreviation ("gtr"). Returns (None, 0.0)
+    when nothing matched."""
+    best_kind: str | None = None
+    best_score = 0.0
+    for instrument, hints in _NAME_HINTS_V2.items():
+        word_hints = tuple(h for h in hints if h in _WORD_HINTS_V2)
+        substr_hints = tuple(h for h in hints if h not in _WORD_HINTS_V2)
+        count = 0
+        if word_hints:
+            count += sum(1 for h in word_hints if contains_word(name, (h,)))
+        if substr_hints:
+            count += sum(1 for h in substr_hints if contains_any(name, (h,)))
+        if count == 0:
+            continue
+        # Specificity: a multi-word phrase is a stronger signal than a bare
+        # abbreviation. Take the longest matched token as the specificity
+        # proxy, then combine with the agreeing-token count.
+        longest = max(
+            (len(h) for h in hints if contains_word(name, (h,)) or contains_any(name, (h,))),
+            default=1,
+        )
+        specificity = min(1.0, longest / 12.0)
+        score = min(0.99, 0.45 + 0.25 * min(count, 3) / 3.0 + 0.30 * specificity)
+        if score > best_score:
+            best_score = score
+            best_kind = instrument
+    # The OFF table is authoritative when it matches (existing behavior).
+    off = _name_hint(name)
+    if off is not None:
+        return off, max(best_score, 0.6)
+    if best_kind is None:
+        return None, 0.0
+    return best_kind, best_score
 
 
 @dataclass
@@ -726,10 +941,130 @@ def _spectral_fallback(audio: np.ndarray, sr: int) -> str:
 
 
 def classify_instrument(name: str, audio: np.ndarray, sr: int) -> str:
+    # OFF (default): byte-identical to the pre-V2 behavior -- frozen lexicon
+    # first, then the original 2-feature/4-threshold spectral fallback.
+    if _v2_enabled():
+        return classify_instrument_scored(name, audio, sr)[0]
     hinted = _name_hint(name)
     if hinted is not None:
         return hinted
     return _spectral_fallback(audio, sr)
+
+
+# --- Recognition V2: richer spectral fallback + name/audio fusion ----------
+
+# Approximate center frequency of each analysis band, used to turn the
+# already-computed band-energy shares into a cheap spectral-centroid proxy
+# (no extra FFT pass needed).
+_BAND_CENTERS_HZ = {
+    "sub_bass": 40.0, "bass": 90.0, "low_mid": 260.0,
+    "mid": 700.0, "high_mid": 2500.0, "air": 12000.0,
+}
+
+
+def _spectral_features(audio: np.ndarray, sr: int) -> dict[str, float]:
+    """The features the V2 spectral fallback reasons over: crest factor, the
+    six band-energy shares, a band-weighted spectral-centroid proxy, and the
+    high-frequency energy ratio. All are cheap and already available."""
+    from .analysis.pitch import high_frequency_ratio
+
+    bands = spectral_band_energies(audio, sr)
+    centroid = sum(bands[k] * c for k, c in _BAND_CENTERS_HZ.items())
+    return {
+        "crest": crest_factor(audio),
+        "centroid": centroid,
+        "hf_ratio": high_frequency_ratio(audio, sr),
+        "bright": bands["high_mid"] + bands["air"],
+        "low": bands["sub_bass"] + bands["bass"],
+        "mid": bands["low_mid"] + bands["mid"],
+    }
+
+
+def _spectral_fallback_v2(audio: np.ndarray, sr: int) -> tuple[str, float]:
+    """Richer acoustic-only fallback: uses crest, band energies, spectral
+    centroid and hf_ratio to distinguish more than the original
+    SYNTH_PAD/SYNTH_LEAD/GENERIC. Returns (kind, confidence in [0, 1]).
+
+    Still deliberately conservative -- it only commits to a specific bucket
+    when the signal clearly reads as one shape, and returns GENERIC with a
+    low confidence for anything ambiguous. Never raises."""
+    try:
+        f = _spectral_features(audio, sr)
+    except Exception:
+        return GENERIC, 0.2
+
+    crest = f["crest"]
+    bright = f["bright"]
+    low = f["low"]
+    mid = f["mid"]
+    centroid = f["centroid"]
+    hf = f["hf_ratio"]
+
+    # Sustained (low crest, no sharp transients).
+    if crest < 4.0:
+        if bright < 0.20:
+            # Dark sustained bed -> pad. Confidence rises the flatter/darker.
+            conf = 0.55 + 0.35 * min(1.0, (4.0 - crest) / 3.0) + 0.10 * min(1.0, (0.20 - bright) / 0.20)
+            return SYNTH_PAD, float(min(0.95, conf))
+        if mid > 0.55 and centroid < 1500.0 and hf < 0.05:
+            # Sustained, mid-dominant, little air -> bowed-string-like swell.
+            return STRINGS, 0.6
+        if bright > 0.45 and centroid > 2500.0:
+            # Sustained but airy/bright -> choir/vocal-pad texture.
+            return CHOIR, 0.55
+        return GENERIC, 0.35
+
+    # Percussive/plucked (high crest, sharp transients).
+    if crest > 7.0:
+        if bright > 0.30:
+            # Bright plucked/lead-like element. Very high crest + very bright
+            # reads as a short pluck; otherwise a sustained lead line.
+            if crest > 12.0 and bright > 0.5:
+                return PLUCK, 0.6
+            return SYNTH_LEAD, 0.6
+        if low > 0.5 and centroid < 300.0:
+            # Low, punchy, dark -> a bass-like transient (still "other" here;
+            # naming.py owns the bass role, this is only a tonal hint).
+            return GENERIC, 0.3
+        return GENERIC, 0.35
+
+    # Ambiguous middle ground -> the safe flat treatment.
+    return GENERIC, 0.3
+
+
+def classify_instrument_scored(name: str, audio: np.ndarray, sr: int) -> tuple[str, float]:
+    """Recognition V2 instrument classification returning (kind, confidence).
+
+    Fusion ladder (documented, never raises):
+      1. name hint (high confidence) -- filename-first, the engine's design;
+      2. name + audio agree -> confidence boosted;
+      3. name + audio disagree -> the name still wins (filename-first) but
+         confidence is lowered, flagging the stem for the advisory fallback;
+      4. no name hint -> the richer spectral fallback;
+      5. nothing reliable -> GENERIC with a low confidence.
+    """
+    try:
+        name_kind, name_conf = _name_hint_scored(name)
+        spec_kind, spec_conf = _spectral_fallback_v2(audio, sr)
+
+        if name_kind is not None:
+            if spec_kind == name_kind:
+                # Agreement: boost toward 1.0 in proportion to the audio's
+                # own confidence.
+                fused = name_conf + (1.0 - name_conf) * 0.5 * spec_conf
+                return name_kind, float(min(0.99, fused))
+            if spec_kind == GENERIC:
+                # Audio has no opinion -- trust the name as-is.
+                return name_kind, float(name_conf)
+            # Disagreement: filename-first (the name wins), but lower the
+            # confidence so the graceful ladder can escalate to the LLM
+            # advisory / user question.
+            return name_kind, float(max(0.0, name_conf * 0.6))
+
+        return spec_kind, float(spec_conf)
+    except Exception:
+        # Graceful ladder: never raise -- degrade to the safe flat treatment.
+        return GENERIC, 0.2
 
 
 # --- Genre-aware nudges: the same instrument category shouldn't sound

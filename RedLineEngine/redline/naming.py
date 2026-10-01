@@ -8,9 +8,11 @@ to read it, not guess it acoustically.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
+from . import config
 from .textmatch import contains_any as _tm_contains_any
 from .textmatch import contains_word as _tm_contains_word
 
@@ -109,6 +111,104 @@ REGISTER_HINTS = {
     "mid": ("mid",),
     "special": ("special",),
 }
+
+# ---------------------------------------------------------------------------
+# Recognition V2 lexicons (ENABLE_RECOGNITION_V2, OFF by default).
+#
+# Everything below is only consulted when the flag is ON, so the frozen
+# OFF-path lexicons above stay exactly as they are (golden stays green).
+# The V2 sets are *additive*: the OFF tuples are still checked first, then
+# these, so a token that already worked keeps working and only genuinely new
+# vocabulary is added.
+#
+# Word-boundary discipline is preserved throughout: every short/ambiguous
+# token is matched with contains_word (never a bare substring), so "base"
+# never fires inside "database", "stem" never inside "system", "rap" never
+# inside "trap", "mix" never inside "remix", "head" never inside "headroom".
+# ---------------------------------------------------------------------------
+
+# Vocal role aliases (role == "vocal"). "vox"/"voice" already live in the OFF
+# VOCAL_WORD_HINTS; these are the producer-slang additions.
+VOCAL_ROLE_HINTS_V2 = (
+    "bgv", "bgvs", "bkg vocal", "backing vocal", "backing vox", "back vox",
+    "harmony vocal", "harmonies", "harm vox", "stack", "stacks", "dub", "dubs",
+    "adlib", "adlibs", "ad-lib", "ad-libs", "comp", "comps", "comped",
+    "lead vocal", "lead vox", "main vocal", "main vox", "lead vox",
+    "coro", "cori", "voci", "cantato", "canto", "voce", "voz", "voces",
+    "voix", "stimme", "gesang", "corista", "coristi",
+)
+# Voice-type / delivery hints (voice_type attribute). Word-boundary matched:
+# "rap" must not fire inside "trap", "mix" not inside "remix", "head" not
+# inside "headroom", "chest" not inside "orchestra".
+VOICE_TYPE_HINTS = {
+    "whisper": ("whisper", "whispered", "sussurro", "sussurrato"),
+    "scream": ("scream", "screaming", "screamo", "urlo", "urlato"),
+    "growl": ("growl", "growling", "growls", "grugnito"),
+    "belt": ("belt", "belted", "belting"),
+    "head": ("head voice", "headvoice", "head vox", "testa"),
+    "chest": ("chest voice", "chestvoice", "chest vox", "petto"),
+    "mix": ("mix voice", "mixvoice", "mixed voice", "voce mista"),
+    "fry": ("vocal fry", "fry", "fry voice"),
+    "breathy": ("breathy", "breath", "breathiness", "soffiato", "sospirato"),
+    "raspy": ("raspy", "rasp", "raspiness", "rauco", "rauca"),
+    "spoken": ("spoken", "spoken word", "parlato", "recitato"),
+    "rap": ("rap", "rapped", "rapping", "ragga", "flow"),
+}
+# Instrumental markers: a stem that is explicitly the instrumental/karaoke/
+# backing-track version of the song. These are role="other" (not a vocal),
+# and are matched word-boundary so "base" never fires inside "database" and
+# "stem" never inside "system".
+INSTRUMENTAL_MARKERS = (
+    "instrumental", "instrumentale", "strumentale", "inst", "karaoke",
+    "playback", "backing track", "backingtrack", "minus one", "minusone",
+    "base", "basi", "stem", "stems", "solo instrumental", "no vocals",
+    "senza voce", "senza voci", "versione strumentale",
+)
+# Drum sub-roles (role == "drums"). "oh"/"hh"/"clap" already live in the OFF
+# DRUM_WORD_HINTS; these are the multi-mic / production additions. All
+# word-boundary matched ("snap" must not fire inside "snapshot", "room" not
+# inside "bathroom").
+DRUM_SUBROLE_HINTS = (
+    "kick in", "kick out", "kickin", "kickout", "snare top", "snare btm",
+    "snare bottom", "snaretop", "snarebtm", "snare bot", "oh l", "oh r",
+    "overhead l", "overhead r", "room", "amb", "ambience", "ambient mic",
+    "clap", "claps", "snap", "snaps", "rimshot", "rim shot", "ghost",
+    "ghost note", "ghostnote", "top snare", "bottom snare", "side stick",
+    "cross stick", "hi hat", "hihat", "hat", "ride", "crash", "tom", "toms",
+    "floor tom", "rack tom", "china", "splash", "shaker", "tambourine",
+    "cowbell", "perc", "percussion", "batteria", "cassa", "rullante",
+    "grancassa", "timpani", "timpano",
+)
+# Bass aliases (role == "bass"). "808"/"bass"/"sub"/"bajo"/"basse" already
+# live in the OFF BASS_ROLE_HINTS; these are the additions. Word-boundary
+# matched so "sub" never fires inside "subway"/"subject".
+BASS_ROLE_HINTS_V2 = (
+    "sub bass", "subbass", "sub-bass", "bassline", "bass line", "bass guitar",
+    "bass gtr", "bass synth", "synth bass", "reese bass", "wobble bass",
+    "contrabbasso", "contrabajo", "basso elettrico", "bajo electrico",
+    "baixo", "baixo elétrico", "bass guitar", "e-bass", "ebass",
+)
+# Take-layer additions (layer == "double"). "double"/"backing"/"harmony"/
+# "harmonies"/"coro"/"cori" already live in the OFF DOUBLE hints; these are
+# the producer-slang additions. Word-boundary matched ("stack" must not fire
+# inside "stacked" is fine -- "stacked" is a double too -- but "dub" must not
+# fire inside "dubstep").
+DOUBLE_HINTS_V2 = (
+    "bgv", "bgvs", "bkg", "backing", "back vox", "backvox", "harmony",
+    "harmonies", "harm", "harms", "stack", "stacks", "stacked", "dub",
+    "dubs", "adlib", "adlibs", "ad-lib", "ad-libs", "comp", "comps",
+    "comped", "vocal comp", "vox comp", "coro", "cori", "corista", "coristi",
+    "doppia", "doppie", "doppiaggio",
+)
+
+
+def _v2_enabled() -> bool:
+    """True when ENABLE_RECOGNITION_V2 is on. Wrapped so a config failure can
+    never break parsing -- an exception here degrades to the frozen OFF path."""
+    try:
+        return config.is_enabled("ENABLE_RECOGNITION_V2")
+    except Exception:
+        return False
 
 _DX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])dx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
 _SX_PATTERN = re.compile(r"(?:^|[\s_./\\(){}\[\]-])sx(?:[\s_./\\(){}\[\]-]|$)", re.IGNORECASE)
@@ -214,6 +314,86 @@ def _first_match(text: str, hint_groups: dict[str, tuple[str, ...]], matcher=_co
     return None
 
 
+def _count_word_matches(text: str, tokens: tuple[str, ...]) -> int:
+    """How many of `tokens` appear as standalone words in `text`. Used by the
+    V2 confidence model: independent agreeing tokens raise confidence."""
+    return sum(1 for token in tokens if _contains_word(text, (token,)))
+
+
+def _count_any_matches(text: str, tokens: tuple[str, ...]) -> int:
+    """How many of `tokens` appear as substrings in `text` (V2 confidence)."""
+    return sum(1 for token in tokens if _contains_any(text, (token,)))
+
+
+def _scored_role(text: str) -> tuple[str, float]:
+    """V2 role classification with a graduated confidence in [0, 1].
+
+    Priority order matches the OFF path (bass -> drums -> vocal -> other) so
+    a name that already classified correctly keeps its role; only the
+    confidence becomes a real score instead of the binary 1.0/0.3.
+
+    Confidence is driven by how many independent agreeing tokens matched and
+    how specific they are (a multi-word phrase is stronger evidence than a
+    bare 3-letter abbreviation). It is deliberately capped below 1.0 for a
+    single weak token, so "Vocal" (one generic token) scores lower than
+    "Backing Vocal" (two agreeing tokens)."""
+    bass = _count_word_matches(text, BASS_ROLE_HINTS) + _count_word_matches(text, BASS_ROLE_HINTS_V2)
+    drums = (
+        _count_word_matches(text, DRUM_ROLE_HINTS)
+        + _count_any_matches(text, DRUM_SUBSTR_HINTS)
+        + _count_word_matches(text, DRUM_WORD_HINTS)
+        + _count_word_matches(text, DRUM_SUBROLE_HINTS)
+    )
+    vocal = (
+        _count_any_matches(text, VOCAL_ROLE_HINTS)
+        + _count_word_matches(text, VOCAL_WORD_HINTS)
+        + _count_word_matches(text, VOCAL_ROLE_HINTS_V2)
+    )
+
+    if bass:
+        return "bass", _confidence_from_count(bass)
+    if drums:
+        return "drums", _confidence_from_count(drums)
+    if vocal:
+        return "vocal", _confidence_from_count(vocal)
+    return "other", 0.3
+
+
+def _confidence_from_count(count: int) -> float:
+    """Maps an agreeing-token count to a confidence in [0.55, 0.99].
+
+    One token -> 0.55 (a real but single signal), two -> 0.75, three -> 0.87,
+    four+ -> approaching 0.99. Never reaches 1.0: a filename is strong
+    evidence, not proof, and the fusion layer reserves the top of the range
+    for name+audio agreement."""
+    if count <= 0:
+        return 0.3
+    return float(min(0.99, 0.55 + 0.20 * math.log2(count + 1)))
+
+
+def _scored_layer(text: str) -> str:
+    """V2 layer classification (primary | double). Same priority as the OFF
+    path, extended with the V2 double vocabulary."""
+    if (
+        _contains_any(text, DOUBLE_HINTS)
+        or _contains_word(text, DOUBLE_WORD_HINTS)
+        or _contains_word(text, DOUBLE_HINTS_V2)
+        or _DB_LAYER_PATTERN.search(text)
+    ):
+        return "double"
+    return "primary"
+
+
+def _voice_type(text: str) -> str | None:
+    """V2 voice-type/delivery classification (whisper/scream/rap/...), or
+    None when no delivery hint is present. Word-boundary matched so "rap"
+    never fires inside "trap" and "mix" never inside "remix"."""
+    for name, tokens in VOICE_TYPE_HINTS.items():
+        if _contains_word(text, tokens):
+            return name
+    return None
+
+
 def _pan_from_name(text: str) -> float:
     if _CENTER_PATTERN.search(text):
         return 0.0
@@ -259,6 +439,10 @@ class StemDescriptor:
     register: str | None = None  # falsetto | low | mid | special | None
     role_confidence: float = 1.0  # 1.0 = a role hint matched the name; lower = "other" by default, no real signal
     link_id: str | None = None   # shared key for stems that are mic/take pairs of the same source (see _link_id_from_name)
+    # Recognition V2 only (None on the frozen OFF path): the vocal delivery /
+    # voice type read from the name (whisper | scream | growl | belt | head |
+    # chest | mix | fry | breathy | raspy | spoken | rap), or None.
+    voice_type: str | None = None
 
 
 def parse_stem(path_like: str) -> StemDescriptor:
@@ -266,6 +450,9 @@ def parse_stem(path_like: str) -> StemDescriptor:
     # Hint matching runs on the name with any leading DAW track number
     # stripped ("01_Kick" -> "Kick"); raw_name/link_id keep the original.
     hint_text = _DAW_PREFIX_PATTERN.sub("", text, count=1)
+
+    if _v2_enabled():
+        return _parse_stem_v2(path_like, hint_text)
 
     if _contains_word(hint_text, BASS_ROLE_HINTS):
         role = "bass"
@@ -316,5 +503,82 @@ def parse_stem(path_like: str) -> StemDescriptor:
         section=section,
         register=register,
         role_confidence=role_confidence,
+        link_id=_link_id_from_name(path_like),
+    )
+
+
+def _parse_stem_v2(path_like: str, hint_text: str) -> StemDescriptor:
+    """Recognition V2 parse: same filename-first design as parse_stem, but
+    with the expanded multilingual lexicon, a graduated role confidence, and
+    a voice-type read. Never raises -- any unexpected failure degrades to the
+    frozen OFF result rather than aborting a render."""
+    try:
+        role, role_confidence = _scored_role(hint_text)
+        # A delivery/voice-type token ("Whisper", "Scream", "Rap", "Belt"...)
+        # is itself strong evidence of a vocal take even when no explicit
+        # vocal role word is present -- promote role to vocal and fold the
+        # delivery token into the confidence (it is one more agreeing signal).
+        voice_type = _voice_type(hint_text)
+        if voice_type is not None and role == "other":
+            role = "vocal"
+            role_confidence = _confidence_from_count(1)
+        layer = _scored_layer(hint_text)
+        pan = _pan_from_name(hint_text)
+        # Section/register only mean anything for vocal takes (same gating as
+        # the OFF path -- avoids "STR" inside "INSTRUMENTAL").
+        if role == "vocal":
+            section = _first_match(hint_text, SECTION_HINTS, _contains_camel_word)
+            register = _first_match(hint_text, REGISTER_HINTS, _contains_camel_word)
+        else:
+            section = None
+            register = None
+            voice_type = None
+        return StemDescriptor(
+            raw_name=path_like,
+            role=role,
+            layer=layer,
+            pan=pan,
+            section=section,
+            register=register,
+            role_confidence=role_confidence,
+            link_id=_link_id_from_name(path_like),
+            voice_type=voice_type,
+        )
+    except Exception:
+        # Graceful ladder: an unexpected failure in the richer path must not
+        # take down a render -- fall back to the frozen OFF parse.
+        return _parse_stem_off(path_like)
+
+
+def _parse_stem_off(path_like: str) -> StemDescriptor:
+    """The frozen OFF-path parse, callable directly (used as the V2 safety
+    fallback without recursing through the flag check)."""
+    text = path_like.replace("\\", "/")
+    hint_text = _DAW_PREFIX_PATTERN.sub("", text, count=1)
+    if _contains_word(hint_text, BASS_ROLE_HINTS):
+        role, role_confidence = "bass", 1.0
+    elif (
+        _contains_word(hint_text, DRUM_ROLE_HINTS)
+        or _contains_any(hint_text, DRUM_SUBSTR_HINTS)
+        or _contains_word(hint_text, DRUM_WORD_HINTS)
+    ):
+        role, role_confidence = "drums", 1.0
+    elif _contains_any(hint_text, VOCAL_ROLE_HINTS) or _contains_word(hint_text, VOCAL_WORD_HINTS):
+        role, role_confidence = "vocal", 1.0
+    else:
+        role, role_confidence = "other", 0.3
+    layer = (
+        "double"
+        if _contains_any(hint_text, DOUBLE_HINTS)
+        or _contains_word(hint_text, DOUBLE_WORD_HINTS)
+        or _DB_LAYER_PATTERN.search(hint_text)
+        else "primary"
+    )
+    pan = _pan_from_name(hint_text)
+    section = _first_match(hint_text, SECTION_HINTS, _contains_camel_word) if role == "vocal" else None
+    register = _first_match(hint_text, REGISTER_HINTS, _contains_camel_word) if role == "vocal" else None
+    return StemDescriptor(
+        raw_name=path_like, role=role, layer=layer, pan=pan, section=section,
+        register=register, role_confidence=role_confidence,
         link_id=_link_id_from_name(path_like),
     )

@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import config
+from .textmatch import contains_word
+
 LOW = "low"
 UNISON = "unison"
 HIGH = "high"
@@ -60,6 +63,106 @@ def classify_register(double_f0: float, lead_f0: float, hf_ratio: float | None =
             return HIGH
         return UNISON
     return UNISON
+
+
+def _v2_enabled() -> bool:
+    """True when ENABLE_RECOGNITION_V2 is on. Wrapped so a config failure can
+    never break register classification -- degrades to the frozen path."""
+    try:
+        return config.is_enabled("ENABLE_RECOGNITION_V2")
+    except Exception:
+        return False
+
+
+def classify_register_scored(
+    double_f0: float, lead_f0: float, hf_ratio: float | None = None
+) -> tuple[str, float]:
+    """Recognition V2 register classification returning (register, confidence).
+
+    Same relative low/unison/high/falsetto model as classify_register (the
+    musically-correct one for this engine -- no invented baritone/tenor
+    taxonomy), but with a graduated confidence in [0, 1]:
+
+    - confidence rises the further the pitch ratio sits from a decision
+      boundary (a ratio of 0.50 is a much more certain "low" than 0.727);
+    - when hf_ratio is supplied and agrees with a high/falsetto call, the
+      confidence is boosted; when it contradicts (a likely octave error) the
+      classification is down-ranked exactly as the OFF path does, and the
+      confidence is lowered accordingly.
+
+    Never raises -- silence / degenerate input returns (UNISON, low conf)."""
+    try:
+        if lead_f0 <= 1.0 or double_f0 <= 1.0:
+            return UNISON, 0.3
+        ratio = double_f0 / lead_f0
+
+        if ratio < _LOW_MAX_RATIO:
+            # Distance below the low boundary, normalized by the boundary.
+            margin = (_LOW_MAX_RATIO - ratio) / _LOW_MAX_RATIO
+            return LOW, float(min(0.95, 0.55 + 0.40 * margin))
+
+        if ratio > _HIGH_MAX_RATIO:
+            if hf_ratio is None or hf_ratio >= _FALSETTO_MIN_HF_RATIO:
+                # Genuine falsetto: confidence scales with the HF evidence.
+                hf = 0.5 if hf_ratio is None else min(1.0, hf_ratio / 0.20)
+                return FALSETTO, float(min(0.95, 0.6 + 0.35 * hf))
+            # Octave-error guard: the pitch says falsetto but the spectrum
+            # disagrees -- down-rank exactly like the OFF path.
+            if hf_ratio >= _HIGH_MIN_HF_RATIO:
+                return HIGH, 0.4
+            return UNISON, 0.3
+
+        if ratio > _UNISON_MAX_RATIO:
+            if hf_ratio is None or hf_ratio >= _HIGH_MIN_HF_RATIO:
+                # Distance above the unison boundary, normalized.
+                margin = (ratio - _UNISON_MAX_RATIO) / (_HIGH_MAX_RATIO - _UNISON_MAX_RATIO)
+                return HIGH, float(min(0.9, 0.55 + 0.35 * margin))
+            return UNISON, 0.35
+
+        # Unison: confidence rises the closer the ratio is to 1.0.
+        margin = 1.0 - abs(ratio - 1.0)
+        return UNISON, float(min(0.95, 0.55 + 0.40 * max(0.0, margin)))
+    except Exception:
+        return UNISON, 0.3
+
+
+# Voice-type / delivery vocabulary (Recognition V2). Word-boundary matched so
+# "rap" never fires inside "trap", "mix" never inside "remix", "head" never
+# inside "headroom", "chest" never inside "orchestra".
+_VOICE_TYPE_HINTS: dict[str, tuple[str, ...]] = {
+    "whisper": ("whisper", "whispered", "sussurro", "sussurrato"),
+    "scream": ("scream", "screaming", "screamo", "urlo", "urlato"),
+    "growl": ("growl", "growling", "growls", "grugnito"),
+    "belt": ("belt", "belted", "belting"),
+    "head": ("head voice", "headvoice", "head vox", "testa"),
+    "chest": ("chest voice", "chestvoice", "chest vox", "petto"),
+    "mix": ("mix voice", "mixvoice", "mixed voice", "voce mista"),
+    "fry": ("vocal fry", "fry", "fry voice"),
+    "breathy": ("breathy", "breath", "breathiness", "soffiato", "sospirato"),
+    "raspy": ("raspy", "rasp", "raspiness", "rauco", "rauca"),
+    "spoken": ("spoken", "spoken word", "parlato", "recitato"),
+    "rap": ("rap", "rapped", "rapping", "ragga", "flow"),
+}
+
+
+def classify_voice_type(name: str) -> tuple[str | None, float]:
+    """Recognition V2 voice-type/delivery classification from a stem name.
+
+    Returns (voice_type, confidence) where voice_type is one of whisper |
+    scream | growl | belt | head | chest | mix | fry | breathy | raspy |
+    spoken | rap, or None when no delivery hint is present. Word-boundary
+    matched throughout, so "Trap"/"Remix"/"Headroom"/"Orchestra" never fire.
+    Never raises. OFF (default) returns (None, 0.0) -- voice type is a V2-only
+    concept, so the frozen path is untouched."""
+    if not _v2_enabled():
+        return None, 0.0
+    try:
+        for voice_type, tokens in _VOICE_TYPE_HINTS.items():
+            if contains_word(name, tokens):
+                return voice_type, 0.7
+        return None, 0.0
+    except Exception:
+        return None, 0.0
 
 
 @dataclass
