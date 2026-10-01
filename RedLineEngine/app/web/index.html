@@ -352,15 +352,30 @@ window.addEventListener('error', function(e) {
           <span class="plugin-panel-title">Plugin / Processore</span>
           <span id="plugin-panel-live" class="plugin-live-dot"></span>
         </div>
-        <!-- Live processor selector: pick a built-in character processor and
-             apply it to every stem, or clear it. The two toggles flip the
-             additive engine features (called defensively from app.js). -->
+        <!-- Per-stem intelligence: AUTO mode assigns the RIGHT character
+             processor to each stem (role/instrument/register aware) instead of
+             one processor for all. The read-only plan shows what WILL be
+             applied; the manual override below stays available but is no
+             longer the default. The toggles flip the additive engine features
+             (called defensively from app.js). -->
         <div id="plugin-controls" class="plugin-controls">
-          <select id="processor-select" aria-label="Processore integrato">
-            <option value="">&mdash; Processore &mdash;</option>
-          </select>
-          <button id="processor-apply" class="btn plugin-ctl-btn" onclick="applyProcessorToAll()">Applica a tutti gli stem</button>
-          <button id="processor-clear" class="btn plugin-ctl-btn" onclick="clearProcessorSpec()">Rimuovi</button>
+          <label class="plugin-toggle" for="processor-auto-enable">
+            <input type="checkbox" id="processor-auto-enable" onchange="toggleAutoProcessors()">
+            Applica automaticamente per stem
+          </label>
+          <div id="processor-plan-list" class="processor-plan-list" data-qa="processor-plan-list">
+            <div class="processor-plan-empty">In attesa del piano automatico...</div>
+          </div>
+          <div class="processor-manual">
+            <select id="processor-select" aria-label="Processore integrato">
+              <option value="">&mdash; Processore &mdash;</option>
+            </select>
+            <select id="processor-stem-select" aria-label="Stem per override manuale">
+              <option value="*">Tutti gli stem</option>
+            </select>
+            <button id="processor-apply" class="btn plugin-ctl-btn" onclick="applyProcessorOverride()">Applica override</button>
+            <button id="processor-clear" class="btn plugin-ctl-btn" onclick="clearProcessorSpec()">Rimuovi</button>
+          </div>
           <label class="plugin-toggle" for="processor-enable">
             <input type="checkbox" id="processor-enable" onchange="toggleProcessorVariants()">
             Abilita processori

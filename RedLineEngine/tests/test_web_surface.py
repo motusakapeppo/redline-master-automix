@@ -60,6 +60,8 @@ _NEW_PUBLIC_METHODS = {
     "cancel_run",
     "enable_processor_variants",
     "enable_plugin_hosting",
+    "get_auto_processor_plan",
+    "enable_auto_processors",
 }
 
 
@@ -254,3 +256,52 @@ def test_enable_toggles_never_raise_on_garbage(api):
     # bool() coercion accepts anything; must never raise.
     assert api.enable_processor_variants("yes")["ok"] is True
     assert api.enable_plugin_hosting(None)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# get_auto_processor_plan / enable_auto_processors
+# ---------------------------------------------------------------------------
+
+def test_get_auto_processor_plan_schema(api):
+    result = api.get_auto_processor_plan()
+    assert result["ok"] is True
+    plan = result["plan"]
+    assert isinstance(plan, list)
+    # The dry heuristic (no stems loaded) still previews the canonical roles.
+    assert plan, "expected a non-empty dry plan"
+    for entry in plan:
+        assert set(entry) >= {"stem", "role", "instrument", "register", "processor", "params", "reason"}
+        assert isinstance(entry["stem"], str) and entry["stem"]
+        assert isinstance(entry["processor"], str) and entry["processor"]
+        assert isinstance(entry["params"], dict)
+        assert isinstance(entry["reason"], str) and entry["reason"]
+    # A lead vocal must never be auto-assigned a processor.
+    assert all(e["role"] != "vocal" for e in plan)
+
+
+def test_get_auto_processor_plan_fail_safe(api, monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("preset table exploded")
+
+    monkeypatch.setattr(api_module, "preset_for", _boom)
+    result = api.get_auto_processor_plan()
+    assert result["ok"] is False
+    assert "error" in result
+
+
+def test_enable_auto_processors_toggles_flag(api):
+    from redline import config
+
+    original = config.is_enabled("ENABLE_AUTO_PROCESSORS")
+    try:
+        assert api.enable_auto_processors(True) == {"ok": True, "enabled": True}
+        assert config.is_enabled("ENABLE_AUTO_PROCESSORS") is True
+        assert api.enable_auto_processors(False) == {"ok": True, "enabled": False}
+        assert config.is_enabled("ENABLE_AUTO_PROCESSORS") is False
+    finally:
+        config.set_override("ENABLE_AUTO_PROCESSORS", original)
+
+
+def test_enable_auto_processors_never_raises_on_garbage(api):
+    assert api.enable_auto_processors("yes")["ok"] is True
+    assert api.enable_auto_processors(None)["ok"] is True

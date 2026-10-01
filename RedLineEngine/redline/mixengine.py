@@ -74,7 +74,7 @@ from .dsp_utils import (
     transient_shaper,
 )
 from . import config
-from .processors import build_processor
+from .processors import build_processor, preset_for
 from .naming import parse_stem, StemDescriptor
 from .analysis.loudness import crest_factor
 from .deesser import deess, detect_sibilance_band
@@ -304,12 +304,18 @@ def _maybe_apply_character_processor(
         return audio
     try:
         if on_event is not None:
-            on_event({
+            event = {
                 "type": "character_processor",
                 "stem": name,
                 "processor": proc_name,
                 "params": dict(spec.get("params") or {}),
-            })
+            }
+            # Auto-assigned presets carry why they were chosen so the GUI can
+            # show the per-stem plan; an explicit user spec has neither key.
+            if spec.get("auto"):
+                event["auto"] = True
+                event["reason"] = spec.get("reason", "")
+            on_event(event)
         return Pedalboard([effect])(audio.T, sr).T
     except Exception:
         return audio
@@ -892,6 +898,50 @@ def render_mix(
                 if name in undetermined and chosen in INSTRUMENT_RECIPES:
                     instrument_overrides[name] = chosen
             on_step(f"Domande sugli strumenti: {len(instrument_overrides)}/{len(undetermined)} risposte applicate.")
+
+    # --- Automatic per-stem character processors (ENABLE_AUTO_PROCESSORS).
+    #
+    # The old UX applied ONE processor to every stem, which is musically
+    # wrong: a kick, a bass, a pad and a lead vocal each need different
+    # treatment. When the flag is on (AND the processor-variants flag is on),
+    # each stem gets a curated preset resolved from what the engine already
+    # knows -- role, instrument kind (instrumentstack.py) and vocal register
+    # (vocalstack.py). An explicit caller-supplied character_spec ALWAYS wins:
+    # auto only fills in stems the caller did not specify. Fail-safe: any
+    # error here leaves character_spec exactly as the caller passed it, so a
+    # bad preset can never abort a render. With the flag off this block is
+    # inert and the render is bit-identical to before the feature existed.
+    if (
+        config.is_enabled("ENABLE_AUTO_PROCESSORS")
+        and config.is_enabled("ENABLE_BUILTIN_PROCESSOR_VARIANTS")
+    ):
+        try:
+            auto_spec: dict = dict(character_spec) if character_spec else {}
+            for name, d in descriptors.items():
+                if name in auto_spec:
+                    continue  # explicit user spec wins
+                instrument_kind = None
+                if d.role == "other":
+                    instrument_kind = (
+                        instrument_overrides.get(name)
+                        or _instrument_cache.get(name)
+                        or classify_instrument(name, stems.tracks[name], sr)
+                    )
+                register = d.register if (d.role == "vocal" and d.layer == "double") else None
+                preset = preset_for(d.role, instrument_kind=instrument_kind, register=register)
+                if preset is None:
+                    continue
+                auto_spec[name] = {
+                    "processor": preset["processor"],
+                    "params": dict(preset.get("params") or {}),
+                    "auto": True,
+                    "reason": preset.get("reason", ""),
+                }
+                on_step(f"  '{name}': processore automatico '{preset['processor']}' ({preset.get('reason', '')})")
+            if auto_spec:
+                character_spec = auto_spec
+        except Exception:
+            logger.warning("Auto processor assignment fallito, proseguo senza", exc_info=True)
 
     lead_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "primary"]
     double_names = [name for name, d in descriptors.items() if d.role == "vocal" and d.layer == "double"]

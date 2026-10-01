@@ -238,3 +238,150 @@ def describe_processor(name: str) -> dict | None:
         return copy.deepcopy(meta)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Curated per-stem presets (data only -- never touches audio)
+# ---------------------------------------------------------------------------
+#
+# The old UX applied ONE processor to every stem, which is musically wrong: a
+# kick, a bass, a pad and a lead vocal each need different treatment. This
+# table maps a *context* (role, optionally refined by instrument kind or vocal
+# register) to a sensible processor + params. It is pure data: importing it
+# has no side effects and the render path only reads it when the caller opts
+# in (ENABLE_AUTO_PROCESSORS + ENABLE_BUILTIN_PROCESSOR_VARIANTS).
+#
+# Context key format: ``"<role>"`` or ``"<role>:<instrument_kind|register>"``.
+# A missing key means "no processor for this context" -- deliberately the
+# default for a lead vocal, which must never get chorus/phaser by default.
+#
+# Musical rationale (per entry):
+#   - drums/percussion -> subtle clipping: transient glue, not a colour effect.
+#   - bass/sub -> light distortion: harmonic warmth that reads on small
+#     speakers, WITHOUT the pitch-smearing of chorus/phaser on a mono low end.
+#   - pads/keys/strings/electric guitar -> chorus: width and movement.
+#   - fx/risers -> bitcrush: already-designed ear candy, a touch of grit.
+#   - vocal doubles (register context) -> subtle chorus for width; a LEAD
+#     vocal (no register) intentionally has no entry -> None.
+PROCESSOR_PRESETS: dict[str, dict] = {
+    # --- Role-level (most common, no instrument/register refinement) --------
+    "drums": {
+        "processor": "clipping",
+        "params": {"threshold_db": -3.0},
+        "reason": "batteria: clipping leggero per incollare i transienti",
+    },
+    "bass": {
+        "processor": "distortion",
+        "params": {"drive_db": 3.0},
+        "reason": "basso: distorsione leggera per calore e armoniche (niente chorus sul basso)",
+    },
+    # --- "other" role, refined by instrument kind ---------------------------
+    "other:synth_pad": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.6, "depth": 0.35, "mix": 0.35},
+        "reason": "pad: chorus per ampiezza e movimento",
+    },
+    "other:keys": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.5, "depth": 0.25, "mix": 0.25},
+        "reason": "tastiere: chorus leggero per ampiezza",
+    },
+    "other:strings": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.4, "depth": 0.3, "mix": 0.3},
+        "reason": "archi: chorus per ampiezza e corpo",
+    },
+    "other:world_strings": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.4, "depth": 0.3, "mix": 0.3},
+        "reason": "archi etnici: chorus per ampiezza",
+    },
+    "other:guitar_electric": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.8, "depth": 0.3, "mix": 0.3},
+        "reason": "chitarra elettrica: chorus per ampiezza",
+    },
+    "other:guitar_acoustic": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.6, "depth": 0.2, "mix": 0.2},
+        "reason": "chitarra acustica: chorus leggero per ampiezza",
+    },
+    "other:organ": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.9, "depth": 0.3, "mix": 0.3},
+        "reason": "organo: chorus tipo Leslie per movimento",
+    },
+    "other:choir": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.5, "depth": 0.3, "mix": 0.3},
+        "reason": "coro: chorus per ampiezza diffusa",
+    },
+    "other:percussion": {
+        "processor": "clipping",
+        "params": {"threshold_db": -4.0},
+        "reason": "percussioni: clipping leggero per incollare i transienti",
+    },
+    "other:fx": {
+        "processor": "bitcrush",
+        "params": {"bit_depth": 10.0},
+        "reason": "fx/riser: bitcrush leggero per carattere",
+    },
+    # --- Vocal doubles, refined by register (never the lead) ----------------
+    "vocal:high": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.7, "depth": 0.25, "mix": 0.25},
+        "reason": "doppia acuta: chorus leggero per ampiezza",
+    },
+    "vocal:falsetto": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.6, "depth": 0.25, "mix": 0.25},
+        "reason": "falsetto: chorus leggero per ampiezza diffusa",
+    },
+    "vocal:unison": {
+        "processor": "chorus",
+        "params": {"rate_hz": 0.8, "depth": 0.2, "mix": 0.2},
+        "reason": "doppia all'unisono: chorus leggero per ampiezza",
+    },
+}
+
+
+def available_presets() -> tuple[str, ...]:
+    """Context keys of every curated preset, sorted for a stable, deterministic
+    order (a GUI listing them shouldn't reshuffle)."""
+    return tuple(sorted(PROCESSOR_PRESETS))
+
+
+def preset_for(
+    role: str,
+    instrument_kind: str | None = None,
+    register: str | None = None,
+) -> dict | None:
+    """Resolve the most specific curated preset for a stem context.
+
+    Resolution order (most specific first):
+      1. ``"<role>:<register>"`` (vocal doubles)
+      2. ``"<role>:<instrument_kind>"`` ("other" instruments)
+      3. ``"<role>"`` (drums/bass)
+    Returns a *fresh deep copy* of ``{"processor", "params", "reason"}``, or
+    ``None`` when no context matches (e.g. a lead vocal, or an unknown role).
+    Never raises -- any unexpected input simply yields ``None``.
+    """
+    try:
+        if not role or not isinstance(role, str):
+            return None
+        role_key = role.strip().lower()
+        if not role_key:
+            return None
+        candidates: list[str] = []
+        if register and isinstance(register, str):
+            candidates.append(f"{role_key}:{register.strip().lower()}")
+        if instrument_kind and isinstance(instrument_kind, str):
+            candidates.append(f"{role_key}:{instrument_kind.strip().lower()}")
+        candidates.append(role_key)
+        for key in candidates:
+            preset = PROCESSOR_PRESETS.get(key)
+            if preset is not None:
+                return copy.deepcopy(preset)
+        return None
+    except Exception:
+        return None

@@ -1861,29 +1861,98 @@ function _selectedProcessorMeta() {
   return _builtinProcessors.find((p) => p && p.name === name) || { name, label: name, params: [] };
 }
 
-async function applyProcessorToAll() {
+// Manual override: applies ONE processor to a chosen stem (or "*" = all).
+// This is no longer the default path -- AUTO mode (below) is -- but it stays
+// available for a deliberate per-stem override.
+async function applyProcessorOverride() {
   return _busyRun(document.getElementById("processor-apply"), async () => {
     const meta = _selectedProcessorMeta();
     if (!meta) {
       addEventChip("\u26A0\uFE0F Seleziona prima un processore.");
       return;
     }
+    const stemSel = document.getElementById("processor-stem-select");
+    const stem = stemSel && stemSel.value ? stemSel.value : "*";
     const params = {};
     for (const p of meta.params || []) {
       if (p && p.name) params[p.name] = p.default;
     }
-    const spec = { "*": { processor: meta.name, params } };
+    const spec = { [stem]: { processor: meta.name, params } };
     await _bridgeCall("enable_processor_variants", true);
     const res = await _bridgeCall("set_character_spec", spec);
     if (res && res.ok) {
       if (typeof RedlinePluginState !== "undefined") {
-        renderPluginPanel(RedlinePluginState.processorViewModel({ processor: meta.name, params }));
+        renderPluginPanel(RedlinePluginState.processorViewModel({ processor: meta.name, params, stem }));
       }
-      addEventChip(`\u{1F50C} Processore '${meta.label || meta.name}' applicato a tutti gli stem`);
+      const where = stem === "*" ? "tutti gli stem" : `'${stem}'`;
+      addEventChip(`\u{1F50C} Processore '${meta.label || meta.name}' applicato a ${where}`);
     } else {
       addEventChip(`\u26A0\uFE0F Processore non applicato: ${res ? res.error : "bridge non disponibile"}`);
     }
   });
+}
+
+// --- AUTO per-stem mode ---------------------------------------------------
+// The engine assigns the RIGHT processor per stem (role/instrument/register
+// aware). The read-only plan below shows what WILL be applied, so the toggle
+// has something meaningful to enable instead of a blind "apply to all".
+async function toggleAutoProcessors() {
+  const el = document.getElementById("processor-auto-enable");
+  const checked = !!(el && el.checked);
+  if (!_hasBridgeMethod("enable_auto_processors")) return;
+  return _busyRun(el, async () => {
+    await _bridgeCall("enable_auto_processors", checked);
+    if (checked) await _bridgeCall("enable_processor_variants", true);
+    addEventChip(checked
+      ? "\u{1F50C} Processori automatici per stem abilitati"
+      : "\u{1F50C} Processori automatici per stem disabilitati");
+    await loadAutoProcessorPlan();
+  });
+}
+
+function _populateProcessorStemSelect(stems) {
+  const sel = document.getElementById("processor-stem-select");
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="*">Tutti gli stem</option>';
+  for (const name of stems || []) {
+    if (!name) continue;
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  if (current) sel.value = current;
+}
+
+function renderAutoProcessorPlan(plan) {
+  const list = document.getElementById("processor-plan-list");
+  if (!list) return;
+  const entries = Array.isArray(plan) ? plan : [];
+  if (!entries.length) {
+    list.innerHTML = '<div class="processor-plan-empty">Nessun processore automatico previsto (voce lead e stem non idonei restano puliti).</div>';
+    return;
+  }
+  list.innerHTML = entries.map((e) => {
+    const stem = _escHtml(e.stem);
+    const proc = _escHtml(e.processor);
+    const reason = _escHtml(e.reason || "");
+    return `<div class="processor-plan-row"><span class="processor-plan-stem">${stem}</span>` +
+      `<span class="processor-plan-proc">${proc}</span>` +
+      `<span class="processor-plan-reason">${reason}</span></div>`;
+  }).join("");
+}
+
+async function loadAutoProcessorPlan() {
+  try {
+    const data = await _bridgeCall("get_auto_processor_plan");
+    if (!data || !data.ok || !Array.isArray(data.plan)) return;
+    renderAutoProcessorPlan(data.plan);
+    _populateProcessorStemSelect(data.plan.map((e) => e && e.stem).filter(Boolean));
+  } catch (e) {
+    // Bridge without get_auto_processor_plan: the plan list just stays on its
+    // placeholder -- never a console error.
+  }
 }
 
 async function clearProcessorSpec() {
@@ -2655,16 +2724,29 @@ function onEvent(evt) {
 }
 
 // Initialize Three.js avatar when DOM is ready
+function initProcessorPanel() {
+  loadBuiltinProcessors();
+  // AUTO mode is the default when the bridge exposes it: check the box and
+  // load the read-only per-stem plan so the user sees what WILL be applied.
+  const autoEl = document.getElementById("processor-auto-enable");
+  if (autoEl && _hasBridgeMethod("enable_auto_processors")) {
+    autoEl.checked = true;
+    _bridgeCall("enable_auto_processors", true);
+    _bridgeCall("enable_processor_variants", true);
+  }
+  loadAutoProcessorPlan();
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     initThreeAvatar();
     loadPresets();
-    loadBuiltinProcessors();
+    initProcessorPanel();
   });
 } else {
   initThreeAvatar();
   loadPresets();
-  loadBuiltinProcessors();
+  initProcessorPanel();
 }
 
 function initThreeAvatar() {

@@ -28,7 +28,9 @@ from redline.wizard import MixPreferences
 from redline.mixengine import render_mix
 from redline.masterengine import render_master, render_master_reference
 from redline.dsp_utils import finalize_for_export
-from redline.processors import available_processors, describe_processor
+from redline.processors import available_processors, describe_processor, preset_for
+from redline.naming import parse_stem
+from redline.instrumentstack import classify_instrument
 from redline.plugins import (
     is_plugin_hosting_available,
     load_external_plugin,
@@ -420,6 +422,77 @@ class Api:
             return {"ok": True, "enabled": bool(enabled)}
         except Exception as exc:
             logging.getLogger(__name__).error("enable_processor_variants fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def get_auto_processor_plan(self) -> dict:
+        """Read-only preview of the per-stem character processors the engine
+        WOULD assign automatically (ENABLE_AUTO_PROCESSORS).
+
+        Computed from the last loaded stems/analysis when available, otherwise
+        from a dry role-level heuristic so the GUI can still show a meaningful
+        plan before any render. Returns
+        ``{"ok": True, "plan": [{stem, role, instrument, register, processor,
+        params, reason}]}``. Fail-safe: any error degrades to
+        ``{"ok": False, "error": ...}`` instead of raising into the bridge."""
+        try:
+            plan: list[dict] = []
+            stems = self._last_stems
+            if stems is not None:
+                sr = stems.sample_rate
+                for name, audio in stems.tracks.items():
+                    d = parse_stem(name)
+                    instrument = None
+                    if d.role == "other":
+                        try:
+                            instrument = classify_instrument(name, audio, sr)
+                        except Exception:
+                            instrument = None
+                    register = d.register if (d.role == "vocal" and d.layer == "double") else None
+                    preset = preset_for(d.role, instrument_kind=instrument, register=register)
+                    if preset is None:
+                        continue
+                    plan.append({
+                        "stem": name,
+                        "role": d.role,
+                        "instrument": instrument,
+                        "register": register,
+                        "processor": preset["processor"],
+                        "params": dict(preset.get("params") or {}),
+                        "reason": preset.get("reason", ""),
+                    })
+            else:
+                # Dry heuristic: no stems loaded yet, so preview the canonical
+                # roles the engine always knows about.
+                for name in ("vocals", "drums", "bass", "other"):
+                    d = parse_stem(name)
+                    preset = preset_for(d.role)
+                    if preset is None:
+                        continue
+                    plan.append({
+                        "stem": name,
+                        "role": d.role,
+                        "instrument": None,
+                        "register": None,
+                        "processor": preset["processor"],
+                        "params": dict(preset.get("params") or {}),
+                        "reason": preset.get("reason", ""),
+                    })
+            return _sanitize_for_json({"ok": True, "plan": plan})
+        except Exception as exc:
+            logging.getLogger(__name__).error("get_auto_processor_plan fallito: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def enable_auto_processors(self, enabled: bool) -> dict:
+        """Runtime toggle for automatic per-stem character processors.
+
+        Same additive, in-memory override semantics as
+        ``enable_processor_variants``. Never raises; the override is lost on
+        restart (the file default stays OFF)."""
+        try:
+            config.set_override("ENABLE_AUTO_PROCESSORS", bool(enabled))
+            return {"ok": True, "enabled": bool(enabled)}
+        except Exception as exc:
+            logging.getLogger(__name__).error("enable_auto_processors fallito: %s", exc)
             return {"ok": False, "error": str(exc)}
 
     def enable_plugin_hosting(self, enabled: bool) -> dict:
