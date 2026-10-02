@@ -2664,7 +2664,13 @@ function onEvent(evt) {
     case "system_ready": {
       if (window.avatarAPI) window.avatarAPI.onSystemReady();
       setAssistantLabel("pronto");
-      addEventChip("\u2705 Sistema pronto — bridge Python attivo");
+      addEventChip("\u2705 Sistema pronto - bridge Python attivo");
+      // The bridge only exists once this event fires, so re-run the
+      // bridge-dependent UI setup that DOMContentLoaded ran too early for
+      // (game button, preset/processor lists). All are fail-safe if absent.
+      initGameBreak();
+      loadPresets();
+      initProcessorPanel();
       break;
     }
 
